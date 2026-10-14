@@ -163,16 +163,16 @@ pub const MODEL_FILES: [&str; 6] = ["discard_P_12", "discard_P_3", "discard_P_t"
 
 /// A set of the models suzume plays with, picked by the player name: a hand
 /// model set and a state model. The names say what they were fitted on
-/// (`T1` East 1 games, `TN` hanchan games) and how deep they are (`dep1`
-/// one hidden layer, `dep3` three).
+/// (`flat` East 1 games, `normal` hanchan games) and how deep they are (`mlp1`
+/// one hidden layer, `mlp3` three).
 ///
 /// | player | hand (`params/hand/`) | state (`params/state/`) |
 /// |---|---|---|
-/// | `suzume-mlp3` (also `suzume`, the default) | `T1_dep3` | `TN_dep3` |
-/// | `suzume-mlp3-flat` (East 1) | `T1_dep3` | `T1_dep3` |
-/// | `suzume-mlp3-avoid4` (last-place avoidance) | `TN_dep3` (with the situation inputs) | `TN_dep3` |
-/// | `suzume-mlp1` (light) | `T1_dep1` | `TN_dep1` |
-/// | `suzume-mlp1-flat` (light, East 1) | `T1_dep1` | `T1_dep1` |
+/// | `suzume-mlp3` (also `suzume`, the default) | `flat_mlp3` | `normal_mlp3` |
+/// | `suzume-mlp3-flat` (East 1) | `flat_mlp3` | `flat_mlp3` |
+/// | `suzume-mlp3-avoid4` (last-place avoidance) | `normal_mlp3` (with the situation inputs) | `normal_mlp3` |
+/// | `suzume-mlp1` (light) | `flat_mlp1` | `normal_mlp1` |
+/// | `suzume-mlp1-flat` (light, East 1) | `flat_mlp1` | `flat_mlp1` |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModelSet {
     #[default]
@@ -247,11 +247,11 @@ macro_rules! set_files {
 
 /// The files of each set, in `ModelSet::ALL` order.
 static SET_FILES: [SetFiles; ModelSet::ALL.len()] = [
-    set_files!("T1_dep3", "TN_dep3"),
-    set_files!("T1_dep3", "T1_dep3"),
-    set_files!("TN_dep3", "TN_dep3"),
-    set_files!("T1_dep1", "TN_dep1"),
-    set_files!("T1_dep1", "T1_dep1"),
+    set_files!("flat_mlp3", "normal_mlp3"),
+    set_files!("flat_mlp3", "flat_mlp3"),
+    set_files!("normal_mlp3", "normal_mlp3"),
+    set_files!("flat_mlp1", "normal_mlp1"),
+    set_files!("flat_mlp1", "flat_mlp1"),
 ];
 
 /// The parsed models of one set.
