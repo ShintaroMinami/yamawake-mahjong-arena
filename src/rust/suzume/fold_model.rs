@@ -1,5 +1,5 @@
 //! The fold (betaori) model: one MLP scores each discard against one other
-//! seat (design: docs/suzume.md, section 7; fitted to the teacher's
+//! seat (design: docs/suzume.md, "押し引き"; fitted to the teacher's
 //! fold-state discards).
 //!
 //! For each tile type `t` the features are built against one other seat `r`

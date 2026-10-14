@@ -100,7 +100,7 @@ uv を使わずに、Rust の環境があれば `pip install git+https://github.
 素晴らしいソフトウェアや知見を提供してくださった著者/開発者の方々に心から感謝いたします。
 
 - **[RiichiEnv](https://github.com/smly/RiichiEnv)**（smly、Apache-2.0）がシミュレータの土台となっています。yamawake-mahjong-arena の対局エンジンは riichienv-core 0.4.8 を取り込んだ fork で、席ごとのツモの列と、明示的な（局、本場）の牌山表を追加したバージョンです（`src/engine/README.md`）。Python 側は `riichienv` パッケージを使います。
-- **電脳麻将**（小林聡 / kobalab。[majiang-ai](https://github.com/kobalab/majiang-ai)、MIT、および電脳麻将のプロジェクト全体）：rulebot の設計はこちらのリポジトリを参考にしています。`src/rust/rulebot/kobalab_ev.rs` は majiang-ai の `eval_shoupai` / `eval_fulou` の移植で、副露の判断は `select_fulou` を、カンの判断は `select_gang` を参考にしています。
+- **[電脳麻将](https://github.com/kobalab/Majiang)**（小林聡 / kobalab。[majiang-ai](https://github.com/kobalab/majiang-ai)、MIT、および電脳麻将のプロジェクト全体）：rulebot の設計はこちらのリポジトリを参考にしています。`src/rust/rulebot/kobalab_ev.rs` は majiang-ai の `eval_shoupai` / `eval_fulou` の移植で、副露の判断は `select_fulou` を、カンの判断は `select_gang` を参考にしています。
 - 手牌価値計算のためのアルゴリズム(動的計画法,DP)は、[tomohxx](https://github.com/tomohxx) の『麻雀アルゴリズム』（[6 章 和了確率](https://tomohxx.github.io/mahjong-algorithm-book/probability/)）の手法を、[nekobean](https://github.com/nekobean) の [mahjong-cpp](https://github.com/nekobean/mahjong-cpp) の解説に沿って実装しています。細かな実装の一部は libriichi（[Mortal](https://github.com/Equim-chan/Mortal)）を参考にしました。
 - ほかに、riichienv-core を通して [Nyanten](https://github.com/Cryolite/nyanten)（MIT）の向聴表を使わせていただいています。
 

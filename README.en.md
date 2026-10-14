@@ -127,7 +127,7 @@ insights they share.
   riichienv-core 0.4.8 that adds per-seat draw queues and an explicit
   (kyoku, honba) wall table (`src/engine/README.md`), and the Python side uses
   the `riichienv` package.
-- **電脳麻将 (Majiang)** by Satoshi Kobayashi (kobalab;
+- **[電脳麻将 (Majiang)](https://github.com/kobalab/Majiang)** by Satoshi Kobayashi (kobalab;
   [majiang-ai](https://github.com/kobalab/majiang-ai), MIT, and the wider
   電脳麻将 project): the rulebot's design references it.
   `src/rust/rulebot/kobalab_ev.rs` is a port of majiang-ai's `eval_shoupai` /

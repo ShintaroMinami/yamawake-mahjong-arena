@@ -1,5 +1,5 @@
 //! Folding against a riichi (`fold=1`), and push / fold by the predicted
-//! state (`pf=1`) (Mode::Fold; design: docs/suzume.md, "ベタオリ",
+//! state (`pf=1`) (Mode::Fold; design: docs/suzume.md,
 //! "押し引き").
 
 use riichienv_core::action::{Action, ActionType};
