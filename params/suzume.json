@@ -1,0 +1,65 @@
+{
+ "_doc": "Fixed parameters of suzume (not options), embedded at build time (src/rust/suzume/params.rs); every key is required.",
+ "dp": {
+  "max_shanten": 2,
+  "ron_rate": 0.3,
+  "riichi_deposit": 1000.0,
+  "_doc": "max_shanten: the DP values hands at or below this shanten; ron_rate: scale on the chance an opponent discard is a winning tile; riichi_deposit: the riichi stick's cost when the hand does not win."
+ },
+ "value_features": {
+  "_doc": "Linear value score of a discard (rules::value_features): picks the discard after a call outside the DP's range.",
+  "weights": {
+   "shanten_loss": 4.599,
+   "ukeire1": 3.6448,
+   "ukeire2": 2.1473,
+   "dora_discarded": -2.4021,
+   "yakuhai_pairs": 0.1673,
+   "yakuhai_triplets": 1.804,
+   "yakuhai_singles": 1.9732,
+   "yaochu": -1.3162,
+   "tanyao_near": 0.7051,
+   "flush_share": 5.0963,
+   "pairs": 0.2684,
+   "chiitoi_shanten": -0.2684,
+   "isolated_honors": -2.1703,
+   "isolated_terminals": -1.7591
+  }
+ },
+ "tile_features": {
+  "_doc": "Tie pick among discards within tie_band of the best value score (rules::tile_features::tie_pick).",
+  "tie_band": 1.0,
+  "tie_weights": {
+   "unseen": 0.2491,
+   "honor_out1": 0.5484,
+   "honor_out2": 1.3092,
+   "nb_unseen1": 0.1452,
+   "nb_unseen2": 0.1529,
+   "guest_wind": -1.175,
+   "yakuhai_wind": 1.1101,
+   "dragon": 0.8279,
+   "terminal": 0.4619,
+   "rank_mid": -0.0736,
+   "is_28": 1.4617,
+   "dora": -0.3183,
+   "aka": 1.6878,
+   "dora_adj1": -0.5634,
+   "dora_adj2": -0.228,
+   "yakuhai_pair": -1.62,
+   "pair_break": 0.4582,
+   "set_break": -0.8262,
+   "isolated": 0.4273,
+   "flush_share": -4.1887,
+   "tanyao_step": 0.5823,
+   "progress_honor": -2.3951,
+   "progress_terminal": -1.2743,
+   "honor_out1_early": 0.2091,
+   "honor_out2_early": -0.8804,
+   "guest_wind_early": 2.2403,
+   "rel_value": 1.7925
+  }
+ },
+ "context": {
+  "_doc": "A unique top leads by more than top_margin (the outside bias of suzume-mlp1).",
+  "top_margin": 0
+ }
+}

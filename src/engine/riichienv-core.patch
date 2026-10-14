@@ -1,0 +1,365 @@
+--- a/src/state/wall.rs
++++ b/src/state/wall.rs
+@@ -16,6 +16,11 @@
+     pub salt: String,
+     pub seed: Option<u64>,
+     pub hand_index: u64,
++    /// reljong patch: per-seat live-draw queues (duplicate eval). When
++    /// `Some`, every live draw comes from the acting seat's own queue, so
++    /// a call never shifts another seat's future draws. The dead wall
++    /// stays in `tiles` (front-indexed) and is never split.
++    pub split_queues: Option<[Vec<u8>; 4]>,
+ }
+ 
+ impl WallState {
+@@ -30,6 +35,7 @@
+             salt: String::new(),
+             seed,
+             hand_index: 0,
++            split_queues: None,
+         }
+     }
+ 
+@@ -64,6 +70,7 @@
+         self.rinshan_draw_count = 0;
+         self.pending_kan_dora_count = 0;
+         self.drawable_count = 0;
++        self.split_queues = None;
+     }
+ 
+     pub fn load_wall(&mut self, tiles: Vec<u8>) {
+@@ -77,7 +84,41 @@
+         self.rinshan_draw_count = 0;
+         self.pending_kan_dora_count = 0;
+         self.drawable_count = 0;
++        self.split_queues = None;
+     }
++
++    /// reljong patch: carve the live region into fixed per-seat queues.
++    ///
++    /// Call right after the deal: `tiles` then holds the 14 dead-wall
++    /// tiles at the front and the live draws at the back (drawn via
++    /// `pop()`). The k-th live draw is assigned to seat `(oya + k) % 4`
++    /// — the seat that would draw it in a call-free game, so a call-free
++    /// hand is identical to the shared-wall mode. The live region is cut
++    /// off `tiles` so the front-indexed dead wall keeps its layout.
++    pub fn split_live_region(&mut self, oya: u8) {
++        let live = self.tiles.split_off(14);
++        let mut queues: [Vec<u8>; 4] = Default::default();
++        for (k, &t) in live.iter().rev().enumerate() {
++            queues[(oya as usize + k) % 4].push(t);
++        }
++        for q in &mut queues {
++            q.reverse();
++        }
++        self.split_queues = Some(queues);
++    }
++
++    /// reljong patch: draw for `actor` from its own queue; when heavy
++    /// calling runs the actor's queue dry, borrow from the longest queue
++    /// (on a tie, the highest seat index). The caller gates on
++    /// `drawable_count`, which stays the single shared haitei clock.
++    pub fn draw_split(&mut self, actor: u8) -> Option<u8> {
++        let queues = self.split_queues.as_mut()?;
++        if let Some(t) = queues[actor as usize].pop() {
++            return Some(t);
++        }
++        let longest = (0..4).max_by_key(|&i: &usize| queues[i].len())?;
++        queues[longest].pop()
++    }
+ }
+ 
+ fn splitmix64(x: u64) -> u64 {
+--- a/src/state/mod.rs
++++ b/src/state/mod.rs
+@@ -88,6 +88,16 @@
+ 
+     pub riichi_sutehais: [Option<u8>; NP], // Tile discarded when declaring riichi
+     pub last_tedashis: [Option<u8>; NP],   // Last hand discard (not tsumogiri)
++
++    /// reljong patch: duplicate-eval wall controls; both default off, in
++    /// which case behaviour is bit-identical to the stock engine.
++    /// `split_wall`: each seat draws only from its own fixed queue of the
++    /// kyoku's wall (see `WallState::split_live_region`).
++    /// `wall_table`: explicit walls keyed by
++    /// (kyoku ordinal = round_wind * 4 + oya, honba); a missing key falls
++    /// back to the seeded shuffle.
++    pub split_wall: bool,
++    pub wall_table: Option<HashMap<(u8, u8), Vec<u8>>>,
+ }
+ 
+ impl GameState {
+@@ -153,6 +163,8 @@
+             is_after_kan: false,
+             riichi_sutehais: [None; NP],
+             last_tedashis: [None; NP],
++            split_wall: false,
++            wall_table: None,
+         };
+ 
+         if !state.skip_mjai_logging {
+@@ -249,9 +261,13 @@
+             is_tenpai,
+             self.riichi_sutehais,
+             self.last_tedashis,
+-            self.last_discard.map(|(tile, _pid)| tile as u32),
++            // yamawake patch: `last_discard` holds (seat, tile); stock read
++            // the seat as the tile.
++            self.last_discard.map(|(_pid, tile)| tile as u32),
+             self.drawn_tile,
+         );
++        obs.last_discarder = self.last_discard.map(|(pid, _tile)| pid);
++        obs.drawable_count = self.wall.drawable_count as u8;
+ 
+         // Attach pre-computed progression snapshot.
+         #[cfg(feature = "python")]
+@@ -872,6 +888,7 @@
+                                     serde_json::to_value(deltas).expect("valid JSON"),
+                                 );
+                                 ev.insert("tsumo".to_string(), Value::Bool(true));
++                                insert_win(&mut ev, &self.win_results[&pid]);
+ 
+                                 let mut ura_markers = Vec::new();
+                                 if self.players[pid as usize].riichi_declared {
+@@ -1119,6 +1136,7 @@
+                                 "deltas".to_string(),
+                                 serde_json::to_value(this_deltas).expect("valid JSON"),
+                             );
++                            insert_win(&mut ev, &self.win_results[&w_pid]);
+ 
+                             let mut ura_markers = Vec::new();
+                             if self.players[w_pid as usize].riichi_declared {
+@@ -1563,6 +1581,16 @@
+                 self._push_mjai_event(Value::Object(ev));
+             }
+             self.riichi_pending_acceptance = None;
++        }
++    }
++
++    /// reljong patch: one live draw for the current player — from the
++    /// seat's own queue in split-wall mode, else from the shared wall.
++    fn _pop_live_tile(&mut self) -> Option<u8> {
++        if self.wall.split_queues.is_some() {
++            self.wall.draw_split(self.current_player)
++        } else {
++            self.wall.tiles.pop()
+         }
+     }
+ 
+@@ -1572,7 +1600,7 @@
+             self._trigger_ryukyoku("exhaustive_draw");
+             return;
+         }
+-        if let Some(t) = self.wall.tiles.pop() {
++        if let Some(t) = self._pop_live_tile() {
+             self.wall.drawable_count -= 1;
+             let pid = self.current_player;
+             self.players[pid as usize].hand.push(t);
+@@ -1740,6 +1768,15 @@
+             }
+         }
+ 
++        // reljong patch: an explicit wall table (keyed by kyoku ordinal +
++        // honba) beats the seeded shuffle, so renchan can never shift
++        // which wall a given (kyoku, honba) is played on.
++        let wall = wall.or_else(|| {
++            self.wall_table
++                .as_ref()
++                .and_then(|t| t.get(&(round_wind * 4 + oya, honba)))
++                .cloned()
++        });
+         if let Some(w) = wall {
+             self.wall.load_wall(w);
+         } else {
+@@ -1769,6 +1806,11 @@
+ 
+         // 14 = dead wall tiles (2 rinshan stacks + 5 dora stacks)
+         self.wall.drawable_count = (self.wall.tiles.len() as u8) - 14;
++        // reljong patch: split the live region into per-seat queues so
++        // calls never shift another seat's draws (duplicate eval).
++        if self.split_wall {
++            self.wall.split_live_region(oya);
++        }
+ 
+         // Record kyoku start offsets so get_observation() can return
+         // the full round history (not just incremental deltas).
+@@ -1824,7 +1866,7 @@
+         self.active_players = vec![self.oya];
+ 
+         // Draw 14th tile for Oya
+-        if let Some(t) = self.wall.tiles.pop() {
++        if let Some(t) = self._pop_live_tile() {
+             self.wall.drawable_count -= 1;
+             self.players[self.oya as usize].hand.push(t);
+             self.drawn_tile = Some(t);
+@@ -2161,3 +2203,13 @@
+         }
+     }
+ }
++
++/// yamawake patch: a `hora` event also carries the win's han, fu, yaku ids
++/// and whether it is a yakuman (as scored here), so a reader need not score
++/// the hand again.
++fn insert_win(ev: &mut serde_json::Map<String, Value>, win: &crate::types::WinResult) {
++    ev.insert("han".to_string(), Value::Number(win.han.into()));
++    ev.insert("yakuman".to_string(), Value::Bool(win.yakuman));
++    ev.insert("fu".to_string(), Value::Number(win.fu.into()));
++    ev.insert("yaku".to_string(), serde_json::to_value(&win.yaku).expect("valid JSON"));
++}
+--- a/src/shanten.rs
++++ b/src/shanten.rs
+@@ -611,7 +611,129 @@
+     }
+ 
+     max_ukeire
++}
++
++// ---------------------------------------------------------------------------
++// yamawake patch: incremental shanten (one tile added or removed).
++//
++// `calc_normal` hashes each suit separately and chains the four suit keys;
++// a hand that differs from a known one in a single tile differs in one suit.
++// `HandShanten` keeps a hand's four suit keys and its chiitoitsu / kokushi
++// tallies and gives the shanten with one tile added or removed by rehashing
++// that suit only. Values equal `calc_shanten_from_counts` of the changed
++// hand (tested in yamawake's `src/rust/eval/shanten.rs`).
++// ---------------------------------------------------------------------------
++
++/// yamawake patch: the key of suit `s` (0..3 manzu, pinzu, souzu; 3 honors).
++#[inline]
++fn suit_key(counts: &[u8; TILE_MAX], s: usize) -> u8 {
++    if s < 3 {
++        SHUPAI_KEYS[hash_shupai(&counts[s * 9..s * 9 + 9])]
++    } else {
++        ZIPAI_KEYS[hash_zipai(&counts[27..34])]
++    }
++}
++
++/// yamawake patch: regular-hand shanten from the four suit keys.
++#[inline]
++fn normal_from_keys(k: &[u8; 4], len_div3: usize) -> i8 {
++    let k1 = KEYS1[k[0] as usize * 126 + k[1] as usize] as usize;
++    let k2 = KEYS2[k1 * 126 + k[2] as usize] as usize;
++    (KEYS3[(k2 * 55 + k[3] as usize) * 5 + len_div3] as i8) - 1
++}
++
++#[inline]
++fn is_orphan(t: usize) -> bool {
++    t >= 27 || t % 9 == 0 || t % 9 == 8
++}
++
++/// yamawake patch: one hand's suit keys and chiitoitsu / kokushi tallies,
++/// to read the shanten of the hand with one tile added or removed.
++#[derive(Clone)]
++pub struct HandShanten {
++    counts: [u8; TILE_MAX],
++    keys: [u8; 4],
++    /// Tiles held.
++    n: u8,
++    /// Tile types held, and held twice or more (chiitoitsu).
++    kinds: u8,
++    pairs: u8,
++    /// Terminal and honor types held, and held twice or more (kokushi).
++    orphan_kinds: u8,
++    orphan_pairs: u8,
++}
++
++impl HandShanten {
++    pub fn new(counts: &[u8; TILE_MAX]) -> Self {
++        let (mut n, mut kinds, mut pairs, mut orphan_kinds, mut orphan_pairs) = (0u8, 0u8, 0u8, 0u8, 0u8);
++        for (t, &c) in counts.iter().enumerate() {
++            n += c;
++            kinds += u8::from(c > 0);
++            pairs += u8::from(c >= 2);
++            if is_orphan(t) {
++                orphan_kinds += u8::from(c > 0);
++                orphan_pairs += u8::from(c >= 2);
++            }
++        }
++        let keys = [suit_key(counts, 0), suit_key(counts, 1), suit_key(counts, 2), suit_key(counts, 3)];
++        Self { counts: *counts, keys, n, kinds, pairs, orphan_kinds, orphan_pairs }
++    }
++
++    /// `calc_shanten_from_counts` from the parts (same as `calc_chitoi` and
++    /// `calc_kokushi` over the tallies).
++    #[inline]
++    fn combine(keys: &[u8; 4], n: u8, kinds: u8, pairs: u8, orphan_kinds: u8, orphan_pairs: u8) -> i8 {
++        let len_div3 = n / 3;
++        let s = normal_from_keys(keys, len_div3 as usize);
++        if s <= 0 || len_div3 < 4 {
++            return s;
++        }
++        let chitoi = 7 - pairs as i8 + 7u8.saturating_sub(kinds) as i8 - 1;
++        let s = s.min(chitoi);
++        if s > 0 {
++            s.min(14 - orphan_kinds as i8 - i8::from(orphan_pairs > 0) - 1)
++        } else {
++            s
++        }
++    }
++
++    /// Shanten of the hand.
++    pub fn shanten(&self) -> i8 {
++        Self::combine(&self.keys, self.n, self.kinds, self.pairs, self.orphan_kinds, self.orphan_pairs)
++    }
++
++    /// Shanten with one more tile of type `t` (held fewer than four times).
++    pub fn plus(&self, t: usize) -> i8 {
++        let old = self.counts[t];
++        debug_assert!(old < 4);
++        self.changed(t, old + 1, u8::from(old == 0), u8::from(old == 1), true)
++    }
++
++    /// Shanten with one tile of type `t` (held) taken out.
++    pub fn minus(&self, t: usize) -> i8 {
++        let old = self.counts[t];
++        debug_assert!(old > 0);
++        self.changed(t, old - 1, u8::from(old == 1), u8::from(old == 2), false)
++    }
++
++    /// The shanten with `counts[t]` set to `new` (one more or one fewer):
++    /// `dk`/`dp` are the kind and pair changes, added when `up`.
++    #[inline]
++    fn changed(&self, t: usize, new: u8, dk: u8, dp: u8, up: bool) -> i8 {
++        let mut c = self.counts;
++        c[t] = new;
++        let s = if t < 27 { t / 9 } else { 3 };
++        let mut keys = self.keys;
++        keys[s] = suit_key(&c, s);
++        let (dok, dop) = if is_orphan(t) { (dk, dp) } else { (0, 0) };
++        if up {
++            Self::combine(&keys, self.n + 1, self.kinds + dk, self.pairs + dp, self.orphan_kinds + dok, self.orphan_pairs + dop)
++        } else {
++            Self::combine(&keys, self.n - 1, self.kinds - dk, self.pairs - dp, self.orphan_kinds - dok, self.orphan_pairs - dop)
++        }
++    }
+ }
++// --- end of yamawake patch ------------------------------------------------
+ 
+ #[cfg(all(test, feature = "python"))]
+ mod tests {
+--- a/src/observation/mod.rs
++++ b/src/observation/mod.rs
+@@ -53,6 +53,13 @@
+     pub last_discard: Option<u32>,
+     #[serde(default)]
+     pub drawn_tile: Option<u8>,
++    /// yamawake patch: the seat of `last_discard` (the discarder, or the
++    /// kakan's player), and the live wall left (`GameState::wall`), so a
++    /// consumer need not rebuild them from the events.
++    #[serde(default)]
++    pub last_discarder: Option<u8>,
++    #[serde(default)]
++    pub drawable_count: u8,
+ }
+ 
+ /// Pure Rust methods (no PyO3 dependency).
+@@ -107,6 +114,8 @@
+             last_tedashis,
+             last_discard,
+             drawn_tile,
++            last_discarder: None,
++            drawable_count: 0,
+         }
+     }
+ 

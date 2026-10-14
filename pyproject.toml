@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "yamawake"
+version = "0.1.0"
+description = "Duplicate riichi mahjong arena: split fixed walls cancel the luck of the draw"
+readme = "README.en.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    # Observations cross from the vendored core to the wheel as base64, so the
+    # two must be the same riichienv version.
+    "riichienv==0.4.8",
+    "numpy",
+]
+
+[project.urls]
+Repository = "https://github.com/ShintaroMinami/yamawake-mahjong-arena"
+Issues = "https://github.com/ShintaroMinami/yamawake-mahjong-arena/issues"
+
+[project.scripts]
+yamawake-arena = "yamawake.arena:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.maturin]
+module-name = "yamawake._core"
+python-source = "src/python"
+features = ["extension-module"]
+include = [{ path = "src/python/yamawake/data/*.json", format = ["sdist", "wheel"] }]
+
+[tool.uv]
+# Rebuild the extension when the Rust side changes.
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" },
+              { file = "src/rust/**/*.rs" }, { file = "src/engine/riichienv-core/src/**/*.rs" },
+              { file = "params/**/*.json" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

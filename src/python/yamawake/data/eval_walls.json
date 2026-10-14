@@ -1,0 +1,13 @@
+{
+ "name": "eval5000",
+ "wall_base": 0,
+ "walls": 5000,
+ "wall_ver": 4,
+ "created": "2026-10-14",
+ "note": "The standard evaluation walls: 5,000 wall matrices, four seat rotations each. A run takes the FIRST `walls` of them, so a 500-wall run is a prefix of a 5,000-wall one and the two compare directly. Walls regenerate from wall_base alone; the fingerprints catch drift.",
+ "fingerprint_first": "9251785176507d76569e3b7d46beaddccc72a09c97d5429a804786573098d7c3",
+ "fingerprint_last": "7c59d6e4939af96062f0eeabde524a1950e801427b25f5cf8de225df87b7ba86",
+ "fingerprint_all_sha256": "9911413c8cde6dcdd8eac4733c2a2048aa84c40726039109623297a9b4becb1d",
+ "fingerprint_first500_sha256": "810d6ddab7597b7436019cce021404faf1c94c23668e7135005c6c888b3a415f",
+ "default_walls": 1000
+}

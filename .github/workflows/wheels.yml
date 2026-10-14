@@ -1,0 +1,118 @@
+# Build wheels (Linux x86_64/aarch64, macOS arm64; CPython 3.11-3.13), test
+# them (golden games included), and attach them to a GitHub release on v* tags.
+# Platforms and Python versions follow what riichienv 0.4.8 ships wheels for
+# (no macOS x86_64) and what pyo3 0.22 supports (up to 3.13).
+name: wheels
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["docs/**", "**.md"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: "2014"
+          args: --release --out dist -i python3.11 python3.12 python3.13
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.11
+            3.12
+            3.13
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          args: --release --out dist -i python3.11 python3.12 python3.13
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-arm64
+          path: dist
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+  # Install the built wheel (not the source tree) and run the full suite,
+  # golden bit-identity included.
+  test:
+    needs: [linux, macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, artifact: wheels-linux-x86_64, python: "3.11"}
+          - {os: ubuntu-latest, artifact: wheels-linux-x86_64, python: "3.13"}
+          - {os: ubuntu-24.04-arm, artifact: wheels-linux-aarch64, python: "3.12"}
+          - {os: macos-14, artifact: wheels-macos-arm64, python: "3.12"}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install wheel
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --only-binary yamawake --find-links dist yamawake pytest
+      - name: Test
+        # Run from a copy of tests/ so `src/python/` is not importable and
+        # the installed wheel is what gets tested.
+        run: |
+          mkdir -p "$RUNNER_TEMP/t"
+          cp -r tests pyproject.toml "$RUNNER_TEMP/t/"
+          cd "$RUNNER_TEMP/t"
+          python -c "import yamawake, sys; print(yamawake.__file__)"
+          python -m pytest -q
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

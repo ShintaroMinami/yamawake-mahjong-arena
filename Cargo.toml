@@ -1,0 +1,36 @@
+[package]
+name = "yamawake"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ShintaroMinami/yamawake-mahjong-arena"
+description = "Duplicate riichi mahjong arena: lockstep self-play on split fixed walls"
+
+[lib]
+name = "yamawake"
+path = "src/rust/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.22", default-features = false, features = ["macros"], optional = true }
+# Vendored fork of the crates.io 0.4.8 source (Apache-2.0): adds the
+# duplicate-eval wall controls (split per-seat draw queues + explicit
+# (kyoku, honba) wall table), both off by default. See src/engine/README.md.
+riichienv-core = { path = "src/engine/riichienv-core" }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+rayon = "1"
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module", "pyo3"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+# Tests run the DP and whole games: optimize them (dependencies too).
+[profile.test]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 2
