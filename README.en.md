@@ -16,6 +16,13 @@ The split fixed walls are assigned to the seats and rotated in turn.
 Every player plays every split fixed wall once, so differences in results come
 only from the players' choices.
 
+> **Important:** A similar scheme, fixing the draws and each kyoku's wall, had
+> already been implemented and published in 2020 by Satoshi Kobayashi
+> (kobalab), the author of 電脳麻将, as "duplicate mahjong"
+> ([デュプリケート麻雀の実装](https://blog.kobalab.net/entry/2020/12/19/075529),
+> [majiang-ai](https://github.com/kobalab/majiang-ai)). I only noticed after
+> building this one: doing your homework first matters.
+
 ### What's in the repository
 
 - **arena**: the split-fixed-wall arena; a Rust game loop runs N games in
@@ -25,11 +32,15 @@ only from the players' choices.
 - **suzume**: a distilled model of a reinforcement-learned mahjong AI; a light
   bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
 
-On one CPU it runs at about
-1,180 hanchan/min with four rulebots and
-about 370 hanchan/min with four suzume bots.
-A Python player pays about 20 µs per decision to pass the observation back
-and forth. When you evaluate a very fast algorithm, this overhead can affect
+On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
+470 hanchan/min with four rulebots and
+about 170 hanchan/min with four suzume bots.
+For reference, a Mac (Apple M4 Pro) does about 1,120 (rulebot) and 400
+(suzume) hanchan/min on one thread, and about 10,000 and 3,500 hanchan/min on
+all its threads (14 cores).
+A Python player pays about 55 µs per decision (on the same EPYC CPU) to pass
+the observation back and forth, about twice the arena's own time per decision
+(about 23 µs). When you evaluate a very fast algorithm, this overhead can affect
 the overall speed (see [`docs/arena.md`](docs/arena.md)).
 The docs under [`docs/`](docs/) are in Japanese.
 
@@ -86,9 +97,8 @@ From Python:
 
 | Player | Description |
 |---|---|
-| `tsumogiri` | a bot that discards every draw (decided inside Rust) |
-| `tsumogiri-python` | the same moves made in Python, through the same path as your own agent |
-| `rulebot`, `rulebot:kobalab` | the fast rule-based bot |
+| `tsumogiri` | a bot that discards every draw |
+| `rulebot` | the fast rule-based bot |
 | `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4` | light, reasonably strong bots (3-layer MLPs) |
 | `suzume-mlp1`, `suzume-mlp1-flat` | lighter bots, slightly weaker (1-layer MLPs) |
 

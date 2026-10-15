@@ -335,8 +335,9 @@ fn suzume_config<'py>(py: Python<'py>, knobs: &Bound<'py, PyDict>) -> PyResult<B
 /// it (`rulebot::decide::decide` / `suzume::decide_observation`): `kind`
 /// "rulebot" or "suzume" with its config dict (a rulebot's knobs; suzume'
 /// options and `models`), the seat's serialized observation, the mjai events
-/// of the kyoku so far (from its `start_kyoku`, one JSON line each). A
-/// suzume bot starts from an empty kyoku memo.
+/// of the kyoku so far (from its `start_kyoku`, one JSON line each; they
+/// also give the live wall, `observation_with_wall`). A suzume bot starts
+/// from an empty kyoku memo (`SuzumeSeat` keeps one).
 ///
 /// Returns {"action": (action_type, tile, consume_tiles)}, plus "rule" (the
 /// deciding suzume rule) or, with `debug`, "debug" (the rulebot's branch
@@ -356,12 +357,11 @@ fn decide_one<'py>(
     let bot = bot_from(kind, config)?;
     let (action, rule, dbg) = py
         .allow_threads(|| -> Result<_, String> {
-            let obs = riichienv_core::observation::Observation::deserialize_from_base64(&obs_b64)
-                .map_err(|e| format!("obs deserialize failed: {e:?}"))?;
             let events: Vec<serde_json::Value> = kyoku_events
                 .iter()
                 .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
                 .collect::<Result<_, _>>()?;
+            let obs = observation_with_wall(&obs_b64, &events)?;
             match &bot {
                 Bot::Rulebot(cfg) => {
                     let (a, d) = crate::rulebot::decide::decide(&obs, &events, cfg, debug)?;
@@ -387,6 +387,87 @@ fn decide_one<'py>(
     Ok(out)
 }
 
+/// The live wall at a kyoku's start (riichienv's `drawable_count` then).
+const LIVE_WALL: usize = 70;
+
+/// An observation from its base64 JSON, with the fork's two fields set from
+/// the kyoku's events: a stock riichienv `Observation` (one that went through
+/// Python's riichienv, or an outside server's) has no `drawable_count` and no
+/// `last_discarder`. The live wall is 70 less the kyoku's draws (rinshan
+/// included, as the engine counts them) and the last discarder is the actor
+/// of the kyoku's last `dahai`; both equal the engine's own values.
+fn observation_with_wall(
+    obs_b64: &str,
+    events: &[serde_json::Value],
+) -> Result<riichienv_core::observation::Observation, String> {
+    let mut obs = riichienv_core::observation::Observation::deserialize_from_base64(obs_b64)
+        .map_err(|e| format!("obs deserialize failed: {e:?}"))?;
+    let kind = |e: &serde_json::Value, t: &str| e.get("type").and_then(serde_json::Value::as_str) == Some(t);
+    let draws = events.iter().filter(|e| kind(e, "tsumo")).count();
+    obs.drawable_count = LIVE_WALL.saturating_sub(draws) as u8;
+    obs.last_discarder = events
+        .iter()
+        .rev()
+        .find(|e| kind(e, "dahai"))
+        .and_then(|e| e.get("actor")?.as_u64())
+        .map(|a| a as u8);
+    Ok(obs)
+}
+
+/// One suzume seat played outside the arena: the bot and its kyoku memo.
+///
+/// `decide` is `decide_one("suzume", ...)` with the memo kept between the
+/// seat's decisions (the riichi tile, the push / fold history), as the arena
+/// keeps it per seat; the memo starts over when the kyoku's `start_kyoku`
+/// line changes.
+#[pyclass(module = "yamawake._core")]
+struct SuzumeSeat {
+    cfg: crate::suzume::SuzumeConfig,
+    memo: crate::suzume::SeatMemo,
+    kyoku: Option<String>,
+}
+
+#[pymethods]
+impl SuzumeSeat {
+    #[new]
+    fn new(config: &Bound<'_, PyDict>) -> PyResult<Self> {
+        Ok(Self { cfg: suzume_config_from(config)?, memo: Default::default(), kyoku: None })
+    }
+
+    /// `(action_type, tile, consume_tiles, rule)` for the seat's observation
+    /// (`serialize_to_base64()`) and the kyoku's mjai lines so far.
+    fn decide(
+        &mut self,
+        py: Python<'_>,
+        obs_b64: String,
+        kyoku_events: Vec<String>,
+    ) -> PyResult<(u8, Option<u8>, Vec<u8>, &'static str)> {
+        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
+        if start.is_some() && start != self.kyoku {
+            self.memo.clear();
+            self.kyoku = start;
+        }
+        let (cfg, memo) = (&self.cfg, &mut self.memo);
+        let (action, rule) = py
+            .allow_threads(|| -> Result<_, String> {
+                let events: Vec<serde_json::Value> = kyoku_events
+                    .iter()
+                    .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
+                    .collect::<Result<_, _>>()?;
+                let obs = observation_with_wall(&obs_b64, &events)?;
+                crate::suzume::decide_observation(&obs, &events, cfg, memo)
+            })
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), crate::suzume::decider_name(rule)))
+    }
+
+    /// Forget the kyoku memo (the next decision starts a fresh kyoku).
+    fn reset(&mut self) {
+        self.memo.clear();
+        self.kyoku = None;
+    }
+}
+
 #[pymodule]
 #[pyo3(name = "_core")]
 fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -396,5 +477,6 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(suzume_config, m)?)?;
     m.add_function(wrap_pyfunction!(decide_one, m)?)?;
     m.add_class::<SelfPlayLoop>()?;
+    m.add_class::<SuzumeSeat>()?;
     Ok(())
 }

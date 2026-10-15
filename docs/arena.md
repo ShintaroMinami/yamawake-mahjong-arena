@@ -12,7 +12,7 @@
 
 対局は N 局を並列に進めます。rulebot と suzume は Rust の中で判断し、Python を呼ぶのは Python のプレイヤーの手番だけです。
 
-Python のプレイヤーの判断には、判断そのものとは別に、1 回あたり約 20 µs の受け渡しの時間がかかります（Rust で作った観測を Python に渡して読み戻す変換と、判断ごとの記録の組み立て）。suzume の 1 判断（約 230 µs）のような普通のモデルでは目立ちませんが、非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります。例えば、同じ手を選ぶツモ切りボットでも、Rust の中で判断する `tsumogiri` 4 人では約 3,040 半荘/分、Python で判断する `tsumogiri-python` 4 人では約 1,515 半荘/分です（1 スレッド）。Time の表の arena の行には、この受け渡しの時間が含まれます。
+Python のプレイヤーの判断には、判断そのものとは別に、1 回あたり約 20 µs の受け渡しの時間がかかります（Rust で作った観測を Python に渡して読み戻す変換と、判断ごとの記録の組み立て）。arena 自体の 1 判断あたりの時間（約 10 µs）の 2 倍程度です。suzume の 1 判断（約 0.23 ms）のような普通のモデルでは目立ちませんが、非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります。例えば、同じ手を選ぶツモ切りボットでも、Rust の中で判断する `tsumogiri` 4 人では約 3,070 半荘/分、Python で判断する `tsumogiri-python` 4 人では約 1,570 半荘/分です（Apple M4 Pro の 1 スレッド、20 牌山、席の回転なし。[`docs/suzume.md`](suzume.md) の 6 節と同じ条件）。Time の表の arena の行には、この受け渡しの時間が含まれます。
 
 ## 2. コマンドライン
 
@@ -233,7 +233,26 @@ loop.scores(), loop.mjai_log(0)
 
 `collect()` は全対局が終わると `None` を返します。次の `collect()` の前に、`apply` で全ての行に答えます。ループの中で打つボットは `bot_seats` で席番号ごとに置けます（`"rulebot"` か `"suzume"` と設定）。
 
-## 6. 牌譜
+## 6. 外部の対局環境で suzume を動かす
+
+ほかの人が動かす対局（対局サーバーや別の対戦環境）の 1 席として suzume を打たせるときは、`yamawake.external.SuzumePlayer` を使います。席ごとに 1 つ作り、その席の riichienv の `Observation` と、その局の mjai の出来事（`start_kyoku` から。他家のツモは伏せたままでよい）を渡します。
+
+``` python
+from yamawake.external import SuzumePlayer
+
+player = SuzumePlayer("suzume")                 # suzume のプレイヤー名なら何でも（suzume-mlp1:call=0 など）
+action = player.act(obs, kyoku_events)          # obs.legal_actions() の 1 つ（rv.Action）
+reply = player.act_mjai(obs, kyoku_events)      # 同じ手を mjai の形で（tsumogiri つき）
+player.last_rule                                # その手を決めた suzume のルールの名前
+```
+
+- **arena と同じ手**：判断は arena の中の suzume と同じ Rust の処理です。局の間に覚えておくもの（立直の宣言牌、押し引きの状態の履歴）も、arena と同じく席ごとに持ち、新しい `start_kyoku` で忘れます。
+- **山の残り枚数**：riichienv の Python 版の `Observation` には、山の残り枚数（`drawable_count`）と最後に打牌した席（`last_discarder`）がありません。この 2 つは、渡された出来事から求めます（70 − ツモの数、最後の `dahai` の席）。
+- **新しい半荘**：同じ席で新しい半荘を始めるときは `player.reset()` を呼びます（呼ばなくても、局が変わると忘れます）。
+
+`SuzumeObservationAgent` は、同じプレイヤーを arena の Python のプレイヤー（観測を受け取る側）として置いたものです。外部の環境と同じ経路で打ち、arena の中の suzume と同じ対局になることをテストで確かめています（[`tests/arena/test_external.py`](../tests/arena/test_external.py)）。
+
+## 7. 牌譜
 
 ### handstats
 
@@ -255,7 +274,7 @@ from yamawake.tenhou6 import convert_file, dump
 dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")
 ```
 
-## 7. 制限
+## 8. 制限
 
 - arena の rulebot は大明槓をしません（[`docs/rulebot.md`](rulebot.md)）。
 - 対局の最後に残った供託の扱いは、riichienv に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。
