@@ -254,12 +254,15 @@ impl SelfPlayLoop {
     }
 }
 
-/// An in-loop bot from its kind ("rulebot" / "suzume") and config dict.
+/// An in-loop bot from its kind ("rulebot" / "suzume" / "tsumogiri") and config dict.
 fn bot_from(kind: &str, config: &Bound<'_, PyDict>) -> PyResult<crate::arena::Bot> {
     match kind {
         "rulebot" => Ok(crate::arena::Bot::Rulebot(rulebot_config_from(config)?)),
         "suzume" => Ok(crate::arena::Bot::Suzume(suzume_config_from(config)?)),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(format!("no in-loop bot {kind:?} (rulebot, suzume)"))),
+        "tsumogiri" => Ok(crate::arena::Bot::Tsumogiri),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "no in-loop bot {kind:?} (rulebot, suzume, tsumogiri)"
+        ))),
     }
 }
 
@@ -369,6 +372,7 @@ fn decide_one<'py>(
                     let (a, r) = crate::suzume::decide_observation(&obs, &events, cfg, &mut memo)?;
                     Ok((a, Some(r), None))
                 }
+                Bot::Tsumogiri => Ok((crate::arena::tsumogiri(&obs)?, None, None)),
             }
         })
         .map_err(PyValueError::new_err)?;

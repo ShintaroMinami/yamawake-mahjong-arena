@@ -8,7 +8,8 @@ A player is one of:
     rulebot | rulebot:latest       the ported rulebot, decided inside Rust
     suzume[:KEY=VALUE...]         the per-decision MLP bot, decided inside Rust
                                    (`python -m yamawake.suzume list`)
-    tsumogiri                      the floor baseline
+    tsumogiri                      the floor baseline, decided inside Rust
+    tsumogiri-python               the same moves made in Python (observation lane)
     <anything a plugin registers>  see `yamawake.agents.build_agent`
 
 Options for plugin players (e.g. a model's device) go through --opt KEY=VALUE;
@@ -39,7 +40,7 @@ import argparse
 import sys
 import time
 
-from yamawake.agents import build_agent
+from yamawake.agents import IN_LOOP_LANES, build_agent
 from yamawake.match import lineup, run_match
 from yamawake.report import report
 
@@ -147,7 +148,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(str(e))
     progress = _Progress(per_game=60 if args.single_kyoku else 566,
                          py_players=sum(1 for a in players
-                                        if getattr(a, "lane", None) not in ("rulebot", "suzume")))
+                                        if getattr(a, "lane", None) not in IN_LOOP_LANES))
     result = run_match(players, walls=args.walls, wall_base=args.wall_base,
                        flight=args.flight, record_logs=args.record_logs,
                        out=args.out,

@@ -6,10 +6,10 @@ import json
 import pytest
 import riichienv as rv
 
-from yamawake import (SeatTracker, SelfPlayLoop, TsumogiriAgent, build_agent,
+from yamawake import (PythonTsumogiriAgent, SeatTracker, SelfPlayLoop, TsumogiriAgent, build_agent,
                        decision_of, mjai_action_spec, play_games, register_agent,
                        register_resolver)
-from yamawake.agents import LANE_OBSERVATION, RulebotAgent
+from yamawake.agents import LANE_OBSERVATION, LANE_TSUMOGIRI, RulebotAgent
 from yamawake.context import LIVE_WALL
 from yamawake.rulebot import LATEST, STANDARD
 from yamawake.walls import blob_for_wall
@@ -37,9 +37,9 @@ def test_driving_the_loop_directly_matches_play_games():
     blobs = [blob_for_wall(s) for s in seeds]
     rb = [[(1, "rulebot", STANDARD), (3, "rulebot", STANDARD)] for _ in seeds]
     loop = SelfPlayLoop(seeds, 2, rb, wall_tables=blobs, split_wall=True)
-    assert _drive(loop, {}, lambda d: TsumogiriAgent().act_batch([d])[0]) > 0
+    assert _drive(loop, {}, lambda d: PythonTsumogiriAgent().act_batch([d])[0]) > 0
     assert loop.done()
-    want, logs = play_games(seeds, [(0, 1, 0, 1)] * 3, [TsumogiriAgent(), RulebotAgent()],
+    want, logs = play_games(seeds, [(0, 1, 0, 1)] * 3, [PythonTsumogiriAgent(), RulebotAgent()],
                             wall_blobs=blobs, want_logs=True)
     assert loop.scores() == want
     assert loop.mjai_log(2) == logs[2]
@@ -75,7 +75,7 @@ class _Reducer:
         self.discards += event["type"] == "dahai"
 
 
-class _Watcher(TsumogiriAgent):
+class _Watcher(PythonTsumogiriAgent):
     """Tsumogiri, with both context hooks, checking each decision as it comes.
 
     A decision's `kyoku_events` and `reducer` are the tracker's live objects, so
@@ -121,6 +121,8 @@ def test_a_tracker_without_a_reducer_keeps_none():
 
 def test_registry_names_and_resolvers():
     assert build_agent("tsumogiri").describe()["kind"] == "tsumogiri"
+    assert build_agent("tsumogiri").lane == LANE_TSUMOGIRI
+    assert build_agent("tsumogiri-python").lane == LANE_OBSERVATION
     with pytest.raises(ValueError, match="unknown player"):
         build_agent("nobody-registered-this")
 
@@ -128,5 +130,5 @@ def test_registry_names_and_resolvers():
     register_agent("echo", lambda spec, **o: got.setdefault(spec, (spec, o)))
     build_agent("echo:x", device="cpu")
     assert got["echo:x"] == ("echo:x", {"device": "cpu"})
-    register_resolver(lambda spec, **o: TsumogiriAgent() if spec.endswith(".pth") else None)
+    register_resolver(lambda spec, **o: PythonTsumogiriAgent() if spec.endswith(".pth") else None)
     assert build_agent("some/model.pth").lane == LANE_OBSERVATION

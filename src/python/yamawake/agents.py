@@ -8,6 +8,7 @@ business. Two lanes exist, and an agent declares which one it wants:
     LANE_RULEBOT       decided inside Rust (`config` is the knob dict);
                        nothing reaches Python
     LANE_SUZUME       the same for suzume (`config` is its option dict)
+    LANE_TSUMOGIRI     the same for the tsumogiri bot (no options)
 
 One call per tick, never one per decision: every game in flight waiting on this
 agent arrives in one list, which is what lets a model batch its forward.
@@ -16,7 +17,8 @@ An observation agent may also carry the two context hooks of `context.py`:
 `reducer_factory` (a per-event reducer each of its trackers keeps) and `annotate`
 (attached to each of its decisions under `Decision.extra`).
 
-Player specs (`build_agent`): `tsumogiri`, `rulebot`, `rulebot:latest`,
+Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
+same moves through the observation lane), `rulebot`, `rulebot:latest`,
 `suzume[:KEY=VALUE[:KEY=VALUE...]]` (e.g. `suzume:call=0`; `suzume` is
 `suzume-mlp3`, and `suzume-mlp3-flat`, `suzume-mlp3-avoid4`, `suzume-mlp1`
 and `suzume-mlp1-flat` are the other model sets, `MODEL_SETS`), plus
@@ -39,6 +41,9 @@ from yamawake.context import Decision
 LANE_OBSERVATION = "observation"
 LANE_RULEBOT = "rulebot"
 LANE_SUZUME = "suzume"
+LANE_TSUMOGIRI = "tsumogiri"
+#: The lanes decided inside the Rust loop.
+IN_LOOP_LANES = (LANE_RULEBOT, LANE_SUZUME, LANE_TSUMOGIRI)
 
 
 @runtime_checkable
@@ -55,7 +60,21 @@ class ArenaAgent(Protocol):
 
 
 class TsumogiriAgent:
-    """Discards the drawn tile, passes on everything else."""
+    """Discards the drawn tile, passes on everything else: decided inside
+    the Rust loop (`arena::tsumogiri`), never in Python."""
+
+    lane = LANE_TSUMOGIRI
+    config: dict = {}
+
+    def describe(self) -> dict:
+        """`{"kind": "tsumogiri", "name": "tsumogiri"}`."""
+        return {"kind": "tsumogiri", "name": "tsumogiri"}
+
+
+class PythonTsumogiriAgent:
+    """The tsumogiri bot's moves made in Python, on the observation lane: a
+    minimal observation-lane agent, and a gauge of the Python lane's cost
+    against `TsumogiriAgent`."""
 
     lane = LANE_OBSERVATION
 
@@ -64,8 +83,8 @@ class TsumogiriAgent:
         return [_tsumogiri(d.obs) for d in decisions]
 
     def describe(self) -> dict:
-        """`{"kind": "tsumogiri", "name": "tsumogiri"}`."""
-        return {"kind": "tsumogiri", "name": "tsumogiri"}
+        """`{"kind": "tsumogiri-python", "name": "tsumogiri-python"}`."""
+        return {"kind": "tsumogiri-python", "name": "tsumogiri-python"}
 
 
 def _tsumogiri(obs: rv.Observation) -> rv.Action:
@@ -220,9 +239,9 @@ def decide(spec: str, obs_b64: str, kyoku_events: list, debug: bool = False) -> 
     """
     from yamawake._core import decide_one
     agent = build_agent(spec)
-    kind = {LANE_RULEBOT: "rulebot", LANE_SUZUME: "suzume"}.get(agent.lane)
+    kind = agent.lane if agent.lane in IN_LOOP_LANES else None
     if kind is None:
-        raise ValueError(f"{spec!r} is not a rulebot or suzume bot")
+        raise ValueError(f"{spec!r} is not an in-loop bot (rulebot, suzume, tsumogiri)")
     events = [e if isinstance(e, str) else json.dumps(e) for e in kyoku_events]
     return decide_one(kind, agent.config, obs_b64, events, debug)
 
@@ -250,6 +269,7 @@ def _suzume(spec: str, **options) -> SuzumeAgent:
 
 
 register_agent("tsumogiri", lambda spec, **_: TsumogiriAgent())
+register_agent("tsumogiri-python", lambda spec, **_: PythonTsumogiriAgent())
 register_agent("rulebot", _rulebot)
 for _set in MODEL_SETS:
     register_agent(_set, _suzume)

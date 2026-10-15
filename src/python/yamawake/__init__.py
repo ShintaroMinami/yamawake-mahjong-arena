@@ -21,7 +21,8 @@ Low level: `SelfPlayLoop` (the Rust lockstep loop), `SeatTracker` /
 
 from yamawake._core import SelfPlayLoop, suzume_rules, run_sp
 from yamawake.agents import (LANE_SUZUME, LANE_OBSERVATION, LANE_RULEBOT,
-                              ArenaAgent, SuzumeAgent, RulebotAgent,
+                              LANE_TSUMOGIRI, ArenaAgent, PythonTsumogiriAgent,
+                              SuzumeAgent, RulebotAgent,
                               TsumogiriAgent, build_agent, decide,
                               register_agent, register_resolver)
 from yamawake.context import Decision, SeatTracker, decision_of
@@ -31,7 +32,7 @@ from yamawake.rules import DEFAULT_RULE, UmaRule, rank_of
 from yamawake.walls import FRESH, blob_for_wall, standard_walls
 
 __all__ = ["DEFAULT_RULE", "FRESH", "LANE_SUZUME", "LANE_OBSERVATION",
-           "LANE_RULEBOT", "ArenaAgent", "Decision", "MatchResult",
+           "LANE_RULEBOT", "LANE_TSUMOGIRI", "ArenaAgent", "PythonTsumogiriAgent", "Decision", "MatchResult",
            "SuzumeAgent", "RulebotAgent", "SeatTracker", "SelfPlayLoop",
            "SlotResult", "TsumogiriAgent", "UmaRule", "blob_for_wall",
            "build_agent", "decide", "decision_of", "lineup", "mjai_action_spec",

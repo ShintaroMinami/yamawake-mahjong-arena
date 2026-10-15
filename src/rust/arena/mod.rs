@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use riichienv_core::action::{Action, Phase};
+use riichienv_core::action::{Action, ActionType, Phase};
 use riichienv_core::rule::GameRule;
 use riichienv_core::state::GameState;
 use serde_json::Value;
@@ -145,6 +145,11 @@ impl GameSlot {
         crate::rulebot::decide::decide(&obs, &self.kyoku_events, cfg, false).map(|(a, _)| a)
     }
 
+    /// Decide one tsumogiri bot in-loop (`tsumogiri`).
+    pub fn tsumogiri_action(&mut self, seat: u8) -> Result<Action, String> {
+        tsumogiri(&self.state.get_observation(seat))
+    }
+
     /// Decide one suzume bot in-loop (`suzume::decide_observation` with the seat's
     /// kyoku memo); the rule that decided is traced.
     pub fn suzume_action(&mut self, seat: u8, cfg: &SuzumeConfig) -> Result<Action, String> {
@@ -154,6 +159,19 @@ impl GameSlot {
         self.suzume_trace.push((self.state.mjai_log.len() as u32, seat, rule));
         Ok(action)
     }
+}
+
+/// The tsumogiri bot's move: discard the drawn tile, else pass, else the
+/// first legal action (as the Python `PythonTsumogiriAgent`).
+pub fn tsumogiri(obs: &riichienv_core::observation::Observation) -> Result<Action, String> {
+    let legal = obs.legal_actions_method();
+    legal
+        .iter()
+        .find(|a| a.action_type == ActionType::Discard && a.tile == obs.drawn_tile)
+        .or_else(|| legal.iter().find(|a| a.action_type == ActionType::Pass))
+        .or_else(|| legal.first())
+        .cloned()
+        .ok_or_else(|| format!("seat {} has no legal actions but must act", obs.player_id))
 }
 
 /// N-game lockstep driver: collect() -> (pending observations) -> apply(specs).
@@ -172,6 +190,7 @@ pub struct LockstepLoop {
 pub enum Bot {
     Rulebot(RulebotConfig),
     Suzume(SuzumeConfig),
+    Tsumogiri,
 }
 
 /// One collect() tick's rows, in pending/apply order.
@@ -247,6 +266,7 @@ impl LockstepLoop {
                         let action = match bot_seats[gi].iter().find(|(s, _)| *s == seat) {
                             Some((_, Bot::Rulebot(cfg))) => slot.rulebot_action(seat, cfg)?,
                             Some((_, Bot::Suzume(cfg))) => slot.suzume_action(seat, cfg)?,
+                            Some((_, Bot::Tsumogiri)) => slot.tsumogiri_action(seat)?,
                             None => {
                                 external.push(seat);
                                 continue;

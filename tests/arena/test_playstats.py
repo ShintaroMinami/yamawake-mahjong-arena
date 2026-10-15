@@ -64,6 +64,6 @@ def test_match_stats_time_and_report():
     assert [t["name"] for t in times] == ["tsumogiri", "rulebot", "arena"]
     assert all(t["decisions"] > 0 for t in times[:2]) and times[2]["seconds"] > 0
     text = report(r)
-    for section in ("Standings", "Play per kyoku", "Hand points", "Time", "paired over 4 walls"):
+    for section in ("Standings", "Play per kyoku", "adj. eff", "Time", "paired over 4 walls"):
         assert section in text
     assert "play_stats" in r.to_json() and "time_stats" in r.to_json()

@@ -19,6 +19,7 @@
 1 CPUを使用した場合、
 rulebot 4 人なら約 1,180 半荘/分、
 suzume 4 人なら約 370 半荘/分 で動作します。
+Python のプレイヤーは、判断 1 回ごとに観測の受け渡しで約 20 µs かかります。非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります（[`docs/arena.md`](docs/arena.md)を参照）。
 
 ## suzume の強さ
 
@@ -69,7 +70,8 @@ Python からの利用は以下のように行います。
 
 | プレイヤー | 説明 |
 |---|---|
-| `tsumogiri` | ツモ切りボット |
+| `tsumogiri` | ツモ切りボット（Rust の中で判断） |
+| `tsumogiri-python` | 同じ手を Python で選ぶツモ切りボット。自作のプレイヤーと同じ経路を通る |
 | `rulebot`、`rulebot:latest` | ルールベースの高速ボット |
 | `suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4` | 軽量かつある程度強いボット (3 層の MLP を使用) |
 | `suzume-mlp1`、`suzume-mlp1-flat` | 強さを少し落とした、より軽量なボット (1 層の MLP を使用) |

@@ -13,7 +13,7 @@ def test_cli_runs_a_2v2_and_writes_its_outputs(tmp_path, capsys):
     main(["--mode", "2v2", "--players", "tsumogiri", "rulebot", "--walls", "2",
           "--out", str(tmp_path / "r.jsonl"), "--save-scores", str(tmp_path / "s.npz")])
     text = capsys.readouterr().out
-    assert "4 hanchan (2 walls x 2)" in text and "paired over 2 walls" in text and "/min" in text
+    assert "4 hanchan = 2 walls x 2" in text and "paired over 2 walls" in text and "/min" in text
     row = json.loads((tmp_path / "r.jsonl").read_text())
     assert row["protocol"]["rule"] == "RewardRule" and row["games"] == 4
     assert np.load(tmp_path / "s.npz")["scores"].shape == (4, 4)

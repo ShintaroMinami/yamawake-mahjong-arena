@@ -28,7 +28,7 @@ from typing import Callable, Optional
 import riichienv as rv
 
 from yamawake._core import SelfPlayLoop
-from yamawake.agents import LANE_SUZUME, LANE_OBSERVATION, LANE_RULEBOT
+from yamawake.agents import IN_LOOP_LANES, LANE_OBSERVATION
 from yamawake.context import SeatTracker, decision_of
 
 HANCHAN = 2
@@ -88,7 +88,7 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
     """
     lanes = [getattr(a, "lane", LANE_OBSERVATION) for a in agents]
     for ai, lane in enumerate(lanes):
-        if lane not in (LANE_OBSERVATION, LANE_RULEBOT, LANE_SUZUME):
+        if lane != LANE_OBSERVATION and lane not in IN_LOOP_LANES:
             raise ValueError(f"agent {ai} declares an unknown lane {lane!r}")
     scores: list[list[int]] = []
     logs: list[list[str]] = []
@@ -97,9 +97,9 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
     for lo in range(0, len(seeds), flight):
         hi = min(lo + flight, len(seeds))
         maps = seat_maps[lo:hi]
-        # The in-loop bots' seats: (seat, "rulebot" / "suzume", config).
+        # The in-loop bots' seats: (seat, "rulebot" / "suzume" / "tsumogiri", config).
         bot_seats = [[(s, lanes[m[s]], agents[m[s]].config) for s in range(4)
-                      if lanes[m[s]] in (LANE_RULEBOT, LANE_SUZUME)] for m in maps]
+                      if lanes[m[s]] in IN_LOOP_LANES] for m in maps]
         loop = SelfPlayLoop(
             seeds[lo:hi], game_mode, bot_seats,
             wall_tables=None if wall_blobs is None else wall_blobs[lo:hi],

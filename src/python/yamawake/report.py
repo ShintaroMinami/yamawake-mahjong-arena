@@ -2,11 +2,11 @@
 
     print(report(result))
 
-Sections, each a table with one row per slot (or side, `MatchResult.table`):
-the standings (rank, points and rank shares, or the kyoku delta of a
-single-kyoku match), the 2v2 pairing, the play statistics per kyoku and the
-hand points (when the match gathered `play_stats`), and the time each player
-and the arena itself took.
+Three tables, one row per slot (or side, `MatchResult.table`): the standings
+(rank, points and rank shares, or the kyoku delta of a single-kyoku match,
+with the 2v2 pairing under it), the play statistics per kyoku (when the
+match gathered `play_stats`), and the time each player and the arena itself
+took. Standard errors over walls sit in parentheses under their values.
 """
 
 from __future__ import annotations
@@ -15,20 +15,38 @@ import numpy as np
 
 from yamawake.match import MatchResult
 
+RULE = "─"
 
-def _table(headers: list[str], rows: list[list[str]], left: int = 2) -> list[str]:
-    """Lines of a table: the first `left` columns left-aligned, the rest right."""
-    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+
+def _table(title: str, headers: list[str], rows: list[list[str]], left: int = 2,
+           foot: list[list[str]] | None = None, notes: list[str] | None = None) -> list[str]:
+    """Lines of a ruled table: the first `left` columns left-aligned, the rest right.
+
+    Args:
+        title: The line above the table.
+        headers: Column names.
+        rows: Body rows (an se row leaves its label cells blank).
+        left: How many leading columns align left.
+        foot: Rows under a rule after the body (e.g. a total).
+        notes: Lines under the closing rule.
+    """
+    body = rows + (foot or [])
+    widths = [max(len(h), *(len(r[i]) for r in body)) for i, h in enumerate(headers)]
 
     def line(cells: list[str]) -> str:
         return "  " + "  ".join(c.ljust(w) if i < left else c.rjust(w)
                                 for i, (c, w) in enumerate(zip(cells, widths))).rstrip()
 
-    return [line(headers), *(line(r) for r in rows)]
+    rule = "  " + RULE * (sum(widths) + 2 * (len(widths) - 1))
+    out = [title, rule, line(headers), rule, *(line(r) for r in rows)]
+    if foot:
+        out += [rule, *(line(r) for r in foot)]
+    out.append(rule)
+    return out + [f"  {n}" for n in notes or []]
 
 
-def _pm(v: float, se: float, fmt: str) -> str:
-    return f"{v:{fmt}} ± {se:{fmt.lstrip('+')}}"
+def _se(x: float, fmt: str) -> str:
+    return f"({x:{fmt}})"
 
 
 def _rank_share(r: MatchResult, slots: list[int]) -> np.ndarray:
@@ -39,8 +57,77 @@ def _rank_share(r: MatchResult, slots: list[int]) -> np.ndarray:
     return np.array([(got == k).mean() for k in (1, 2, 3, 4)])
 
 
+def _standings(r: MatchResult, label: str, balanced: bool) -> list[str]:
+    p = r.protocol
+    unit = "hanchan" if r.kyoku is None else "single-kyoku games"
+    title = (f"Standings  ({r.games:,} {unit} = {p['walls']:,} walls x {p['rotations']}, "
+             f"wall_base {p['wall_base']})")
+    shown = r.slots if balanced else r.sides()
+    rows = []
+    if r.kyoku is None:
+        heads = [label, "player", "avg rank", "avg pt", "1st", "2nd", "3rd", "4th"]
+        for s, js in zip(shown, r._groups()):
+            share = _rank_share(r, js)
+            rows.append([str(s.slot), s.name, f"{s.avg_rank:.4f}", f"{s.avg_pt:+.3f}",
+                         *(f"{100 * x:.1f}%" for x in share)])
+            rows.append(["", "", _se(s.se, ".4f"), _se(s.se_pt, ".3f"), "", "", "", ""])
+    else:
+        heads = [label, "player", "kyoku delta", "avg rank"]
+        rank = {s.slot: s.avg_rank for s in shown}
+        for k in r.kyoku_stats():
+            rows.append([str(k["slot"]), k["name"], f"{k['delta']:+,.0f}", f"{rank[k['slot']]:.4f}"])
+            rows.append(["", "", _se(k["delta_se"], ",.0f"), ""])
+    notes = []
+    if not balanced:
+        d = r.paired()
+        sigma = f"{abs(d['rank']) / d['rank_se']:.1f} sigma" if d["rank_se"] else "no spread"
+        notes.append(f"paired over {d['walls']:,} walls, slots 0,2 minus 1,3:  rank {d['rank']:+.4f} "
+                     f"({d['rank_se']:.4f}, {sigma})   pt {d['pt']:+.4f} ({d['pt_se']:.4f})"
+                     + (f"   kyoku delta {d['delta']:+,.0f} ({d['delta_se']:,.0f})"
+                        if "delta" in d else ""))
+    return _table(title, heads, rows, notes=notes)
+
+
+def _play(r: MatchResult, label: str) -> list[str]:
+    rows = []
+    for s in r.play_stats():
+        rows.append([str(s["slot"]), s["name"],
+                     *(f"{100 * s[k]:.2f}%" for k in ("win", "deal_in", "call", "riichi")),
+                     f"{s['avg_win']:,.0f}", f"{s['avg_deal']:,.0f}", f"{s['adj_eff']:+,.0f}"])
+        rows.append(["", "",
+                     *(_se(100 * s[f"{k}_se"], ".2f") for k in ("win", "deal_in", "call", "riichi")),
+                     _se(s["avg_win_se"], ",.0f"), _se(s["avg_deal_se"], ",.0f"),
+                     _se(s["adj_eff_se"], ",.0f")])
+    return _table("Play per kyoku",
+                  [label, "player", "win", "deal-in", "call", "riichi",
+                   "avg win", "avg deal-in", "adj. eff"], rows,
+                  notes=["call: chi, pon or daiminkan; riichi: declared. Points exclude honba and "
+                         "riichi sticks.",
+                         "adj. eff = win x avg win - deal-in x avg deal-in (points per kyoku)."])
+
+
+def _time(r: MatchResult, label: str) -> list[str]:
+    times = r.time_stats()
+    used = sum(t["seconds"] for t in times) or 1.0
+    rows = []
+    for t in times:
+        n = t["decisions"]
+        rows.append(["" if t["slot"] is None else str(t["slot"]),
+                     t["name"] if t["slot"] is not None else "arena (engine, loop)",
+                     f"{n:,}" if n else "-", f"{t['seconds']:,.1f}",
+                     f"{t['ms_per_decision']:.3f}" if n else "-",
+                     f"{100 * t['seconds'] / used:.0f}%"])
+    unit = "hanchan" if r.kyoku is None else "games"
+    foot = [["", "total", "", f"{used:,.1f}", "", "100%"]]
+    return _table("Time", [label, "player", "decisions", "seconds", "ms/decision", "share"],
+                  rows, foot=foot,
+                  notes=[f"wall clock {r.seconds:,.1f} s, process cpu {r.cpu_seconds:,.1f} s, "
+                         f"{r.games / max(r.seconds, 1e-9) * 60:,.0f} {unit}/min. "
+                         "Seconds are summed over threads."])
+
+
 def report(r: MatchResult) -> str:
-    """The match as readable tables.
+    """The match as ruled tables.
 
     Args:
         r: A finished match (`run_match`).
@@ -48,62 +135,11 @@ def report(r: MatchResult) -> str:
     Returns:
         The report, ready to print.
     """
-    p = r.protocol
-    balanced = int(p["rotations"]) == 4
+    balanced = int(r.protocol["rotations"]) == 4
     label = "slot" if balanced else "side"
-    unit = "hanchan" if r.kyoku is None else "single-kyoku games"
-    out = [f"{r.games} {unit} ({p['walls']} walls x {p['rotations']}), "
-           f"wall_base {p['wall_base']}, split_wall {p['split_wall']}", ""]
-
-    out.append("Standings")
-    if r.kyoku is None:
-        shown = r.slots if balanced else r.sides()
-        rows = [[str(s.slot), s.name, _pm(s.avg_rank, s.se, ".4f"), _pm(s.avg_pt, s.se_pt, "+.3f"),
-                 *(f"{x:.4f}" for x in _rank_share(r, js))] for s, js in zip(shown, r._groups())]
-        out += _table([label, "player", "avg rank", "avg pt", "1st", "2nd", "3rd", "4th"], rows)
-    else:
-        rank = {s.slot: s.avg_rank for s in (r.slots if balanced else r.sides())}
-        rows = [[str(k["slot"]), k["name"], _pm(k["delta"], k["delta_se"], "+.0f"),
-                 f"{rank[k['slot']]:.4f}"] for k in r.kyoku_stats()]
-        out += _table([label, "player", "kyoku delta", "avg rank"], rows)
-    if not balanced:
-        d = r.paired()
-        sigma = f"{abs(d['rank']) / d['rank_se']:.1f} sigma" if d["rank_se"] else "no spread"
-        line = (f"  paired over {d['walls']} walls, slots 0,2 minus 1,3: "
-                f"rank {_pm(d['rank'], d['rank_se'], '+.4f')} ({sigma}), "
-                f"pt {_pm(d['pt'], d['pt_se'], '+.4f')}")
-        if "delta" in d:
-            line += f", kyoku delta {_pm(d['delta'], d['delta_se'], '+.0f')}"
-        out.append(line)
-
+    parts = [_standings(r, label, balanced)]
     if r.play is not None:
-        stats = r.play_stats()
-        out += ["", "Play per kyoku"]
-        out += _table([label, "player", "win", "deal-in", "call", "riichi"],
-                      [[str(s["slot"]), s["name"],
-                        *(_pm(s[k], s[f"{k}_se"], ".4f") for k in ("win", "deal_in", "call", "riichi"))]
-                       for s in stats])
-        out += ["", "Hand points"]
-        out += _table([label, "player", "avg win", "avg deal-in", "adj. efficiency"],
-                      [[str(s["slot"]), s["name"], _pm(s["avg_win"], s["avg_win_se"], ".0f"),
-                        _pm(s["avg_deal"], s["avg_deal_se"], ".0f"),
-                        _pm(s["adj_eff"], s["adj_eff_se"], "+.0f")] for s in stats])
-        out.append("  adj. efficiency = win x avg win - deal-in x avg deal-in "
-                   "(points per kyoku; honba and riichi sticks excluded)")
-
-    times = r.time_stats()
-    if times:
-        total = sum(t["seconds"] for t in times) or 1.0
-        rows = []
-        for t in times:
-            slot = "" if t["slot"] is None else str(t["slot"])
-            n = t["decisions"]
-            rows.append([slot, t["name"] if t["slot"] is not None else "arena (engine, loop)",
-                         f"{n:,}" if n else "-", f"{t['seconds']:.1f}",
-                         f"{t['ms_per_decision']:.3f}" if n else "-",
-                         f"{100 * t['seconds'] / total:.0f}%"])
-        out += ["", "Time"]
-        out += _table([label, "player", "decisions", "seconds", "ms/decision", "share"], rows)
-        out.append(f"  total: {r.seconds:.1f} s wall, {r.cpu_seconds:.1f} s cpu, "
-                   f"{r.games / max(r.seconds, 1e-9) * 60:,.0f} {unit}/min")
-    return "\n".join(out)
+        parts.append(_play(r, label))
+    if r.timing is not None:
+        parts.append(_time(r, label))
+    return "\n\n".join("\n".join(p) for p in parts)

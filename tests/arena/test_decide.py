@@ -4,7 +4,8 @@ from __future__ import annotations
 import pytest
 import riichienv as rv
 
-from yamawake import RulebotAgent, SeatTracker, SelfPlayLoop, decide, mjai_action_spec, suzume_rules
+from yamawake import (PythonTsumogiriAgent, RulebotAgent, SeatTracker, SelfPlayLoop, decide,
+                      mjai_action_spec, suzume_rules)
 
 
 def test_decide_answers_a_position_with_a_legal_action():
@@ -22,8 +23,14 @@ def test_decide_answers_a_position_with_a_legal_action():
             action_type, tile, consume = d["action"]
             assert (action_type, tile, tuple(consume)) in legal and d["rule"] in rules
         assert "debug" in decide("rulebot", b64, tr.events, debug=True)
+        assert decide("tsumogiri", b64, tr.events)["action"] == _tsumogiri_spec(obs)
     with pytest.raises(ValueError):
-        decide("tsumogiri", batch["obs"][0], [])
+        decide("tsumogiri-python", batch["obs"][0], [])
+
+
+def _tsumogiri_spec(obs) -> tuple:
+    a = PythonTsumogiriAgent().act_batch([type("D", (), {"obs": obs})()])[0]
+    return (int(a.action_type), a.tile, list(a.consume_tiles))
 
 
 def test_decide_replays_the_in_loop_rulebot():

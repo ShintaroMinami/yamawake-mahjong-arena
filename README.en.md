@@ -28,6 +28,9 @@ only from the players' choices.
 On one CPU it runs at about
 1,180 hanchan/min with four rulebots and
 about 370 hanchan/min with four suzume bots.
+A Python player pays about 20 µs per decision to pass the observation back
+and forth. When you evaluate a very fast algorithm, this overhead can affect
+the overall speed (see [`docs/arena.md`](docs/arena.md)).
 The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
@@ -83,7 +86,8 @@ From Python:
 
 | Player | Description |
 |---|---|
-| `tsumogiri` | a bot that discards every draw |
+| `tsumogiri` | a bot that discards every draw (decided inside Rust) |
+| `tsumogiri-python` | the same moves made in Python, through the same path as your own agent |
 | `rulebot`, `rulebot:latest` | the fast rule-based bot |
 | `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4` | light, reasonably strong bots (3-layer MLPs) |
 | `suzume-mlp1`, `suzume-mlp1-flat` | lighter bots, slightly weaker (1-layer MLPs) |

@@ -200,3 +200,12 @@ def test_single_kyoku_is_the_hanchans_east_1(tmp_path):
         b = gzip.open(tmp_path / "hc" / f.name, "rt").read().splitlines()
         cut = [next(i for i, line in enumerate(x) if '"end_kyoku"' in line) for x in (a, b)]
         assert a[:cut[0]] == b[:cut[1]]
+
+
+def test_the_rust_and_python_tsumogiri_play_the_same_games():
+    from yamawake import PythonTsumogiriAgent
+    rb = RulebotAgent()
+    for seating in (lambda t: [t, rb, rb, rb], lambda t: [t, t, t, t]):
+        rust = run_match(seating(TsumogiriAgent()), walls=4)
+        py = run_match(seating(PythonTsumogiriAgent()), walls=4)
+        assert (rust.scores == py.scores).all()
