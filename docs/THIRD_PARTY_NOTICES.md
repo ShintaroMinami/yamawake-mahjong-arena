@@ -1,30 +1,30 @@
 # Third-party notices
 
-yamawake-mahjong-arena is MIT-licensed (`LICENSE`). It contains or derives from the
+yamawake-mahjong-arena is MIT-licensed ([`LICENSE`](../LICENSE)). It contains or derives from the
 following third-party work.
 
 ## riichienv-core 0.4.8 (RiichiEnv)
 
 - Source: https://github.com/smly/RiichiEnv (crate `riichienv-core` 0.4.8), by smly
-- License: Apache License 2.0 -- full text in `src/engine/riichienv-core/LICENSE`
+- License: Apache License 2.0 -- full text in [`src/engine/riichienv-core/LICENSE`](../src/engine/riichienv-core/LICENSE)
   (taken from the riichienv 0.4.8 distribution; the crate ships no NOTICE file)
-- Use: vendored and modified under `src/engine/riichienv-core/`. Changes: split
+- Use: vendored and modified under [`src/engine/riichienv-core/`](../src/engine/riichienv-core/). Changes: split
   per-seat draw queues and an explicit (kyoku, honba) wall table, both opt-in,
   and an incremental shanten type (`shanten::HandShanten`) over its own
-  tables (`src/engine/README.md`, `src/engine/riichienv-core.patch`). The Python
+  tables ([`src/engine/README.md`](../src/engine/README.md), `src/engine/riichienv-core.patch`). The Python
   package `riichienv` (same license) is a runtime dependency.
 
 ## majiang-ai (電脳麻将 / Majiang)
 
 - Source: https://github.com/kobalab/majiang-ai, by Satoshi Kobayashi (kobalab)
 - License: MIT (text below)
-- Use: `src/rust/rulebot/kobalab_ev.rs` is a port of majiang-ai's `eval_shoupai` /
+- Use: [`src/rust/rulebot/kobalab_ev.rs`](../src/rust/rulebot/kobalab_ev.rs) is a port of majiang-ai's `eval_shoupai` /
   `eval_fulou`; the rulebot's call logic follows its `select_fulou`,
-  `src/rust/rulebot/kan.rs` (ankan / kakan) is a port of its `select_gang`, and
-  `src/rust/rulebot/yaku_shanten.rs` follows its `Player#xiangting`. The wait-shape
-  danger weights (`src/rust/rulebot/danger.rs`, `base_danger` and the tanki /
+  [`src/rust/rulebot/kan.rs`](../src/rust/rulebot/kan.rs) (ankan / kakan) is a port of its `select_gang`, and
+  [`src/rust/rulebot/yaku_shanten.rs`](../src/rust/rulebot/yaku_shanten.rs) follows its `Player#xiangting`. The wait-shape
+  danger weights ([`src/rust/rulebot/danger.rs`](../src/rust/rulebot/danger.rs), `base_danger` and the tanki /
   shanpon / kanchan / penchan / ryanmen scheme) and the call-ways weights
-  (`src/rust/rulebot/discard.rs`, `call_ways`) follow majiang-ai's `suanpai.js`.
+  ([`src/rust/rulebot/discard.rs`](../src/rust/rulebot/discard.rs), `call_ways`) follow majiang-ai's `suanpai.js`.
 
 ```
 MIT License
@@ -57,7 +57,7 @@ SOFTWARE.
   files (`nyanten/test/correctness.cpp`, `nyanten/test/performance_baseline.cpp`)
   are not used or included.
 - Use: the shanten lookup tables in the vendored riichienv-core
-  (`src/engine/riichienv-core/src/shanten.rs`, and the tables at
+  ([`src/engine/riichienv-core/src/shanten.rs`](../src/engine/riichienv-core/src/shanten.rs), and the tables at
   `src/engine/riichienv-core/src/data/nyanten_*.bin`) are
   generated from Nyanten's tables by riichienv.
 
@@ -75,7 +75,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Method credit (no code included)
 
-- The single-player DP (`src/rust/eval/dp.rs`, `src/rust/eval/score.rs`) implements the method
+- The single-player DP ([`src/rust/eval/dp.rs`](../src/rust/eval/dp.rs), [`src/rust/eval/score.rs`](../src/rust/eval/score.rs)) implements the method
   of tomohxx's *Mahjong Algorithm* book, ch. 6 "win probability"
   (https://tomohxx.github.io/mahjong-algorithm-book/probability/),
   following the explanations of nekobean's mahjong-cpp

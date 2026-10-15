@@ -15,17 +15,19 @@ The split fixed walls are assigned to the seats and rotated in turn.
 Every player plays every split fixed wall once, so differences in results come
 only from the players' choices.
 
-### Main components
+### What's in the repository
 
 - **arena**: the split-fixed-wall arena; a Rust game loop runs N games in
-  parallel (see `docs/arena.md`).
+  parallel (see [`docs/arena.md`](docs/arena.md)).
 - **rulebot**: a fast rule-based bot, useful as a baseline (see
-  `docs/rulebot.md`).
+  [`docs/rulebot.md`](docs/rulebot.md)).
 - **suzume**: a distilled model of a reinforcement-learned mahjong AI; a light
-  bot built on small per-decision MLPs (see `docs/suzume.md`).
+  bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
 
-On one CPU it runs about 1,180 hanchan/min with four rulebots and about 370
-hanchan/min with four suzume bots. The docs under `docs/` are in Japanese.
+On one CPU it runs at about
+1,180 hanchan/min with four rulebots and
+about 370 hanchan/min with four suzume bots.
+The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
 
@@ -41,51 +43,61 @@ TODO: suzume's strength measured in matches against
 
 Each [release](https://github.com/ShintaroMinami/yamawake-mahjong-arena/releases)
 carries wheels for Linux x86_64/aarch64 (manylinux2014) and macOS arm64,
-CPython 3.11-3.13, with the Rust core precompiled; `riichienv` and `numpy`
-come from PyPI.
-
+CPython 3.11-3.13.
+The Rust core is precompiled in the wheel.
+`riichienv` and `numpy` come from PyPI.
+``` bash
     gh release download -R ShintaroMinami/yamawake-mahjong-arena -p '*.whl' -D wheels
     pip install --find-links wheels yamawake
-
+```
 ### From source
 
 Needs Python >= 3.11, a Rust toolchain and [uv](https://docs.astral.sh/uv/).
-
+``` bash
     git clone https://github.com/ShintaroMinami/yamawake-mahjong-arena.git
     cd yamawake-mahjong-arena
     uv sync                # builds the extension (maturin) into .venv
     uv run pytest          # tests
-
+```
 Without uv, `pip install git+https://github.com/ShintaroMinami/yamawake-mahjong-arena.git`
 also works given a Rust toolchain.
 
 The package is `yamawake` and the command is `yamawake-arena`.
 
 ## Usage
-
-    uv run yamawake-arena --mode 1v3 --players tsumogiri rulebot --walls 50
-    uv run python -m yamawake.arena --mode 2v2 --players suzume rulebot
-    uv run python -m yamawake.handstats logs/ --name suzume     # stats of --record-logs games
-
+``` bash
+    uv run yamawake-arena --mode 2v2 --players tsumogiri rulebot --walls 100
+    uv run python -m yamawake.arena --mode 1v3 --players suzume rulebot
+```
+From Python:
+``` python
     from yamawake import RulebotAgent, TsumogiriAgent, run_match
-    r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=50)
+    r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=100)
     print(r.table())
+```
 
 | Player | Description |
 |---|---|
 | `tsumogiri` | a bot that discards every draw |
 | `rulebot`, `rulebot:latest` | the fast rule-based bot |
-| `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4`, `suzume-mlp1`, `suzume-mlp1-flat` | light, reasonably strong bots; options as in `suzume-mlp1:call=0` |
+| `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4` | light, reasonably strong bots (3-layer MLPs) |
+| `suzume-mlp1`, `suzume-mlp1-flat` | lighter bots, slightly weaker (1-layer MLPs) |
+
+> **Note:** `flat` models were trained on East 1 games only; `avoid4` was
+> trained under a rule that weighs avoiding last place.
 
 ## Playing your own agent
 
 An agent is any object with `lane = "observation"`, `act_batch(decisions)` and
-`describe()`. `act_batch` receives, in one list, the decisions of every game
-waiting on that agent, so a model can batch its inference. Each decision `d`
-carries `d.obs` (a `riichienv.Observation`; `d.obs.legal_actions()` lists the
-legal moves), the kyoku's mjai-format events `d.kyoku_events`, and more. Pick
-one legal action per decision and return them in the same order.
+`describe()`, implemented as follows.
+- `act_batch` receives `decisions`, the decisions of every game waiting on
+  that agent, as a list (so a model can batch its inference).
+- Each decision `d` in `decisions` carries the observation `d.obs` (a
+  `riichienv.Observation`, including the legal moves, hand, rivers, scores and
+  more), the kyoku's mjai-format events `d.kyoku_events`, and more.
+- Pick one legal action per decision and return them as a list, `actions`.
 
+```python
     import riichienv as rv
     from yamawake import RulebotAgent, lineup, run_match
 
@@ -106,6 +118,7 @@ one legal action per decision and return them in the same order.
 
     r = run_match(lineup(MyAgent(), RulebotAgent(), "2v2"), walls=100)   # MyAgent x 2 vs rulebot x 2
     print(r.table())
+```
 
 Registering a name with `register_agent("my-agent", lambda spec, **opts: MyAgent())`
 lets you name it within the same process, as in
@@ -113,8 +126,9 @@ lets you name it within the same process, as in
 the `yamawake-arena` command, put the registering function in your package's
 `yamawake.agents` entry-point group.
 
-For the low-level loop, single-position decisions (`decide`), log statistics
-(`handstats`) and the Tenhou replay converter (`tenhou6`), see `docs/arena.md`.
+For more, including the low-level loop, single-position decisions (`decide`),
+log statistics (`handstats`) and the Tenhou replay converter (`tenhou6`), see
+[`docs/arena.md`](docs/arena.md).
 
 ## Acknowledgements
 
@@ -125,12 +139,12 @@ insights they share.
 - **[RiichiEnv](https://github.com/smly/RiichiEnv)** by smly (Apache-2.0) is the
   simulator's foundation. yamawake-mahjong-arena's game engine is a vendored fork of
   riichienv-core 0.4.8 that adds per-seat draw queues and an explicit
-  (kyoku, honba) wall table (`src/engine/README.md`), and the Python side uses
+  (kyoku, honba) wall table ([`src/engine/README.md`](src/engine/README.md)), and the Python side uses
   the `riichienv` package.
 - **[電脳麻将 (Majiang)](https://github.com/kobalab/Majiang)** by Satoshi Kobayashi (kobalab;
   [majiang-ai](https://github.com/kobalab/majiang-ai), MIT, and the wider
   電脳麻将 project): the rulebot's design references it.
-  `src/rust/rulebot/kobalab_ev.rs` is a port of majiang-ai's `eval_shoupai` /
+  [`src/rust/rulebot/kobalab_ev.rs`](src/rust/rulebot/kobalab_ev.rs) is a port of majiang-ai's `eval_shoupai` /
   `eval_fulou`, the call logic follows its `select_fulou` and the kan logic
   its `select_gang`.
 - The algorithm for valuing hands (dynamic programming, DP) implements the method of
@@ -142,9 +156,9 @@ insights they share.
 - Also used, with thanks: through riichienv-core, the shanten tables of
   [Nyanten](https://github.com/Cryolite/nyanten) (MIT).
 
-See `docs/THIRD_PARTY_NOTICES.md` for their full license texts.
+See [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) for their full license texts.
 
 ## License
 
-This repository is licensed under MIT (`LICENSE`). The vendored riichienv-core
-is Apache-2.0 (`src/engine/riichienv-core/LICENSE`).
+This repository is licensed under MIT ([`LICENSE`](LICENSE)). The vendored riichienv-core
+is Apache-2.0 ([`src/engine/riichienv-core/LICENSE`](src/engine/riichienv-core/LICENSE)).

@@ -2,8 +2,8 @@
 
 rulebot は、作者自身のルールベースのボットを riichienv に移植したものです。arena の物差し（強さを測る相手）として、速く、決まった打ち方をすることを目的にしています。対局ループの中で Rust のまま判断します。
 
-- コード：`src/rust/rulebot/`（判断）、`src/rust/eval/`（一人麻雀の DP、点数、向聴。suzume と共通）、`src/python/yamawake/rulebot.py`（設定）
-- 移植元と謝辞：`docs/THIRD_PARTY_NOTICES.md`
+- コード：[`src/rust/rulebot/`](../src/rust/rulebot/)（判断）、[`src/rust/eval/`](../src/rust/eval/)（一人麻雀の DP、点数、向聴。suzume と共通）、[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)（設定）
+- 移植元と謝辞：[`docs/THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 ## 1. 判断の流れ
 
@@ -32,7 +32,7 @@ majiang-ai の `select_fulou` に従います。3 向聴以上では、役を考
 
 ## 4. 設定
 
-設定は `RulebotConfig`（`src/rust/rulebot/config.rs`）の欄で、2 つの設定を区別するものだけです（`call_ev_sp`、`call_sp_flat_pass`、`kan`。既定はすべて off で、`LATEST` と同じ）。両方に共通の値（上の 50、5、1.6、6400 など）は、同じファイルの定数です。2 つの設定は Python 側に置いています（`src/python/yamawake/rulebot.py`）。
+設定は `RulebotConfig`（[`src/rust/rulebot/config.rs`](../src/rust/rulebot/config.rs)）の欄で、2 つの設定を区別するものだけです（`call_ev_sp`、`call_sp_flat_pass`、`kan`。既定はすべて off で、`LATEST` と同じ）。両方に共通の値（上の 50、5、1.6、6400 など）は、同じファイルの定数です。2 つの設定は Python 側に置いています（[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)）。
 
 | 設定 | 中身 |
 |---|---|
@@ -43,13 +43,13 @@ Python からは `RulebotAgent(設定)` で座らせます。指定しなかっ�
 
 ## 5. 1 局面の判断
 
-`decide("rulebot", 観測, その局の mjai の出来事, debug=True)` で、対局中と同じ判断と、判断の材料（向聴、脅威、手の価値など）を得られます（`docs/arena.md` 4 節）。
+`decide("rulebot", 観測, その局の mjai の出来事, debug=True)` で、対局中と同じ判断と、判断の材料（向聴、脅威、手の価値など）を得られます（[`docs/arena.md`](arena.md) 4 節）。
 
 ## 6. 検査
 
-- golden（`tests/golden/`）：標準の rulebot の対局（rulebot ×4、ツモ切り 1 対 rulebot 3）が、記録した点数と牌譜のとおりになることを確かめます。
-- カン（`tests/rulebot/`）：標準の設定は暗槓・加槓をして大明槓はしないこと、`kan` を切ればカンしないことを確かめます。
-- 一人麻雀の DP（`tests/eval/test_sp.py`）：reljong v0.1 と同じ答えを出すことを確かめます。
+- golden（[`tests/golden/`](../tests/golden/)）：標準の rulebot の対局（rulebot ×4、ツモ切り 1 対 rulebot 3）が、記録した点数と牌譜のとおりになることを確かめます。
+- カン（[`tests/rulebot/`](../tests/rulebot/)）：標準の設定は暗槓・加槓をして大明槓はしないこと、`kan` を切ればカンしないことを確かめます。
+- 一人麻雀の DP（[`tests/eval/test_sp.py`](../tests/eval/test_sp.py)）：reljong v0.1 と同じ答えを出すことを確かめます。
 
 ## 7. 制限
 

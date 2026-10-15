@@ -2,8 +2,8 @@
 
 yamawake-mahjong-arena の対局場です。牌の運を打ち消して打ち手の差だけを測ることと、速いことを目的にしています。
 
-- コード：`src/rust/arena/`（対局ループ）、`src/python/yamawake/`（`match.py`・`arena.py`・`driver.py`・`agents.py` など）
-- 対局エンジン：`src/engine/riichienv-core/`（riichienv-core 0.4.8 の fork。`src/engine/README.md`）
+- コード：[`src/rust/arena/`](../src/rust/arena/)（対局ループ）、[`src/python/yamawake/`](../src/python/yamawake/)（`match.py`・`arena.py`・`driver.py`・`agents.py` など）
+- 対局エンジン：[`src/engine/riichienv-core/`](../src/engine/riichienv-core/)（riichienv-core 0.4.8 の fork。[`src/engine/README.md`](../src/engine/README.md)）
 
 ## 1. 考え方
 
@@ -12,7 +12,7 @@ yamawake-mahjong-arena の対局場です。牌の運を打ち消して打ち手
 - **固定牌山**：*牌山の行列* が、対局の各座標（局 × 本場、東 1〜北 4 × 12）の 136 枚の牌山を固定します。連荘しても、その局がどの牌山で打たれるかはずれません。
 - **split 牌山**：各席は、山のうち自分専用に決まった列からだけツモります。鳴きがあっても、他の席のこの先のツモはずれません。
 - **席の回転**：1 つの牌山を、席を回して 4 回打ちます（2v2 の `[A, B, A, B]` は 2 回。残りの 2 回は同じ対局の繰り返しになるため）。どの打ち手も全ての席の牌を打つことになり、同じ決定的な打ち手 4 人なら平均順位はちょうど 2.5 になります。
-- **標準牌山**：記録した 1 つの元の値（`wall_base 0`。2026-10-14 までは `6172671062617`）から作り直す 5,000 個の行列です（`walls.standard_walls()`、4 つの指紋で検査。`src/python/yamawake/data/eval_walls.json`）。測定がこれを共有するので、2 つの結果の違いは打ち手の違いだけから生まれます。
+- **標準牌山**：記録した 1 つの元の値（`wall_base 0`。2026-10-14 までは `6172671062617`）から作り直す 5,000 個の行列です（`walls.standard_walls()`、4 つの指紋で検査。[`src/python/yamawake/data/eval_walls.json`](../src/python/yamawake/data/eval_walls.json)）。測定がこれを共有するので、2 つの結果の違いは打ち手の違いだけから生まれます。
 
 対局は N 局を足並みをそろえて並列（rayon）に進めます。rulebot と suzume は Rust の中で判断し、Python に入るのは 1 手番に 1 回、それが必要なプレイヤーのためだけです。速さの目安（ノート PC 1 台、200 牌山、4 人とも同じ bot）：rulebot 約 11,000 半荘/分、suzume 約 3,300、`suzume-mlp1` 約 4,900。
 
@@ -47,8 +47,8 @@ yamawake-mahjong-arena の対局場です。牌の運を打ち消して打ち手
 | プレイヤー | 中身 |
 |---|---|
 | `tsumogiri` | ツモ切り（できなければ見送り、それもなければ最初の合法手） |
-| `rulebot`、`rulebot:latest` | ルールベースのボット（`docs/rulebot.md`）。`rulebot` は標準の設定（`STANDARD`） |
-| `suzume[-組][:KEY=VALUE...]` | 教師に合わせた MLP で打つボット（`docs/suzume.md`）。`suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4`、`suzume-mlp1`、`suzume-mlp1-flat`。例 `suzume-mlp1:call=0` |
+| `rulebot`、`rulebot:latest` | ルールベースのボット（[`docs/rulebot.md`](rulebot.md)）。`rulebot` は標準の設定（`STANDARD`） |
+| `suzume[-組][:KEY=VALUE...]` | 教師に合わせた MLP で打つボット（[`docs/suzume.md`](suzume.md)）。`suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4`、`suzume-mlp1`、`suzume-mlp1-flat`。例 `suzume-mlp1:call=0` |
 
 ほかのパッケージは、`yamawake.register_agent`・`register_resolver` か、エントリポイントのグループ `yamawake.agents` でプレイヤーを足せます。`--opt KEY=VALUE` はそのファクトリにオプションを渡します。
 
@@ -123,5 +123,5 @@ mjai の牌譜を、天鳳の牌譜ビューアが読む tenhou.net/6 の JSON �
 
 ## 6. 制限
 
-- arena の rulebot は大明槓をしません（`docs/rulebot.md`）。
+- arena の rulebot は大明槓をしません（[`docs/rulebot.md`](rulebot.md)）。
 - 対局の最後に残った供託の扱いは、エンジン（riichienv）に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。

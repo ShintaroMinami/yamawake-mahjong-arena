@@ -9,13 +9,15 @@
 この固定分割牌山を席ごとに割り当て、順に回して使用します。
 全プレイヤーが全ての固定分割牌山を１度ずつ使用することで、結果の違いがプレイヤーの選択だけから生じるようにしています。
 
-### 主なコンポーネント
+### リポジトリの主な内容
 
-- **arena**：固定分割牌山の対戦環境。Rust の対局ループで N 局を並列に進めます（`docs/arena.md`を参照）。
-- **rulebot**：高速なルールベースのボット。ベースラインとして有用です（`docs/rulebot.md`を参照）。
-- **suzume**：強化学習した麻雀AIの蒸溜モデル。判断ごとの小さな MLP を用いた軽量のボット（`docs/suzume.md`を参照）。
+- **arena**：固定分割牌山の対戦環境。Rust の対局ループで N 局を並列に進めます（[`docs/arena.md`](docs/arena.md)を参照）。
+- **rulebot**：高速なルールベースのボット。ベースラインとして有用です（[`docs/rulebot.md`](docs/rulebot.md)を参照）。
+- **suzume**：強化学習した麻雀AIの蒸溜モデル。判断ごとの小さな MLP を用いた軽量のボット（[`docs/suzume.md`](docs/suzume.md)を参照）。
 
-1CPUを使用して、rulebot 4 人なら約 1,180 半荘/分、suzume 4 人なら約 370 半荘/分 で動作します。
+1 CPUを使用した場合、
+rulebot 4 人なら約 1,180 半荘/分、
+suzume 4 人なら約 370 半荘/分 で動作します。
 
 ## suzume の強さ
 
@@ -30,44 +32,55 @@
 
 ### リリースの wheel から（Rust の環境は不要）
 
-各 [リリース](https://github.com/ShintaroMinami/yamawake-mahjong-arena/releases) に、Linux x86_64/aarch64（manylinux2014）と macOS arm64、CPython 3.11〜3.13 の wheel があります。Rust の部分は wheel の中にビルド済みです。`riichienv` と `numpy` は PyPI から入ります。
-
+各 [リリース](https://github.com/ShintaroMinami/yamawake-mahjong-arena/releases) に、Linux x86_64/aarch64（manylinux2014）と macOS arm64、CPython 3.11〜3.13 の wheel があります。
+Rust の部分は wheel の中にビルド済みです。
+`riichienv` と `numpy` は PyPI から入ります。
+``` bash
     gh release download -R ShintaroMinami/yamawake-mahjong-arena -p '*.whl' -D wheels
     pip install --find-links wheels yamawake
-
+```
 ### ソースから
 
 Python 3.11 以上、Rust の環境、[uv](https://docs.astral.sh/uv/) が必要です。
-
+``` bash
     git clone https://github.com/ShintaroMinami/yamawake-mahjong-arena.git
     cd yamawake-mahjong-arena
     uv sync                # 拡張を（maturin で）.venv にビルド
     uv run pytest          # テスト
-
+```
 uv を使わずに、Rust の環境があれば `pip install git+https://github.com/ShintaroMinami/yamawake-mahjong-arena.git` でも入ります。
 
 パッケージの名前は `yamawake`、コマンドの名前は `yamawake-arena` です。
 
 ## 使い方
-
-    uv run yamawake-arena --mode 1v3 --players tsumogiri rulebot --walls 50
-    uv run python -m yamawake.arena --mode 2v2 --players suzume rulebot
-    uv run python -m yamawake.handstats logs/ --name suzume     # --record-logs の牌譜の統計
-
+``` bash
+    uv run yamawake-arena --mode 2v2 --players tsumogiri rulebot --walls 100
+    uv run python -m yamawake.arena --mode 1v3 --players suzume rulebot
+```    
+Python からの利用は以下のように行います。
+``` python
     from yamawake import RulebotAgent, TsumogiriAgent, run_match
-    r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=50)
+    r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=100)
     print(r.table())
+```
 
 | プレイヤー | 説明 |
 |---|---|
 | `tsumogiri` | ツモ切りボット |
 | `rulebot`、`rulebot:latest` | ルールベースの高速ボット |
-| `suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4`、`suzume-mlp1`、`suzume-mlp1-flat` | 軽量である程度強いボット。オプションは `suzume-mlp1:call=0` のように付ける |
+| `suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4` | 軽量かつある程度強いボット (3 層の MLP を使用) |
+| `suzume-mlp1`、`suzume-mlp1-flat` | 強さを少し落とした、より軽量なボット (1 層の MLP を使用) |
+
+> **Note :** flat は東 1 局の対局データのみで学習したモデル。avoid4はラス回避を重視したルールで学習したモデルです。
 
 ## 自作のプレイヤーとの対局
 
-プレイヤーは、`lane = "observation"`、`act_batch(decisions)`、`describe()` を持つ任意のオブジェクトです。`act_batch` には、そのプレイヤーの手番を待つ全ての対局の判断が 1 つのリストで渡されるので、モデルはまとめて推論できます。各判断 `d` は `d.obs`（`riichienv.Observation`。`d.obs.legal_actions()` が合法手）と、その局の mjai 形式のイベント `d.kyoku_events` などを持ちます。判断ごとに合法手から 1 つを選んで、同じ順に返します。
+プレイヤーは、`lane = "observation"`、`act_batch(decisions)`、`describe()` を持つ任意のオブジェクトとし、以下のように実装します。
+- `act_batch` では、そのプレイヤーの手番を待つ全ての対局の判断`decisions`をリストとして受ける。(リストとして渡されるのでモデルはまとめて推論できます)
+- `decisions` の各判断 `d` は、観測 `d.obs`（`riichienv.Observation`。合法手・手牌・河・点数など含む）と、その局の mjai 形式のイベント `d.kyoku_events` などを持つ。
+- 判断ごとに合法手から 1 つを選んで、`actions`としてリストを返す。
 
+```python
     import riichienv as rv
     from yamawake import RulebotAgent, lineup, run_match
 
@@ -88,28 +101,26 @@ uv を使わずに、Rust の環境があれば `pip install git+https://github.
 
     r = run_match(lineup(MyAgent(), RulebotAgent(), "2v2"), walls=100)   # MyAgent x 2 対 rulebot x 2
     print(r.table())
+```
 
 `register_agent("my-agent", lambda spec, **opts: MyAgent())` で名前を登録すると、同じプロセスの中で `yamawake.arena.main(["--players", "my-agent", "rulebot", ...])` のように名前で指定できます。`yamawake-arena` コマンドから使うには、自作のパッケージのエントリポイントのグループ `yamawake.agents` に登録の関数を置きます。
 
 
-その他、低水準のループ、1 局面の判断（`decide`）、牌譜の統計（`handstats`）と天鳳の牌譜への変換（`tenhou6`）は `docs/arena.md` を参照してください。
+その他、低水準のループ、1 局面の判断（`decide`）、牌譜の統計（`handstats`）と天鳳の牌譜への変換（`tenhou6`）など、詳細は [`docs/arena.md`](docs/arena.md) を参照してください。
 
 ## 謝辞
 
 以下のリポジトリや文章を参考にしています。
 素晴らしいソフトウェアや知見を提供してくださった著者/開発者の方々に心から感謝いたします。
 
-- **[RiichiEnv](https://github.com/smly/RiichiEnv)**（smly、Apache-2.0）がシミュレータの土台となっています。yamawake-mahjong-arena の対局エンジンは riichienv-core 0.4.8 を取り込んだ fork で、席ごとのツモの列と、明示的な（局、本場）の牌山表を追加したバージョンです（`src/engine/README.md`）。Python 側は `riichienv` パッケージを使います。
-- **[電脳麻将](https://github.com/kobalab/Majiang)**（小林聡 / kobalab。[majiang-ai](https://github.com/kobalab/majiang-ai)、MIT、および電脳麻将のプロジェクト全体）：rulebot の設計はこちらのリポジトリを参考にしています。`src/rust/rulebot/kobalab_ev.rs` は majiang-ai の `eval_shoupai` / `eval_fulou` の移植で、副露の判断は `select_fulou` を、カンの判断は `select_gang` を参考にしています。
+- **[RiichiEnv](https://github.com/smly/RiichiEnv)**（smly、Apache-2.0）がシミュレータの土台となっています。yamawake-mahjong-arena の対局エンジンは riichienv-core 0.4.8 を取り込んだ fork で、席ごとのツモの列と、明示的な（局、本場）の牌山表を追加したバージョンです（[`src/engine/README.md`](src/engine/README.md)）。Python 側は `riichienv` パッケージを使います。
+- **[電脳麻将](https://github.com/kobalab/Majiang)**（小林聡 / kobalab。[majiang-ai](https://github.com/kobalab/majiang-ai)、MIT、および電脳麻将のプロジェクト全体）：rulebot の設計はこちらのリポジトリを参考にしています。[`src/rust/rulebot/kobalab_ev.rs`](src/rust/rulebot/kobalab_ev.rs) は majiang-ai の `eval_shoupai` / `eval_fulou` の移植で、副露の判断は `select_fulou` を、カンの判断は `select_gang` を参考にしています。
 - 手牌価値計算のためのアルゴリズム(動的計画法,DP)は、[tomohxx](https://github.com/tomohxx) の『麻雀アルゴリズム』（[6 章 和了確率](https://tomohxx.github.io/mahjong-algorithm-book/probability/)）の手法を、[nekobean](https://github.com/nekobean) の [mahjong-cpp](https://github.com/nekobean/mahjong-cpp) の解説に沿って実装しています。細かな実装の一部は libriichi（[Mortal](https://github.com/Equim-chan/Mortal)）を参考にしました。
 - ほかに、riichienv-core を通して [Nyanten](https://github.com/Cryolite/nyanten)（MIT）の向聴表を使わせていただいています。
 
-これらのライセンスの全文は `docs/THIRD_PARTY_NOTICES.md` にあります。
-
-
-
+これらのライセンスの全文は [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) にあります。
 
 ## ライセンス
 
-このリポジトリのライセンスは MIT（`LICENSE`）です。取り込んだ riichienv-core は Apache-2.0（`src/engine/riichienv-core/LICENSE`）です。
+このリポジトリのライセンスは MIT（[`LICENSE`](LICENSE)）です。取り込んだ riichienv-core は Apache-2.0（[`src/engine/riichienv-core/LICENSE`](src/engine/riichienv-core/LICENSE)）です。
 
