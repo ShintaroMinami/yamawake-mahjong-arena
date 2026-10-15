@@ -11,7 +11,7 @@ from yamawake import (PythonTsumogiriAgent, SeatTracker, SelfPlayLoop, Tsumogiri
                        register_resolver)
 from yamawake.agents import LANE_OBSERVATION, LANE_TSUMOGIRI, RulebotAgent
 from yamawake.context import LIVE_WALL
-from yamawake.rulebot import LATEST, STANDARD
+from yamawake.rulebot import KOBALAB, STANDARD
 from yamawake.walls import blob_for_wall
 
 
@@ -58,7 +58,7 @@ def test_apply_checks_its_answers():
 
 
 def test_an_all_rulebot_game_finishes_in_one_collect():
-    loop = SelfPlayLoop([3, 4], 2, [[(s, "rulebot", LATEST) for s in range(4)]] * 2,
+    loop = SelfPlayLoop([3, 4], 2, [[(s, "rulebot", KOBALAB) for s in range(4)]] * 2,
                         wall_tables=[blob_for_wall(3), blob_for_wall(4)], split_wall=True)
     assert loop.collect() is None and loop.done()
     assert all(sum(s) <= 100000 for s in loop.scores())

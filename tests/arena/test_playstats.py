@@ -14,7 +14,7 @@ def _log(*events: dict) -> list[str]:
     return [json.dumps(e) for e in events]
 
 
-def test_double_ron_gives_honba_and_sticks_to_the_first_winner_only():
+def test_win_points_are_the_kyoku_delta_and_a_double_ron_deals_in_once():
     log = _log(
         {"type": "start_kyoku", "honba": 2, "kyotaku": 1, "oya": 0},
         {"type": "reach", "actor": 1},
@@ -27,9 +27,9 @@ def test_double_ron_gives_honba_and_sticks_to_the_first_winner_only():
     c = play_counts([log])
     assert c["kyoku"][0].tolist() == [1, 1, 1, 1]
     assert c["win"][0].tolist() == [0, 1, 1, 0]
-    assert c["win_pts"][0].tolist() == [0, 8000, 3900, 0]
+    assert c["win_pts"][0].tolist() == [0, 8000 + 600 + 2000 - 1000, 3900, 0]
     assert c["deal_in"][0].tolist() == [0, 0, 0, 1]           # one kyoku, two rons
-    assert c["deal_pts"][0].tolist() == [0, 0, 0, 8000 + 3900]
+    assert c["deal_pts"][0].tolist() == [0, 0, 0, 8600 + 3900]
     assert c["call"][0].tolist() == [0, 0, 1, 0]              # two pons, one kyoku
     assert c["riichi"][0].tolist() == [0, 1, 0, 0]
 
@@ -45,7 +45,20 @@ def test_a_riichi_dealt_in_on_its_tile_still_counts_and_tsumo_has_no_deal_in():
     c = play_counts([log])
     assert c["riichi"][0].tolist() == [1, 0, 0, 0]
     assert c["deal_in"][0].tolist() == [1, 0, 0, 0]
-    assert c["win_pts"][0].tolist() == [0, 2000, 4000, 0]
+    assert c["win_pts"][0].tolist() == [0, 2000, 4300, 0]
+
+
+
+def test_an_accepted_riichi_that_deals_in_counts_the_payment_only():
+    log = _log(
+        {"type": "start_kyoku", "honba": 0, "kyotaku": 0, "oya": 0},
+        {"type": "reach", "actor": 2},
+        {"type": "reach_accepted", "actor": 2},
+        {"type": "hora", "actor": 0, "target": 2, "deltas": [3900 + 1000, 0, -3900, 0]},
+    )
+    c = play_counts([log])
+    assert c["win_pts"][0].tolist() == [4900, 0, 0, 0]
+    assert c["deal_pts"][0].tolist() == [0, 0, 3900, 0]
 
 
 def test_ratio_pools_and_its_se_vanishes_for_a_constant_ratio():

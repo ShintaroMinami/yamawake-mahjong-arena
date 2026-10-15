@@ -12,13 +12,13 @@
 
 対局は N 局を並列に進めます。rulebot と suzume は Rust の中で判断し、Python を呼ぶのは Python のプレイヤーの手番だけです。
 
-Python のプレイヤーの判断には、判断そのものとは別に、1 回あたり約 20 µs の受け渡しの時間がかかります（Rust で作った観測を Python に渡して読み戻す変換と、判断ごとの記録の組み立て）。suzume の 1 判断（約 340 µs）のような普通のモデルでは目立ちませんが、非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります。例えば、同じ手を選ぶツモ切りボットでも、Rust の中で判断する `tsumogiri` 4 人では約 3,040 半荘/分、Python で判断する `tsumogiri-python` 4 人では約 1,515 半荘/分です（1 スレッド）。Time の表の arena の行には、この受け渡しの時間が含まれます。
+Python のプレイヤーの判断には、判断そのものとは別に、1 回あたり約 20 µs の受け渡しの時間がかかります（Rust で作った観測を Python に渡して読み戻す変換と、判断ごとの記録の組み立て）。suzume の 1 判断（約 230 µs）のような普通のモデルでは目立ちませんが、非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります。例えば、同じ手を選ぶツモ切りボットでも、Rust の中で判断する `tsumogiri` 4 人では約 3,040 半荘/分、Python で判断する `tsumogiri-python` 4 人では約 1,515 半荘/分です（1 スレッド）。Time の表の arena の行には、この受け渡しの時間が含まれます。
 
 ## 2. コマンドライン
 
 ``` bash
 uv run yamawake-arena --mode 2v2 --players suzume rulebot
-uv run yamawake-arena --players rulebot rulebot:latest rulebot rulebot \
+uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
     --walls 1000 --out results.jsonl --save-scores scores.npz --record-logs logs/
 ```
 
@@ -41,7 +41,7 @@ uv run yamawake-arena --players rulebot rulebot:latest rulebot rulebot \
 | 表 | 中身 |
 |---|---|
 | Standings | 平均順位、ポイント、1〜4 位の率。2v2 では、牌山ごとに対にした差も出す |
-| Play per kyoku | 1 局あたりの和了率、放銃率、副露率（チー・ポン・大明槓をした局）、立直率（宣言した局）と、平均和了点、平均放銃点（どちらも本場と供託を除く）、調整打点効率（和了率 × 平均和了点 − 放銃率 × 平均放銃点、1 局あたりの点） |
+| Play per kyoku | 1 局あたりの和了率、放銃率、副露率（チー・ポン・大明槓をした局）、立直率（宣言した局）と、平均和了点（和了した局の局収支の平均。本場と供託を含み、自分の立直棒を引く）、平均放銃点（放銃で払った点。本場を含み、自分の立直棒は含めない）、調整打点効率（和了率 × 平均和了点 − 放銃率 × 平均放銃点、1 局あたりの点） |
 | Time | プレイヤーごとの判断の数、時間、1 判断あたりの時間と、arena 自体（対局エンジンとループ）の時間。内蔵のボットと arena はスレッドごとの時間の合計、Python のプレイヤーは `act_batch` にかかった時間 |
 
 ポイントは 25,000 点持ち 30,000 点返し、順位点 +90 / +45 / 0 / −135、オカ 20 の精算です（`rules.DEFAULT_RULE`）。
@@ -54,7 +54,7 @@ uv run yamawake-arena --players rulebot rulebot:latest rulebot rulebot \
 from yamawake import RulebotAgent, TsumogiriAgent, build_agent, run_match
 
 r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=50)
-print(r.table())          # 平均順位、ポイント、標準誤差
+print(r.table())          # 順位表（コマンドラインの Standings の表と同じ）
 r.paired()                # 2v2 の牌山ごとの対の差
 agent = build_agent("suzume-mlp1:call=0")   # コマンドラインと同じ指定
 ```

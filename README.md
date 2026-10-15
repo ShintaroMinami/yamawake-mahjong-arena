@@ -72,7 +72,7 @@ Python からの利用は以下のように行います。
 |---|---|
 | `tsumogiri` | ツモ切りボット（Rust の中で判断） |
 | `tsumogiri-python` | 同じ手を Python で選ぶツモ切りボット。自作のプレイヤーと同じ経路を通る |
-| `rulebot`、`rulebot:latest` | ルールベースの高速ボット |
+| `rulebot`、`rulebot:kobalab` | ルールベースの高速ボット |
 | `suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4` | 軽量かつある程度強いボット (3 層の MLP を使用) |
 | `suzume-mlp1`、`suzume-mlp1-flat` | 強さを少し落とした、より軽量なボット (1 層の MLP を使用) |
 

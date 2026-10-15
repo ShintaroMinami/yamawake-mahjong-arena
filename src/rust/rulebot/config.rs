@@ -1,6 +1,6 @@
 //! The rulebot's knobs and the fixed values its play is built on.
 //!
-//! Only what tells the two shipped configs apart (`STANDARD` and `LATEST` in
+//! Only what tells the two shipped configs apart (`STANDARD` and `KOBALAB` in
 //! `src/python/yamawake/rulebot.py`) is a knob; everything both share is a
 //! constant here. `Default` is `STANDARD`, and the golden tests pin the play.
 

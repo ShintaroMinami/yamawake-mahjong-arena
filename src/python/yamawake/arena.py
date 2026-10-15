@@ -5,7 +5,7 @@
 
 A player is one of:
 
-    rulebot | rulebot:latest       the ported rulebot, decided inside Rust
+    rulebot | rulebot:kobalab      the ported rulebot, decided inside Rust
     suzume[:KEY=VALUE...]         the per-decision MLP bot, decided inside Rust
                                    (`python -m yamawake.suzume list`)
     tsumogiri                      the floor baseline, decided inside Rust

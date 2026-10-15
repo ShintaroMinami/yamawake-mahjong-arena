@@ -51,7 +51,8 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                wall_blobs: list[bytes] | None = None, split_wall: bool = True,
                game_mode: int = HANCHAN, flight: int = 256, want_logs: bool = False,
                progress: Callable[[int, int, int], None] | None = None,
-               traces: list | None = None, timing: list | None = None
+               traces: list | None = None, timing: list | None = None,
+               on_logs: Callable[[list[list[str]]], None] | None = None
                ) -> tuple[list[list[int]], list[list[str]]]:
     """Play every game to the end.
 
@@ -81,6 +82,9 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
             calls. The last entry gets the arena's own time: the loop's
             work in Rust less the in-loop bots', plus the Python side's
             turning rows into decisions.
+        on_logs: Optional `on_logs(flight_logs)`, called with each flight's
+            mjai logs as the flight ends (whether or not `want_logs` keeps
+            them), so a caller can reduce them without holding every log.
 
     Returns:
         `(scores, logs)`: final points per game (4 each), and the logs (empty
@@ -129,8 +133,12 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                     timing[-1][1] -= sec
         if progress is not None:
             progress(hi, len(seeds), answered)
-        if want_logs:
-            logs.extend(loop.mjai_log(g) for g in range(hi - lo))
+        if want_logs or on_logs is not None:
+            flight_logs = [loop.mjai_log(g) for g in range(hi - lo)]
+            if on_logs is not None:
+                on_logs(flight_logs)
+            if want_logs:
+                logs.extend(flight_logs)
         if traces is not None:
             traces.extend(loop.suzume_trace(g) for g in range(hi - lo))
     return scores, logs
@@ -165,9 +173,10 @@ def _observation_specs(batch: dict, maps: list[tuple[int, ...]], agents: list,
         t0 = time.perf_counter()
         actions = agent.act_batch([decisions[i] for i in rows])
         if timing is not None:
+            dt = time.perf_counter() - t0
             timing[ai][0] += len(rows)
-            timing[ai][1] += time.perf_counter() - t0
-            agent_time += time.perf_counter() - t0
+            timing[ai][1] += dt
+            agent_time += dt
         if len(actions) != len(rows):
             raise ValueError(f"agent {ai} returned {len(actions)} actions for "
                              f"{len(rows)} decisions")

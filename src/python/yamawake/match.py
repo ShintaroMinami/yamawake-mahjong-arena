@@ -71,21 +71,26 @@ class MatchResult:
     timing: list | None = None
     cpu_seconds: float = 0.0        # the whole process's CPU time over the match
 
+    def _side_slots(self) -> list[list[int]]:
+        """The slots of each side (agent), in first-slot order."""
+        sa = self.protocol["slot_agent"]
+        return [[j for j, k in enumerate(sa) if k == a] for a in dict.fromkeys(sa)]
+
     def _groups(self) -> list[list[int]]:
         """The slots of each table row: one per slot with four rotations,
         else the slots of each side."""
-        sa = self.protocol["slot_agent"]
         if int(self.protocol["rotations"]) == ROTATIONS:
             return [[j] for j in range(4)]
-        return [[j for j, k in enumerate(sa) if k == a] for a in dict.fromkeys(sa)]
+        return self._side_slots()
 
     def play_stats(self) -> list[dict]:
         """Per slot (or side) play statistics, pooled per kyoku.
 
         `win`, `deal_in`, `call` and `riichi` are shares of kyoku;
-        `avg_win` the mean points of a won hand and `avg_deal` of a hand
-        dealt into (all a double ron paid; honba and riichi sticks taken
-        out, `playstats`);
+        `avg_win` the mean kyoku delta of a won kyoku (honba and riichi
+        sticks in, the seat's own stick paid) and `avg_deal` the mean ron
+        payment of a kyoku dealt in (honba in, all a double ron paid, the
+        seat's own stick not counted), as in `handstats`;
         `adj_eff` is `win * avg_win - deal_in * avg_deal`, points per kyoku.
         Each comes with its standard error over walls (`*_se`).
 
@@ -156,13 +161,10 @@ class MatchResult:
         rot = int(self.protocol["rotations"])
         walls = len(self.scores) // rot
         rows = np.arange(len(self.scores))
-        sa = self.protocol["slot_agent"]
-        groups = ([[j] for j in range(4)] if rot == ROTATIONS else
-                  [[j for j, k in enumerate(sa) if k == a] for a in dict.fromkeys(sa)])
         metrics = {"delta": self.scores - START_SCORE,
                    "win": self.kyoku["win"], "deal_in": self.kyoku["deal_in"]}
         out = []
-        for js in groups:
+        for js in self._groups():
             row = {"slot": js[0], "name": self.slots[js[0]].name}
             for key, metric in metrics.items():
                 m = np.mean([metric[rows, self.seat_of_slot[:, j]] for j in js],
@@ -184,13 +186,11 @@ class MatchResult:
         rot = int(self.protocol["rotations"])
         walls = len(self.scores) // rot
         rows = np.arange(len(self.scores))
-        order = np.argsort(np.argsort(-self.scores + np.arange(4) * 1e-6,
-                                      axis=1), axis=1) + 1
+        order = _ranks(self.scores)
         pts = _pt_of(self.scores, self.rule)
 
         out = []
-        for a in dict.fromkeys(self.protocol["slot_agent"]):
-            js = [j for j, k in enumerate(self.protocol["slot_agent"]) if k == a]
+        for js in self._side_slots():
             per = []
             for metric in (order, pts):
                 m = np.mean([metric[rows, self.seat_of_slot[:, j]] for j in js], axis=0)
@@ -201,24 +201,26 @@ class MatchResult:
                                   per[0][0], per[0][1], per[1][0], per[1][1]))
         return out
 
-    def rank_share(self) -> tuple[list[str], np.ndarray, np.ndarray]:
+    def rank_share(self, groups: list[list[int]] | None = None
+                   ) -> tuple[list[str], np.ndarray, np.ndarray]:
         """How often each side placed 1st, 2nd, 3rd and 4th.
 
         Pooled over the slots a side fills and the rotations, so the four
         shares of one side sum to 1. The standard error comes from the spread
         over walls, the unit the seating is balanced in.
 
+        Args:
+            groups: The slots of each row (default: each side's).
+
         Returns:
-            `(names, share, se)` with `share` and `se` shaped (sides, 4).
+            `(names, share, se)` with `share` and `se` shaped (rows, 4).
         """
         rot = int(self.protocol["rotations"])
         walls = len(self.scores) // rot
         rows = np.arange(len(self.scores))
-        order = np.argsort(np.argsort(-self.scores + np.arange(4) * 1e-6,
-                                      axis=1), axis=1) + 1
+        order = _ranks(self.scores)
         names, share, se = [], [], []
-        for a in dict.fromkeys(self.protocol["slot_agent"]):
-            js = [j for j, k in enumerate(self.protocol["slot_agent"]) if k == a]
+        for js in groups or self._side_slots():
             got = np.stack([order[rows, self.seat_of_slot[:, j]] for j in js], axis=1)
             names.append(self.slots[js[0]].name)
             per_wall = np.stack(
@@ -230,31 +232,10 @@ class MatchResult:
         return names, np.stack(share), np.stack(se)
 
     def table(self) -> str:
-        """The standings as a printable table, one row per slot (or side)."""
-        # With fewer than four rotations a slot is not seat-balanced on its
-        # own, only the side is, so report sides (`sides`).
-        balanced = int(self.protocol["rotations"]) == ROTATIONS
-        shown = self.slots if balanced else self.sides()
-        label = "slot" if balanced else "side"
-        if self.kyoku is None:
-            head = (f"{label:>4} {'name':<26} {'avg_rank':>9} {'se':>7} "
-                    f"{'avg_pt':>8} {'se_pt':>7}")
-            rows = [f"{s.slot:>4} {s.name[:26]:<26} {s.avg_rank:9.4f} {s.se:7.4f} "
-                    f"{s.avg_pt:8.3f} {s.se_pt:7.3f}" for s in shown]
-        else:
-            # One kyoku: the point delta and how it ended; rank is a side note.
-            rank = {s.slot: s.avg_rank for s in shown}
-            head = (f"{label:>4} {'name':<26} {'delta':>8} {'se':>6} {'win':>6} "
-                    f"{'deal_in':>7} {'avg_rank':>9}")
-            rows = [f"{r['slot']:>4} {r['name'][:26]:<26} {r['delta']:8.0f} "
-                    f"{r['delta_se']:6.0f} {r['win']:6.3f} {r['deal_in']:7.3f} "
-                    f"{rank[r['slot']]:9.4f}" for r in self.kyoku_stats()]
-        p = self.protocol
-        unit = "hanchan" if self.kyoku is None else "single-kyoku games"
-        tail = (f"{self.games} {unit} ({p['walls']} walls x {p['rotations']}), "
-                f"wall_base {p['wall_base']}, split_wall {p['split_wall']}, "
-                f"{self.seconds:.0f}s, {self.games / max(self.seconds, 1e-9) * 60:.0f}/min")
-        return "\n".join([head, *rows, tail])
+        """The standings as a printable table, one row per slot (or side):
+        the first table of `report.report`."""
+        from yamawake.report import standings
+        return standings(self)
 
     def paired(self, a: tuple[int, ...] = (0, 2),
                b: tuple[int, ...] = (1, 3)) -> dict:
@@ -278,8 +259,7 @@ class MatchResult:
         """
         rot = int(self.protocol["rotations"])
         rows = np.arange(len(self.scores))
-        order = np.argsort(np.argsort(-self.scores + np.arange(4) * 1e-6,
-                                      axis=1), axis=1) + 1
+        order = _ranks(self.scores)
         pts = _pt_of(self.scores, self.rule)
         walls = len(self.scores) // rot
 
@@ -325,11 +305,6 @@ def _slot_agents(players: list) -> tuple[list, list[int]]:
     return agents, slot_agent
 
 
-def rotations_of(players: list) -> int:
-    """The seat rotations `run_match` plays for this seating (`_rotations`)."""
-    return _rotations(_slot_agents(players)[1])
-
-
 def _rotations(slot_agent: list[int]) -> int:
     """Seat shifts that produce a distinct game, for this seating.
 
@@ -361,6 +336,11 @@ def lineup(challenger, opponent, mode: str = "1v3") -> list:
     if mode == "2v2":
         return [challenger, opponent, challenger, opponent]
     raise ValueError(f"mode must be 1v3 or 2v2, got {mode!r}")
+
+
+def _ranks(scores: np.ndarray) -> np.ndarray:
+    """Each seat's final rank (1-4) per game; a tie goes to the lower seat."""
+    return np.argsort(np.argsort(-scores + np.arange(4) * 1e-6, axis=1), axis=1) + 1
 
 
 def _pt_of(scores: np.ndarray, rule) -> np.ndarray:
@@ -463,18 +443,19 @@ def run_match(players: list, walls: int | None = None,
     timing = [[0, 0.0] for _ in range(len(agents) + 1)]     # agents, then the arena
     has_suzume = any(getattr(a, "lane", None) == LANE_SUZUME for a in agents)
     traces: list | None = [] if record_logs is not None and has_suzume else None
+    counts: list[dict] = []         # play_counts per flight, so no log is held for them
     scores, logs = play_games(seeds, maps, agents, wall_blobs=game_blobs,
                               split_wall=split_wall, game_mode=game_mode,
                               flight=flight,
-                              want_logs=record_logs is not None or single_kyoku or play_stats,
-                              progress=progress,
-                              traces=traces, timing=timing)
+                              want_logs=record_logs is not None or single_kyoku,
+                              progress=progress, traces=traces, timing=timing,
+                              on_logs=(lambda ls: counts.append(play_counts(ls))) if play_stats else None)
     seconds, cpu_seconds = time.time() - t0, time.process_time() - c0
 
     scores = np.array(scores, dtype=np.int64)                 # (games, 4) by SEAT
     seat_of_slot = np.array(seat_of_slot, dtype=np.int64)     # (games, 4) slot -> seat
     pts = _pt_of(scores, rule)
-    order = np.argsort(np.argsort(-scores + np.arange(4) * 1e-6, axis=1), axis=1) + 1
+    order = _ranks(scores)
     slots = []
     for j in range(4):
         seat = seat_of_slot[:, j]
@@ -497,7 +478,8 @@ def run_match(players: list, walls: int | None = None,
     result = MatchResult(slots, len(scores), protocol,
                          [s.describe() for s in players], scores, seat_of_slot,
                          seconds, rule, kyoku,
-                         play_counts(logs) if play_stats else None, timing, cpu_seconds)
+                         {k: np.concatenate([c[k] for c in counts]) for k in counts[0]}
+                         if play_stats else None, timing, cpu_seconds)
     if record_logs is not None:
         _write_logs(Path(record_logs), logs, seat_of_slot, players, base, traces)
     if save_scores is not None:

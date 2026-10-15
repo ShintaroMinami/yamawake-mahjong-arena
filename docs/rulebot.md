@@ -2,7 +2,7 @@
 
 rulebot は 麻雀ボットのベースラインとして、高速で決定論的な打ち方をすることを目的にしています。
 
-- コード：[`src/rust/rulebot/`](../src/rust/rulebot/)（判断）、[`src/rust/eval/`](../src/rust/eval/)（手牌価値の DP、点数、向聴。suzume と共通）、[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)（設定）
+- コード：[`src/rust/rulebot/`](../src/rust/rulebot/)（判断）、[`src/rust/eval/`](../src/rust/eval/)（手牌価値の DP、点数、向聴。suzume と共通）、[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)（Python 側：2 つの設定 `STANDARD` と `KOBALAB` の中身）
 - 参照元：[`docs/THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
 
 ## 1. 判断の流れ
@@ -37,16 +37,16 @@ rulebot は 麻雀ボットのベースラインとして、高速で決定論�
 
 ## 3. 鳴き
 
-majiang-ai の `select_fulou` に従います。3 向聴以上では、役を考えた向聴数が下がる鳴きをします（脅威があれば鳴かない）。2 向聴以内では、鳴いたときと見送ったときの手の価値を比べ、上回る鳴きのうち最大のものをします。脅威があるときは、鳴いた後の価値が 750 点（聴牌なら 250 点）未満の鳴きはしません。手の価値は、標準の設定では一人麻雀の DP（`call_ev_sp`。見送りの価値は立直を仮定しない `call_sp_flat_pass`）、`LATEST` では `kobalab_ev`（majiang-ai の `eval_shoupai` / `eval_fulou` の移植）で測ります。
+majiang-ai の `select_fulou` に従います。3 向聴以上では、役を考えた向聴数が下がる鳴きをします（脅威があれば鳴かない）。2 向聴以内では、鳴いたときと見送ったときの手の価値を比べ、上回る鳴きのうち最大のものをします。脅威があるときは、鳴いた後の価値が 750 点（聴牌なら 250 点）未満の鳴きはしません。手の価値は、標準の設定では手牌価値計算の DP（`call_ev_sp`。見送りの価値は立直を仮定しない `call_sp_flat_pass`）、`KOBALAB` では `kobalab_ev`（majiang-ai の `eval_shoupai` / `eval_fulou` の移植）で測ります。
 
 ## 4. 設定
 
-設定は `RulebotConfig`（[`src/rust/rulebot/config.rs`](../src/rust/rulebot/config.rs)）の欄で、2 つの設定を区別するものだけです（`call_ev_sp`、`call_sp_flat_pass`、`kan`）。既定は `STANDARD`（プレイヤー `rulebot`）と同じで、3 つとも on（暗槓・加槓をする）です。`LATEST` は 3 つとも off です。両方に共通の値（上の 50、5、1.6、6400 など）は、同じファイルの定数です。2 つの設定は Python 側に置いています（[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)）。
+設定は `RulebotConfig`（[`src/rust/rulebot/config.rs`](../src/rust/rulebot/config.rs)）の欄で、2 つの設定を区別するものだけです（`call_ev_sp`、`call_sp_flat_pass`、`kan`）。既定は `STANDARD`（プレイヤー `rulebot`）と同じで、3 つとも on（暗槓・加槓をする）です。`KOBALAB` は 3 つとも off です。両方に共通の値（上の 50、5、1.6、6400 など）は、同じファイルの定数です。2 つの設定は Python 側に置いています（[`src/python/yamawake/rulebot.py`](../src/python/yamawake/rulebot.py)）。
 
 | 設定 | 中身 |
 |---|---|
-| `STANDARD`（プレイヤー名 `rulebot`） | 標準の設定。`LATEST` の鳴きの評価を一人麻雀の DP に替え、暗槓・加槓をする（2026-10-13 から） |
-| `LATEST`（プレイヤー名 `rulebot:latest`） | 設定の探索の挑戦者（鳴きの評価は `kobalab_ev`） |
+| `STANDARD`（プレイヤー名 `rulebot`） | 標準の設定。`KOBALAB` の鳴きの評価を手牌価値計算の DP に替え、暗槓・加槓をする（2026-10-13 から） |
+| `KOBALAB`（プレイヤー名 `rulebot:kobalab`） | 鳴きの評価に `kobalab_ev`（majiang-ai の評価の移植）を使い、カンをしない設定。`STANDARD` の元になった設定 |
 
 Python からは `RulebotAgent(設定)` で座らせます。指定しなかった欄は Rust の既定（on）のままで、未定義のプレイヤーはエラーになります。
 

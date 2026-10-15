@@ -18,7 +18,7 @@ An observation agent may also carry the two context hooks of `context.py`:
 (attached to each of its decisions under `Decision.extra`).
 
 Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
-same moves through the observation lane), `rulebot`, `rulebot:latest`,
+same moves through the observation lane), `rulebot`, `rulebot:kobalab`,
 `suzume[:KEY=VALUE[:KEY=VALUE...]]` (e.g. `suzume:call=0`; `suzume` is
 `suzume-mlp3`, and `suzume-mlp3-flat`, `suzume-mlp3-avoid4`, `suzume-mlp1`
 and `suzume-mlp1-flat` are the other model sets, `MODEL_SETS`), plus
@@ -194,7 +194,7 @@ def build_agent(spec: str, **options):
     """Resolve one player spec into an agent.
 
     Args:
-        spec: The player spec (`tsumogiri`, `rulebot`, `rulebot:latest`,
+        spec: The player spec (`tsumogiri`, `rulebot`, `rulebot:kobalab`,
             `suzume[:KEY=VALUE...]`, or one a plugin registered).
         **options: Passed to the factory or resolver (e.g. `device=` for a
             model player); the built-in agents take none.
@@ -239,16 +239,15 @@ def decide(spec: str, obs_b64: str, kyoku_events: list, debug: bool = False) -> 
     """
     from yamawake._core import decide_one
     agent = build_agent(spec)
-    kind = agent.lane if agent.lane in IN_LOOP_LANES else None
-    if kind is None:
+    if agent.lane not in IN_LOOP_LANES:
         raise ValueError(f"{spec!r} is not an in-loop bot (rulebot, suzume, tsumogiri)")
     events = [e if isinstance(e, str) else json.dumps(e) for e in kyoku_events]
-    return decide_one(kind, agent.config, obs_b64, events, debug)
+    return decide_one(agent.lane, agent.config, obs_b64, events, debug)
 
 
 def _rulebot(spec: str, **_) -> RulebotAgent:
-    from yamawake.rulebot import STANDARD, LATEST
-    configs = {"rulebot": STANDARD, "rulebot:latest": LATEST}
+    from yamawake.rulebot import STANDARD, KOBALAB
+    configs = {"rulebot": STANDARD, "rulebot:kobalab": KOBALAB}
     if spec not in configs:
         raise ValueError(f"unknown rulebot config: {spec}")
     return RulebotAgent(configs[spec], name=spec)

@@ -88,7 +88,7 @@ From Python:
 |---|---|
 | `tsumogiri` | a bot that discards every draw (decided inside Rust) |
 | `tsumogiri-python` | the same moves made in Python, through the same path as your own agent |
-| `rulebot`, `rulebot:latest` | the fast rule-based bot |
+| `rulebot`, `rulebot:kobalab` | the fast rule-based bot |
 | `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4` | light, reasonably strong bots (3-layer MLPs) |
 | `suzume-mlp1`, `suzume-mlp1-flat` | lighter bots, slightly weaker (1-layer MLPs) |
 

@@ -32,9 +32,10 @@ hoc only: nothing about the arena changes.
   waits are all dead (no unseen copies) has no value and is reported apart.
 - **Yakuless.** No wait wins by ron without riichi: a closed hand can then
   only win by riichi or menzen tsumo.
-- **Outcomes.** Win points are the seat's `hora` delta minus the riichi
-  sticks it collected (honba kept); deal-in points the ron payment (both
-  rons of a double ron). Riichi is a `reach` by the seat, a call any chi,
+- **Outcomes.** Win points are the kyoku delta of a won kyoku (below:
+  honba and the riichi sticks collected count, the seat's own stick is
+  paid); deal-in points the ron payment (honba included, both rons of a
+  double ron; the seat's own riichi stick not counted). Riichi is a `reach` by the seat, a call any chi,
   pon or daiminkan. Ryukyoku tenpai is shanten 0 at an exhaustive draw.
   The kyoku delta is the seat's deltas over the kyoku's `hora` and
   `ryukyoku` events minus 1000 per accepted riichi.
@@ -95,6 +96,7 @@ import riichienv as rv
 from riichienv._riichienv import Conditions, HandEvaluator, Meld, MeldType, Wind
 
 from yamawake.context import LIVE_WALL
+from yamawake.playstats import ratio
 from yamawake.tenhou6 import load_mjai
 
 MAX_TURN = 18                       # the tenpai-rate curve runs over turns 1..MAX_TURN
@@ -558,7 +560,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
                 if st is not None:
                     st.delta += d[seat]
             if s.stat is not None:
-                pts = d[actor] - sum(d)           # without the riichi sticks taken
+                pts = s.stat.delta                # the kyoku delta (nothing scores after a win)
                 s.stat.won = True
                 if target == actor:
                     s.stat.win_tsumo = pts
@@ -730,14 +732,8 @@ def cluster_mean(values: Iterable[float], clusters: Iterable) -> tuple[float, fl
     v = np.asarray(list(values), dtype=np.float64)
     if len(v) == 0:
         return math.nan, math.nan
-    c = list(clusters)
-    m = float(v.mean())
-    _, idx = np.unique(np.array(c, dtype=object).astype(str), return_inverse=True)
-    resid = np.bincount(idx, weights=v - m)
-    g = len(resid)
-    if g < 2:
-        return m, 0.0
-    return m, float(math.sqrt(g / (g - 1) * np.sum(resid ** 2)) / len(v))
+    _, idx = np.unique(np.array(list(clusters), dtype=object).astype(str), return_inverse=True)
+    return ratio(np.bincount(idx, weights=v), np.bincount(idx).astype(np.float64))
 
 
 def summarize(stats: list[KyokuStat]) -> dict:

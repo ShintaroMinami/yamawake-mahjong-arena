@@ -11,9 +11,7 @@ took. Standard errors over walls sit in parentheses under their values.
 
 from __future__ import annotations
 
-import numpy as np
-
-from yamawake.match import MatchResult
+from yamawake.match import ROTATIONS, MatchResult
 
 RULE = "─"
 
@@ -49,14 +47,6 @@ def _se(x: float, fmt: str) -> str:
     return f"({x:{fmt}})"
 
 
-def _rank_share(r: MatchResult, slots: list[int]) -> np.ndarray:
-    """How often the slots placed 1st..4th, pooled over their games."""
-    rows = np.arange(len(r.scores))
-    order = np.argsort(np.argsort(-r.scores + np.arange(4) * 1e-6, axis=1), axis=1) + 1
-    got = np.concatenate([order[rows, r.seat_of_slot[:, j]] for j in slots])
-    return np.array([(got == k).mean() for k in (1, 2, 3, 4)])
-
-
 def _standings(r: MatchResult, label: str, balanced: bool) -> list[str]:
     p = r.protocol
     unit = "hanchan" if r.kyoku is None else "single-kyoku games"
@@ -66,8 +56,8 @@ def _standings(r: MatchResult, label: str, balanced: bool) -> list[str]:
     rows = []
     if r.kyoku is None:
         heads = [label, "player", "avg rank", "avg pt", "1st", "2nd", "3rd", "4th"]
-        for s, js in zip(shown, r._groups()):
-            share = _rank_share(r, js)
+        shares = r.rank_share(r._groups())[1]
+        for s, share in zip(shown, shares):
             rows.append([str(s.slot), s.name, f"{s.avg_rank:.4f}", f"{s.avg_pt:+.3f}",
                          *(f"{100 * x:.1f}%" for x in share)])
             rows.append(["", "", _se(s.se, ".4f"), _se(s.se_pt, ".3f"), "", "", "", ""])
@@ -101,8 +91,8 @@ def _play(r: MatchResult, label: str) -> list[str]:
     return _table("Play per kyoku",
                   [label, "player", "win", "deal-in", "call", "riichi",
                    "avg win", "avg deal-in", "adj. eff"], rows,
-                  notes=["call: chi, pon or daiminkan; riichi: declared. Points exclude honba and "
-                         "riichi sticks.",
+                  notes=["call: chi, pon or daiminkan; riichi: declared. avg win: kyoku delta "
+                         "of a won kyoku (honba, sticks, own stick paid); avg deal-in: the ron payment.",
                          "adj. eff = win x avg win - deal-in x avg deal-in (points per kyoku)."])
 
 
@@ -126,6 +116,24 @@ def _time(r: MatchResult, label: str) -> list[str]:
                          "Seconds are summed over threads."])
 
 
+def _label(r: MatchResult) -> tuple[str, bool]:
+    """The row label and whether rows are slots (four rotations) or sides."""
+    balanced = int(r.protocol["rotations"]) == ROTATIONS
+    return ("slot" if balanced else "side"), balanced
+
+
+def standings(r: MatchResult) -> str:
+    """The standings table alone (`MatchResult.table`).
+
+    Args:
+        r: A finished match (`run_match`).
+
+    Returns:
+        The table, ready to print.
+    """
+    return "\n".join(_standings(r, *_label(r)))
+
+
 def report(r: MatchResult) -> str:
     """The match as ruled tables.
 
@@ -135,8 +143,7 @@ def report(r: MatchResult) -> str:
     Returns:
         The report, ready to print.
     """
-    balanced = int(r.protocol["rotations"]) == 4
-    label = "slot" if balanced else "side"
+    label, balanced = _label(r)
     parts = [_standings(r, label, balanced)]
     if r.play is not None:
         parts.append(_play(r, label))

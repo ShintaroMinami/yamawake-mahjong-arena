@@ -7,14 +7,14 @@ import json
 import pytest
 
 from yamawake import RulebotAgent, SelfPlayLoop, build_agent, run_match
-from yamawake.rulebot import LATEST, STANDARD
+from yamawake.rulebot import KOBALAB, STANDARD
 
 
 def test_configs_and_seat_specs():
-    assert STANDARD == dict(LATEST, call_ev_sp=True, call_sp_flat_pass=True, kan=True)
+    assert STANDARD == dict(KOBALAB, call_ev_sp=True, call_sp_flat_pass=True, kan=True)
     assert build_agent("rulebot").config == STANDARD
-    latest = build_agent("rulebot:latest")
-    assert latest.config == LATEST and latest.describe()["name"] == "rulebot:latest"
+    kobalab = build_agent("rulebot:kobalab")
+    assert kobalab.config == KOBALAB and kobalab.describe()["name"] == "rulebot:kobalab"
     with pytest.raises(KeyError, match="no_such_knob"):
         SelfPlayLoop([1], 2, [[(0, "rulebot", {"no_such_knob": 1})]])
 

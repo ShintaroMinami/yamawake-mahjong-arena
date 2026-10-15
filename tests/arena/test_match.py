@@ -47,7 +47,8 @@ def test_1v3_plays_four_rotations_and_reports_every_slot(one_vs_three):
     assert sum(s.avg_rank for s in r.slots) == pytest.approx(10.0)
     assert r.slots[0].avg_rank > 3.0                  # tsumogiri is the floor
     lines = r.table().splitlines()
-    assert lines[0].startswith("slot") and len(lines) == 6
+    assert lines[0].startswith("Standings") and lines[2].split()[0] == "slot"
+    assert len(lines) == 4 + 2 * 4 + 1                # title, rules, head; value + se rows
 
 
 def test_the_standard_walls_are_the_default_and_a_base_replays(one_vs_three):
@@ -93,7 +94,8 @@ def test_2v2_plays_two_rotations_and_reports_sides(two_vs_two):
     assert sides[0].avg_rank == pytest.approx((r.slots[0].avg_rank + r.slots[2].avg_rank) / 2)
     assert sides[0].avg_rank - sides[1].avg_rank == pytest.approx(r.paired()["rank"])
     lines = r.table().splitlines()
-    assert lines[0].startswith("side") and len(lines) == 4
+    assert lines[2].split()[0] == "side" and "paired over" in lines[-1]
+    assert len(lines) == 4 + 2 * 2 + 2                # two sides; closing rule, paired note
 
 
 def test_rank_share_sums_to_one_per_side(two_vs_two):
