@@ -1,4 +1,4 @@
-"""The single-player DP answers exactly as reljong v0.1's spdp_rs did."""
+"""The single-player DP answers exactly as recorded (tests/eval/run_sp_v01.json)."""
 from __future__ import annotations
 
 import json

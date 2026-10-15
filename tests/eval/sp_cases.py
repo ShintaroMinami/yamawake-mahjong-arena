@@ -1,10 +1,7 @@
 """Deterministic run_sp payloads and a digest of the solver's answers.
 
 Shared by tests/eval/test_sp.py and the one-off that recorded the reference digest
-with reljong v0.1's `spdp_rs.run_sp` (tests/eval/run_sp_v01.json):
-
-    cd $RELJONG_V01/code && uv run --frozen python \\
-        <yamawake>/tests/eval/sp_cases.py spdp_rs > <yamawake>/tests/eval/run_sp_v01.json
+(tests/eval/run_sp_v01.json).
 """
 
 from __future__ import annotations

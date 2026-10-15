@@ -8,7 +8,8 @@ with the call assessment switched to the single-player DP pricing
 (kobalab_ev call pricing). Seat one with `agents.RulebotAgent(STANDARD)`; the bot is
 decided inside the Rust loop (`src/rust/rulebot/`). The knobs are only what
 tells the two apart (`RulebotConfig` in `src/rust/rulebot/config.rs`); any knob
-not given keeps the Rust default, and an unknown knob is an error.
+not given keeps the Rust default (on, as in `STANDARD`), and an unknown knob is
+an error.
 """
 
 from __future__ import annotations

@@ -89,7 +89,7 @@ pub struct GameState {
     pub riichi_sutehais: [Option<u8>; NP], // Tile discarded when declaring riichi
     pub last_tedashis: [Option<u8>; NP],   // Last hand discard (not tsumogiri)
 
-    /// reljong patch: duplicate-eval wall controls; both default off, in
+    /// yamawake patch: duplicate-eval wall controls; both default off, in
     /// which case behaviour is bit-identical to the stock engine.
     /// `split_wall`: each seat draws only from its own fixed queue of the
     /// kyoku's wall (see `WallState::split_live_region`).
@@ -1584,7 +1584,7 @@ impl GameState {
         }
     }
 
-    /// reljong patch: one live draw for the current player — from the
+    /// yamawake patch: one live draw for the current player — from the
     /// seat's own queue in split-wall mode, else from the shared wall.
     fn _pop_live_tile(&mut self) -> Option<u8> {
         if self.wall.split_queues.is_some() {
@@ -1768,7 +1768,7 @@ impl GameState {
             }
         }
 
-        // reljong patch: an explicit wall table (keyed by kyoku ordinal +
+        // yamawake patch: an explicit wall table (keyed by kyoku ordinal +
         // honba) beats the seeded shuffle, so renchan can never shift
         // which wall a given (kyoku, honba) is played on.
         let wall = wall.or_else(|| {
@@ -1806,7 +1806,7 @@ impl GameState {
 
         // 14 = dead wall tiles (2 rinshan stacks + 5 dora stacks)
         self.wall.drawable_count = (self.wall.tiles.len() as u8) - 14;
-        // reljong patch: split the live region into per-seat queues so
+        // yamawake patch: split the live region into per-seat queues so
         // calls never shift another seat's draws (duplicate eval).
         if self.split_wall {
             self.wall.split_live_region(oya);

@@ -59,7 +59,7 @@
   }
  },
  "context": {
-  "_doc": "A unique top leads by more than top_margin (the outside bias of suzume-mlp1).",
+  "_doc": "A unique top leads by more than top_margin (the outside bias of the flat_mlp1 hand models).",
   "top_margin": 0
  }
 }

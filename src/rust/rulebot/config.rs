@@ -2,7 +2,7 @@
 //!
 //! Only what tells the two shipped configs apart (`STANDARD` and `LATEST` in
 //! `src/python/yamawake/rulebot.py`) is a knob; everything both share is a
-//! constant here. `Default` is `LATEST`, and the golden tests pin the play.
+//! constant here. `Default` is `STANDARD`, and the golden tests pin the play.
 
 /// Fold once shanten reaches this, on the shanten number alone.
 pub(super) const FOLD_SHANTEN: i8 = 2;
@@ -24,8 +24,8 @@ pub(super) const CALL_EV_PUSH: f32 = 750.;
 /// Least a call must be worth into a threat when it reaches tenpai.
 pub(super) const CALL_EV_TENPAI: f32 = 250.;
 
-/// The knobs of the rulebot. `Default` is `LATEST`.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// The knobs of the rulebot. `Default` is `STANDARD` (every knob on).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RulebotConfig {
     /// Price calls with the single-player DP instead of kobalab_ev. The
     /// same threatened floors apply, but on the DP's point scale.
@@ -36,4 +36,10 @@ pub struct RulebotConfig {
     /// Declare ankan / kakan by kobalab's `select_gang` (`kan.rs`); never
     /// daiminkan.
     pub kan: bool,
+}
+
+impl Default for RulebotConfig {
+    fn default() -> Self {
+        Self { call_ev_sp: true, call_sp_flat_pass: true, kan: true }
+    }
 }

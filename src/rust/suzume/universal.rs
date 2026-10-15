@@ -3,7 +3,7 @@
 //! models were fitted on.
 //! Design: docs/suzume.md.
 //!
-//! Decision kinds and their options (`(kind, action id)`, reljong ids:
+//! Decision kinds and their options (`(kind, action id)`, the ids the models were fitted on:
 //! tiles 0-33, red fives 34-36, chi 38-40 / red 76-78 by the called tile's
 //! place, pon 41 / red 79, pass 82; a riichi option carries its tile):
 //!
@@ -221,7 +221,7 @@ pub struct Universal {
 const KINDS: [&str; 5] = ["discard", "riichi", "tenpai", "call", "kan"];
 const HAND_TYPES: [&str; 4] = ["chiitoi", "flush", "yakuhai", "general"];
 
-/// The reljong action id of a discard.
+/// The action id of a discard (the module docs' ids).
 fn tile_id(t: u8, aka: bool) -> u16 {
     if aka { 34 + u16::from(t / 9) } else { u16::from(t) }
 }

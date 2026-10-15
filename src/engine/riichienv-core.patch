@@ -4,7 +4,7 @@
      pub salt: String,
      pub seed: Option<u64>,
      pub hand_index: u64,
-+    /// reljong patch: per-seat live-draw queues (duplicate eval). When
++    /// yamawake patch: per-seat live-draw queues (duplicate eval). When
 +    /// `Some`, every live draw comes from the acting seat's own queue, so
 +    /// a call never shifts another seat's future draws. The dead wall
 +    /// stays in `tiles` (front-indexed) and is never split.
@@ -35,7 +35,7 @@
 +        self.split_queues = None;
      }
 +
-+    /// reljong patch: carve the live region into fixed per-seat queues.
++    /// yamawake patch: carve the live region into fixed per-seat queues.
 +    ///
 +    /// Call right after the deal: `tiles` then holds the 14 dead-wall
 +    /// tiles at the front and the live draws at the back (drawn via
@@ -55,7 +55,7 @@
 +        self.split_queues = Some(queues);
 +    }
 +
-+    /// reljong patch: draw for `actor` from its own queue; when heavy
++    /// yamawake patch: draw for `actor` from its own queue; when heavy
 +    /// calling runs the actor's queue dry, borrow from the longest queue
 +    /// (on a tie, the highest seat index). The caller gates on
 +    /// `drawable_count`, which stays the single shared haitei clock.
@@ -77,7 +77,7 @@
      pub riichi_sutehais: [Option<u8>; NP], // Tile discarded when declaring riichi
      pub last_tedashis: [Option<u8>; NP],   // Last hand discard (not tsumogiri)
 +
-+    /// reljong patch: duplicate-eval wall controls; both default off, in
++    /// yamawake patch: duplicate-eval wall controls; both default off, in
 +    /// which case behaviour is bit-identical to the stock engine.
 +    /// `split_wall`: each seat draws only from its own fixed queue of the
 +    /// kyoku's wall (see `WallState::split_live_region`).
@@ -136,7 +136,7 @@
 +        }
 +    }
 +
-+    /// reljong patch: one live draw for the current player — from the
++    /// yamawake patch: one live draw for the current player — from the
 +    /// seat's own queue in split-wall mode, else from the shared wall.
 +    fn _pop_live_tile(&mut self) -> Option<u8> {
 +        if self.wall.split_queues.is_some() {
@@ -159,7 +159,7 @@
              }
          }
  
-+        // reljong patch: an explicit wall table (keyed by kyoku ordinal +
++        // yamawake patch: an explicit wall table (keyed by kyoku ordinal +
 +        // honba) beats the seeded shuffle, so renchan can never shift
 +        // which wall a given (kyoku, honba) is played on.
 +        let wall = wall.or_else(|| {
@@ -175,7 +175,7 @@
  
          // 14 = dead wall tiles (2 rinshan stacks + 5 dora stacks)
          self.wall.drawable_count = (self.wall.tiles.len() as u8) - 14;
-+        // reljong patch: split the live region into per-seat queues so
++        // yamawake patch: split the live region into per-seat queues so
 +        // calls never shift another seat's draws (duplicate eval).
 +        if self.split_wall {
 +            self.wall.split_live_region(oya);

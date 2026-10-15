@@ -16,7 +16,7 @@ pub struct WallState {
     pub salt: String,
     pub seed: Option<u64>,
     pub hand_index: u64,
-    /// reljong patch: per-seat live-draw queues (duplicate eval). When
+    /// yamawake patch: per-seat live-draw queues (duplicate eval). When
     /// `Some`, every live draw comes from the acting seat's own queue, so
     /// a call never shifts another seat's future draws. The dead wall
     /// stays in `tiles` (front-indexed) and is never split.
@@ -87,7 +87,7 @@ impl WallState {
         self.split_queues = None;
     }
 
-    /// reljong patch: carve the live region into fixed per-seat queues.
+    /// yamawake patch: carve the live region into fixed per-seat queues.
     ///
     /// Call right after the deal: `tiles` then holds the 14 dead-wall
     /// tiles at the front and the live draws at the back (drawn via
@@ -107,7 +107,7 @@ impl WallState {
         self.split_queues = Some(queues);
     }
 
-    /// reljong patch: draw for `actor` from its own queue; when heavy
+    /// yamawake patch: draw for `actor` from its own queue; when heavy
     /// calling runs the actor's queue dry, borrow from the longest queue
     /// (on a tie, the highest seat index). The caller gates on
     /// `drawable_count`, which stays the single shared haitei clock.
