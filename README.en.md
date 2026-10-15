@@ -8,6 +8,7 @@ In duplicate bridge every table plays the same deals. This keeps results from
 hinging on the luck of the cards, so they measure the difference in skill
 between players more accurately. yamawake-mahjong-arena brings the same idea to
 measuring mahjong skill.
+
 Every kyoku's wall is fixed, and each seat draws from its own part of the wall
 (*split fixed walls*). This way calls and dealer repeats never shift the
 scheduled draws: they hold to the end of the game.
