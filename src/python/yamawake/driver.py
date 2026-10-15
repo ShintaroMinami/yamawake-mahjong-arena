@@ -21,6 +21,8 @@ encoding with inference) drives `SelfPlayLoop` directly the same way:
 
 from __future__ import annotations
 
+import time
+
 from typing import Callable, Optional
 
 import riichienv as rv
@@ -48,8 +50,8 @@ def mjai_action_spec(a: rv.Action) -> ActionSpec:
 def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                wall_blobs: list[bytes] | None = None, split_wall: bool = True,
                game_mode: int = HANCHAN, flight: int = 256, want_logs: bool = False,
-               progress: Callable[[int, int], None] | None = None,
-               traces: list | None = None
+               progress: Callable[[int, int, int], None] | None = None,
+               traces: list | None = None, timing: list | None = None
                ) -> tuple[list[list[int]], list[list[str]]]:
     """Play every game to the end.
 
@@ -65,12 +67,20 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
             (`SINGLE_KYOKU`).
         flight: Games in flight at once.
         want_logs: Also return each game's full-information mjai log.
-        progress: Optional `progress(decisions, games_started)`, called every
-            tick with the Python-side decisions answered so far (rulebot and
-            suzume bots decide inside Rust and are not counted).
+        progress: Optional `progress(games_done, games_total, decisions)`,
+            called after every flight of games and every tick within one;
+            `decisions` counts the Python-side decisions answered so far
+            (rulebot and suzume bots decide inside Rust and are not counted).
         traces: If a list, one entry per game is appended to it: the game's
             suzume decisions as `(mjai log index, seat, deciding rule)`
             (empty for games without a suzume bot).
+        timing: If a list of one `[decisions, seconds]` per agent plus one
+            for the arena, each agent's decisions and the time it spent on
+            them are added to its entry: in-loop bots timed in Rust (summed
+            over threads), observation-lane agents over their `act_batch`
+            calls. The last entry gets the arena's own time: the loop's
+            work in Rust less the in-loop bots', plus the Python side's
+            turning rows into decisions.
 
     Returns:
         `(scores, logs)`: final points per game (4 each), and the logs (empty
@@ -104,12 +114,21 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
             batch = loop.collect()
             if batch is None:
                 break
-            loop.apply(_observation_specs(batch, maps, agents, trackers))
+            loop.apply(_observation_specs(batch, maps, agents, trackers, timing))
             if progress is not None:
                 answered += batch["n"]
-                progress(answered, hi)
+                progress(lo, len(seeds), answered)
 
         scores.extend(loop.scores())
+        if timing is not None:
+            timing[-1][1] += sum(loop.work_times())
+            for m, per_seat in zip(maps, loop.bot_times()):
+                for s, (n, sec) in enumerate(per_seat):
+                    timing[m[s]][0] += n
+                    timing[m[s]][1] += sec
+                    timing[-1][1] -= sec
+        if progress is not None:
+            progress(hi, len(seeds), answered)
         if want_logs:
             logs.extend(loop.mjai_log(g) for g in range(hi - lo))
         if traces is not None:
@@ -118,12 +137,14 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
 
 
 def _observation_specs(batch: dict, maps: list[tuple[int, ...]], agents: list,
-                       trackers: dict) -> list[ActionSpec]:
+                       trackers: dict, timing: list | None = None) -> list[ActionSpec]:
     """Action specs for the tick's rows, in row order.
 
     Every row is turned into a `Decision` first, then grouped by agent so each
     agent decides its whole tick in one call.
     """
+    t_start = time.perf_counter()
+    agent_time = 0.0
     m = batch["n"]
     decisions, owners = [], []
     for i in range(m):
@@ -141,10 +162,17 @@ def _observation_specs(batch: dict, maps: list[tuple[int, ...]], agents: list,
         rows = [i for i, o in enumerate(owners) if o == ai]
         if not rows:
             continue
+        t0 = time.perf_counter()
         actions = agent.act_batch([decisions[i] for i in rows])
+        if timing is not None:
+            timing[ai][0] += len(rows)
+            timing[ai][1] += time.perf_counter() - t0
+            agent_time += time.perf_counter() - t0
         if len(actions) != len(rows):
             raise ValueError(f"agent {ai} returned {len(actions)} actions for "
                              f"{len(rows)} decisions")
         for i, action in zip(rows, actions):
             specs[i] = mjai_action_spec(action)
+    if timing is not None:
+        timing[-1][1] += time.perf_counter() - t_start - agent_time
     return specs

@@ -43,7 +43,7 @@ Python からは `RulebotAgent(設定)` で座らせます。指定しなかっ�
 
 ## 5. 1 局面の判断
 
-`decide("rulebot", 観測, その局の mjai の出来事, debug=True)` で、対局中と同じ判断と、判断の材料（向聴、脅威、手の価値など）を得られます（[`docs/arena.md`](arena.md) 4 節）。
+`decide("rulebot", 観測, その局の mjai の出来事, debug=True)` で、対局中と同じ判断と、判断の材料（向聴、脅威、手の価値など）を得られます（[`docs/arena.md`](arena.md) 3 節）。
 
 ## 6. 検査
 

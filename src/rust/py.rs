@@ -233,6 +233,22 @@ impl SelfPlayLoop {
         Ok(slot.suzume_trace.iter().map(|&(i, seat, rule)| (i, seat, crate::suzume::decider_name(rule))).collect())
     }
 
+    /// Per game and seat: the in-loop bot's (decisions, seconds); zeros for
+    /// the seats decided outside the loop.
+    fn bot_times(&self) -> Vec<Vec<(u64, f64)>> {
+        self.inner
+            .slots
+            .iter()
+            .map(|s| (0..4).map(|i| (s.bot_decisions[i], s.bot_nanos[i] as f64 * 1e-9)).collect())
+            .collect()
+    }
+
+    /// Per game: the loop's wall-clock work on it in seconds (engine,
+    /// observations, events and the in-loop bots).
+    fn work_times(&self) -> Vec<f64> {
+        self.inner.slots.iter().map(|s| s.work_nanos as f64 * 1e-9).collect()
+    }
+
     fn done(&self) -> bool {
         self.inner.slots.iter().all(|s| s.state.is_done)
     }

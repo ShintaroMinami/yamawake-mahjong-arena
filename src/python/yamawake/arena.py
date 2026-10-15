@@ -36,10 +36,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import sys
+import time
 
 from yamawake.agents import build_agent
-from yamawake.match import lineup, rotations_of, run_match
-from yamawake.walls import standard_walls
+from yamawake.match import lineup, run_match
+from yamawake.report import report
 
 
 def _opts(pairs: list[str]) -> dict[str, str]:
@@ -50,6 +52,54 @@ def _opts(pairs: list[str]) -> dict[str, str]:
             raise SystemExit(f"--opt takes KEY=VALUE, got {p!r}")
         out[k] = v
     return out
+
+
+def _clock(seconds: float) -> str:
+    """`mm:ss`, or `h:mm:ss` from an hour."""
+    m, sec = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+
+class _Progress:
+    """A one-line progress bar on stderr (a line per 10% when not a terminal).
+
+    Finished games advance it a flight at a time; with Python players, their
+    answered decisions (against ~`per_game` a game, shared by the four seats)
+    also advance it within a flight.
+    """
+
+    def __init__(self, per_game: int, py_players: int, width: int = 30) -> None:
+        self.per_game, self.py_players, self.width = per_game, py_players, width
+        self.t0 = time.time()
+        self.tty = sys.stderr.isatty()
+        self.shown, self.last = -1, 0.0
+
+    def __call__(self, games_done: int, games_total: int, decisions: int) -> None:
+        frac = games_done / games_total
+        if self.py_players:
+            expect = games_total * self.per_game * self.py_players / 4
+            frac = max(frac, min(0.99, decisions / expect))
+        pct = int(100 * frac)
+        now = time.time()
+        if self.tty:
+            if pct < 100 and now - self.last < 0.2:     # redraw at most 5 times a second
+                return
+        elif pct < self.shown + 10:
+            return
+        self.shown, self.last = pct, now
+        elapsed = now - self.t0
+        eta = _clock(elapsed / frac * (1 - frac)) if frac > 0 else "?"
+        bar = "#" * int(self.width * frac)
+        line = (f"[{bar:<{self.width}}] {pct:3d}%  {max(games_done, int(frac * games_total))}/{games_total} games  "
+                f"[{_clock(elapsed)}<{eta}]")
+        print(("\r" + line) if self.tty else line, end="" if self.tty else "\n",
+              file=sys.stderr, flush=True)
+
+    def close(self) -> None:
+        """End the bar's line."""
+        if self.tty and self.shown >= 0:
+            print(file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -73,6 +123,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--save-scores", default=None,
                     help="write the raw per-game scores to this .npz, so a later "
                          "question about the games does not cost the match again")
+    ap.add_argument("--no-stats", action="store_true",
+                    help="skip the play statistics (win, deal-in, call, riichi, hand points)")
     ap.add_argument("--single-kyoku", action="store_true",
                     help="every game is East 1 only (honba 0, 25,000 each) and ends "
                          "with it; reports the kyoku delta and win / deal-in rates")
@@ -93,49 +145,16 @@ def main(argv: list[str] | None = None) -> None:
                  for sp in specs]
     except ValueError as e:
         raise SystemExit(str(e))
-    # Progress: decisions answered by the Python players, against ~566 a hanchan
-    # (~60 a single kyoku) shared by the four players (in-Rust bots are not
-    # counted).
-    import time as _time
-    t0 = _time.time()
-    py_players = sum(1 for a in players
-                      if getattr(a, "lane", None) not in ("rulebot", "suzume"))
-    rotations = rotations_of(players)
-    n_games = (args.walls or standard_walls()["default_walls"]) * rotations
-    per_game = 60 if args.single_kyoku else 566
-    expect = max(1, int(n_games * per_game * py_players / 4))
-    shown = [0]
-
-    def progress(decisions, games_started):
-        pct = min(99, int(100 * decisions / expect))
-        if pct >= shown[0] + 5:
-            shown[0] = pct - pct % 5
-            print(f"[{(_time.time() - t0) / 60:5.1f} min] ~{pct}% ({decisions}/{expect} "
-                  f"decisions, {games_started}/{n_games} games started)", flush=True)
-
+    progress = _Progress(per_game=60 if args.single_kyoku else 566,
+                         py_players=sum(1 for a in players
+                                        if getattr(a, "lane", None) not in ("rulebot", "suzume")))
     result = run_match(players, walls=args.walls, wall_base=args.wall_base,
                        flight=args.flight, record_logs=args.record_logs,
                        out=args.out,
                        save_scores=args.save_scores, progress=progress,
-                       single_kyoku=args.single_kyoku)
-    print(result.table(), flush=True)
-    if args.mode == "2v2":
-        d = result.paired()
-        sigma = (f"{abs(d['rank']) / d['rank_se']:.1f} sigma" if d["rank_se"]
-                 else "no spread")
-        names, share, se = result.rank_share()
-        print(f"{'side':<26}" + "".join(f"{f'{r}位':>12}" for r in (1, 2, 3, 4)))
-        for i, n in enumerate(names):
-            print(f"{n[:26]:<26}" + "".join(
-                f"{share[i, r]:8.4f}+-{se[i, r]:.3f}" for r in range(4)))
-        print(f"paired over {d['walls']} walls: slots 0,2 minus 1,3 = "
-              f"{d['rank']:+.4f} +/- {d['rank_se']:.4f} rank, "
-              f"{d['pt']:+.4f} +/- {d['pt_se']:.4f} pt "
-              f"({sigma}; negative rank favours slots 0,2)", flush=True)
-        if "delta" in d:
-            print(f"kyoku delta, slots 0,2 minus 1,3 = {d['delta']:+.0f} "
-                  f"+/- {d['delta_se']:.0f} points", flush=True)
-
+                       single_kyoku=args.single_kyoku, play_stats=not args.no_stats)
+    progress.close()
+    print(report(result), flush=True)
 
 if __name__ == "__main__":
     main()

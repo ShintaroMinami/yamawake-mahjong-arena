@@ -26,6 +26,7 @@ import numpy as np
 
 from yamawake.agents import LANE_SUZUME
 from yamawake.driver import HANCHAN, SINGLE_KYOKU, play_games
+from yamawake.playstats import play_counts, ratio
 from yamawake.rules import DEFAULT_RULE, rule_label
 from yamawake.walls import FRESH, blob_for_wall, fresh_wall_ids, standard_walls
 
@@ -64,6 +65,77 @@ class MatchResult:
     rule: Any = field(default=DEFAULT_RULE, repr=False)   # settles `sides`/`paired`
     # Single-kyoku matches only: {"win", "deal_in"}, (games, 4) bool by SEAT.
     kyoku: dict | None = field(default=None, repr=False)
+    # With `play_stats`: `playstats.play_counts`, (games, 4) by SEAT.
+    play: dict | None = field(default=None, repr=False)
+    # Per agent (`protocol["slot_agent"]` index), then the arena: [decisions, seconds].
+    timing: list | None = None
+    cpu_seconds: float = 0.0        # the whole process's CPU time over the match
+
+    def _groups(self) -> list[list[int]]:
+        """The slots of each table row: one per slot with four rotations,
+        else the slots of each side."""
+        sa = self.protocol["slot_agent"]
+        if int(self.protocol["rotations"]) == ROTATIONS:
+            return [[j] for j in range(4)]
+        return [[j for j, k in enumerate(sa) if k == a] for a in dict.fromkeys(sa)]
+
+    def play_stats(self) -> list[dict]:
+        """Per slot (or side) play statistics, pooled per kyoku.
+
+        `win`, `deal_in`, `call` and `riichi` are shares of kyoku;
+        `avg_win` the mean points of a won hand and `avg_deal` of a hand
+        dealt into (all a double ron paid; honba and riichi sticks taken
+        out, `playstats`);
+        `adj_eff` is `win * avg_win - deal_in * avg_deal`, points per kyoku.
+        Each comes with its standard error over walls (`*_se`).
+
+        Raises:
+            ValueError: The match was not played with `play_stats`.
+        """
+        if self.play is None:
+            raise ValueError("play_stats needs a match run with play_stats=True")
+        rot = int(self.protocol["rotations"])
+        walls = len(self.scores) // rot
+        rows = np.arange(len(self.scores))
+
+        def per_wall(key: str, js: list[int]) -> np.ndarray:
+            v = sum(self.play[key][rows, self.seat_of_slot[:, j]] for j in js)
+            return v.reshape(walls, rot).sum(1).astype(float)
+
+        out = []
+        for js in self._groups():
+            c = {k: per_wall(k, js) for k in self.play}
+            row = {"slot": js[0], "name": self.slots[js[0]].name}
+            for key, (y, x) in {"win": ("win", "kyoku"), "deal_in": ("deal_in", "kyoku"),
+                                "call": ("call", "kyoku"), "riichi": ("riichi", "kyoku"),
+                                "avg_win": ("win_pts", "win"),
+                                "avg_deal": ("deal_pts", "deal_in")}.items():
+                row[key], row[f"{key}_se"] = ratio(c[y], c[x])
+            row["adj_eff"], row["adj_eff_se"] = ratio(c["win_pts"] - c["deal_pts"], c["kyoku"])
+            out.append(row)
+        return out
+
+    def time_stats(self) -> list[dict]:
+        """Each agent's decisions and time, then the arena's own.
+
+        Agents: one row per distinct agent (`slot` its lowest slot). In-loop
+        bots are timed in Rust and summed over threads (CPU time);
+        observation-lane agents over their `act_batch` calls (wall-clock).
+        The last row, `name` "arena" (`slot` None), is the arena's own
+        time: the engine and the loop in Rust, summed over threads, and the
+        Python side's turning rows into decisions.
+        """
+        if self.timing is None:
+            return []
+        sa = self.protocol["slot_agent"]
+        out = []
+        for a, (n, sec) in enumerate(self.timing[:-1]):
+            j = sa.index(a)
+            out.append({"slot": j, "name": self.slots[j].name, "decisions": int(n),
+                        "seconds": float(sec), "ms_per_decision": 1e3 * sec / n if n else 0.0})
+        out.append({"slot": None, "name": "arena", "decisions": 0,
+                    "seconds": float(self.timing[-1][1]), "ms_per_decision": 0.0})
+        return out
 
     def kyoku_stats(self) -> list[dict]:
         """Per slot (or side) outcome of a single-kyoku match.
@@ -235,6 +307,10 @@ class MatchResult:
                "seconds": round(self.seconds, 1)}
         if self.kyoku is not None:
             row["kyoku_stats"] = self.kyoku_stats()
+        if self.play is not None:
+            row["play_stats"] = self.play_stats()
+        if self.timing is not None:
+            row["time_stats"] = self.time_stats()
         return row
 
 
@@ -300,7 +376,7 @@ def run_match(players: list, walls: int | None = None,
               record_logs: str | Path | None = None,
               out: str | Path | None = None,
               save_scores: str | Path | None = None, progress=None,
-              single_kyoku: bool = False) -> MatchResult:
+              single_kyoku: bool = False, play_stats: bool = False) -> MatchResult:
     """Play `walls` x 4 hanchan (x 2 for a 2v2) and return every slot's standing.
 
     Args:
@@ -338,6 +414,12 @@ def run_match(players: list, walls: int | None = None,
             (`MatchResult.kyoku`, also saved by `save_scores`), and `table`,
             the jsonl row and `paired` report the kyoku delta and win /
             deal-in rates (`MatchResult.kyoku_stats`).
+        play_stats: Also gather the play statistics (win, deal-in, call and
+            riichi rates, hand points; `MatchResult.play_stats`). They are
+            read from the games' logs, which costs some speed.
+        progress: Optional `progress(games_done, games_total, decisions)`,
+            called as the games advance (`driver.play_games`); nothing is
+            printed without it.
 
     Returns:
         A `MatchResult`.
@@ -377,16 +459,17 @@ def run_match(players: list, walls: int | None = None,
             maps.append(tuple(slot_agent[(s - r) % 4] for s in range(4)))
             game_blobs.append(blobs[w])
 
-    t0 = time.time()
+    t0, c0 = time.time(), time.process_time()
+    timing = [[0, 0.0] for _ in range(len(agents) + 1)]     # agents, then the arena
     has_suzume = any(getattr(a, "lane", None) == LANE_SUZUME for a in agents)
     traces: list | None = [] if record_logs is not None and has_suzume else None
     scores, logs = play_games(seeds, maps, agents, wall_blobs=game_blobs,
                               split_wall=split_wall, game_mode=game_mode,
                               flight=flight,
-                              want_logs=record_logs is not None or single_kyoku,
+                              want_logs=record_logs is not None or single_kyoku or play_stats,
                               progress=progress,
-                              traces=traces)
-    seconds = time.time() - t0
+                              traces=traces, timing=timing)
+    seconds, cpu_seconds = time.time() - t0, time.process_time() - c0
 
     scores = np.array(scores, dtype=np.int64)                 # (games, 4) by SEAT
     seat_of_slot = np.array(seat_of_slot, dtype=np.int64)     # (games, 4) slot -> seat
@@ -413,7 +496,8 @@ def run_match(players: list, walls: int | None = None,
         kyoku = _kyoku_outcomes(logs)
     result = MatchResult(slots, len(scores), protocol,
                          [s.describe() for s in players], scores, seat_of_slot,
-                         seconds, rule, kyoku)
+                         seconds, rule, kyoku,
+                         play_counts(logs) if play_stats else None, timing, cpu_seconds)
     if record_logs is not None:
         _write_logs(Path(record_logs), logs, seat_of_slot, players, base, traces)
     if save_scores is not None:

@@ -70,6 +70,10 @@ The package is `yamawake` and the command is `yamawake-arena`.
     uv run yamawake-arena --mode 2v2 --players tsumogiri rulebot --walls 100
     uv run python -m yamawake.arena --mode 1v3 --players suzume rulebot
 ```
+The results go to stdout as tables: rank and points, per-kyoku win, deal-in,
+call and riichi rates, hand points and adjusted efficiency, and the time each
+player and the arena itself took (see [`docs/arena.md`](docs/arena.md#2-コマンドライン)).
+
 From Python:
 ``` python
     from yamawake import RulebotAgent, TsumogiriAgent, run_match
@@ -125,7 +129,8 @@ Registering a name with `register_agent("my-agent", lambda spec, **opts: MyAgent
 lets you name it within the same process, as in
 `yamawake.arena.main(["--players", "my-agent", "rulebot", ...])`. To use it from
 the `yamawake-arena` command, put the registering function in your package's
-`yamawake.agents` entry-point group.
+`yamawake.agents` entry-point group. For what a decision carries and a fuller
+example, see [`docs/arena.md`](docs/arena.md#4-自作のプレイヤー).
 
 For more, including the low-level loop, single-position decisions (`decide`),
 log statistics (`handstats`) and the Tenhou replay converter (`tenhou6`), see

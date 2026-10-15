@@ -8,11 +8,15 @@ suzume は、強化学習で得た強いエージェント（教師）の方策�
 
 ## 1. 使い方
 
-    uv run yamawake-arena --mode 2v2 --players suzume rulebot
-    uv run yamawake-arena --mode 1v3 --players suzume-mlp1:call=0 rulebot
+``` bash
+uv run yamawake-arena --mode 2v2 --players suzume rulebot
+uv run yamawake-arena --mode 1v3 --players suzume-mlp1:call=0 rulebot
+```
 
-    from yamawake import SuzumeAgent
-    agent = SuzumeAgent({"riichi": 0})
+``` python
+from yamawake import SuzumeAgent
+agent = SuzumeAgent({"riichi": 0})
+```
 
 ### モデルの組
 
@@ -103,7 +107,7 @@ suzume は、強化学習で得た強いエージェント（教師）の方策�
 
 ## 6. 速さ
 
-1 CPU（`RAYON_NUM_THREADS=1`）、4 人とも同じボット、100 牌山、席の回転なし、3 回の中央値（Apple M4 Pro、2026-10-15）：
+1 CPU（1 スレッドで実行）、4 人とも同じボット、100 牌山、席の回転なし、3 回の中央値（Apple M4 Pro、2026-10-15）：
 
 | ボット | 半荘/分 |
 |---|---|

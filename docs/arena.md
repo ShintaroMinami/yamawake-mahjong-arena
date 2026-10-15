@@ -1,127 +1,260 @@
-# arena：分割固定牌山の対戦環境
+# arena：固定分割牌山の対戦環境
 
-yamawake-mahjong-arena の対局場です。牌の運を打ち消して打ち手の差だけを測ることと、速いことを目的にしています。
+- コード：[`src/rust/arena/`](../src/rust/arena/)（対局ループ）、[`src/python/yamawake/`](../src/python/yamawake/)（Python のインターフェイス）
+- 対局エンジン：riichienv-core 0.4.8 の fork（[`src/engine/README.md`](../src/engine/README.md)）
 
-- コード：[`src/rust/arena/`](../src/rust/arena/)（対局ループ）、[`src/python/yamawake/`](../src/python/yamawake/)（`match.py`・`arena.py`・`driver.py`・`agents.py` など）
-- 対局エンジン：[`src/engine/riichienv-core/`](../src/engine/riichienv-core/)（riichienv-core 0.4.8 の fork。[`src/engine/README.md`](../src/engine/README.md)）
+## 1. 仕組み
 
-## 1. 考え方
+- **分割牌山**：各席は自分専用の牌山からツモる。副露があっても、どの席のツモもずれない。
+- **固定牌山**：局 × 本場（東 1〜北 4 × 12）ごとに 136 枚の牌山を固定します。連荘しても、各局で使う牌山はずれない。
+- **席の回転**：1 つの牌山を、席を回して全プレイヤーが同じ牌山を1度ずつ打つ。1v3では席をずらして4回、2v2（`[A, B, A, B]`）は 2 回打つ（残りの 2 回は同じ対局になるため）。
+- **標準牌山**：デフォルトでは`wall_base 0` から作り、その先頭 1,000 個を使う(設定で変更可能)。常に同じ規定の牌山を使用すれば、結果の違いは打ち手の違いだけを反映する。
 
-デュプリケートブリッジでは全卓が同じ配牌で打つので、結果は札ではなく打ち手の差を表します。arena は麻雀で同じことをします。
-
-- **固定牌山**：*牌山の行列* が、対局の各座標（局 × 本場、東 1〜北 4 × 12）の 136 枚の牌山を固定します。連荘しても、その局がどの牌山で打たれるかはずれません。
-- **split 牌山**：各席は、山のうち自分専用に決まった列からだけツモります。鳴きがあっても、他の席のこの先のツモはずれません。
-- **席の回転**：1 つの牌山を、席を回して 4 回打ちます（2v2 の `[A, B, A, B]` は 2 回。残りの 2 回は同じ対局の繰り返しになるため）。どの打ち手も全ての席の牌を打つことになり、同じ決定的な打ち手 4 人なら平均順位はちょうど 2.5 になります。
-- **標準牌山**：記録した 1 つの元の値（`wall_base 0`。2026-10-14 までは `6172671062617`）から作り直す 5,000 個の行列です（`walls.standard_walls()`、4 つの指紋で検査。[`src/python/yamawake/data/eval_walls.json`](../src/python/yamawake/data/eval_walls.json)）。測定がこれを共有するので、2 つの結果の違いは打ち手の違いだけから生まれます。
-
-対局は N 局を足並みをそろえて並列（rayon）に進めます。rulebot と suzume は Rust の中で判断し、Python に入るのは 1 手番に 1 回、それが必要なプレイヤーのためだけです。速さの目安（ノート PC 1 台、200 牌山、4 人とも同じ bot）：rulebot 約 11,000 半荘/分、suzume 約 3,300、`suzume-mlp1` 約 4,900。
+対局は N 局を並列に進めます。rulebot と suzume は Rust の中で判断し、Python を呼ぶのは Python のプレイヤーの手番だけです。
 
 ## 2. コマンドライン
 
-    uv run yamawake-arena --mode 1v3 --players tsumogiri rulebot --walls 50
-    uv run python -m yamawake.arena --mode 2v2 --players suzume rulebot
-    uv run python -m yamawake.arena --players rulebot rulebot:latest rulebot rulebot \
-        --walls 1000 --out results.jsonl --save-scores scores.npz --record-logs logs/
+``` bash
+uv run yamawake-arena --mode 2v2 --players suzume rulebot
+uv run yamawake-arena --players rulebot rulebot:latest rulebot rulebot \
+    --walls 1000 --out results.jsonl --save-scores scores.npz --record-logs logs/
+```
 
 | オプション | 意味 |
 |---|---|
-| `--players` | 4 人のプレイヤー、または `--mode` と 2 人のプレイヤー |
-| `--mode 1v3\|2v2` | 2 人のプレイヤーを標準の並びに展開する（1v3：`[A, B, B, B]`、2v2：`[A, B, A, B]`） |
+| `--players` | 4 人のプレイヤー。`--mode` と併せて 2 人でもよい |
+| `--mode 1v3\|2v2` | 2 人を `[A, B, B, B]` か `[A, B, A, B]` に並べる |
 | `--walls N` | 牌山の数（既定は標準牌山の先頭 1,000） |
-| `--wall-base fresh\|値` | `fresh` で一度も使っていない牌山を引く。記録した元の値を渡せばその牌山を再現する |
-| `--opt KEY=VALUE` | プレイヤーのファクトリに渡すオプション（suzume のオプションも届く） |
-| `--out FILE` | 結果の集計を jsonl に追記する |
-| `--save-scores FILE` | 対局ごとの最終点と席の並び（`scores`・`seat_of_slot`）を npz に書く |
-| `--record-logs DIR` | 全対局を gzip した mjai（`arena-<wall_base>-NNNNNN.json.gz`）で書き出す。suzume が打つ対局は `<id>.suzume.json`（判断ごとに決めたルール）も書く |
+| `--wall-base fresh\|Integer` | `fresh` で新しい牌山を引く。値を渡すとその牌山を再現する |
+| `--opt KEY=VALUE` | プレイヤーに渡すオプション（suzume のオプションなど） |
 | `--single-kyoku` | 全対局を東 1 局だけにする（下記） |
+| `--out FILE` | 結果の集計を jsonl に追記する |
+| `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
+| `--record-logs DIR` | 全対局の牌譜を mjai 形式（gzip）で書き出す |
+| `--no-stats` | 和了率などの統計を出さない（統計は牌譜から集計するので、約 3% 遅くなる） |
 | `--flight N` | 同時に進める対局の数（既定 256） |
 
-結果の表には、プレイヤーごとの平均順位とポイントと、牌山単位の標準誤差が出ます。ポイントは `rules.DEFAULT_RULE` の精算で、((最終点 − 30,000) / 1,000 + 順位の加点) / 100 です。順位の加点は +90 / +45 / 0 / −135 に、オカ 20 を 1 位に足したもの（1 位は +110）です（25,000 点持ち 30,000 点返し）。2v2 では、牌山ごとに対にした差も出ます。最後に、半荘数、かかった秒数、1 分あたりの半荘数を表示します。
+進み具合は標準エラーにバーで出し、結果は標準出力に次の表で出します。値には牌山単位の標準誤差（`±`）が付きます。
 
-**速さの測り方**：4 人とも同じ bot にして、たとえば `--players suzume suzume suzume suzume --walls 200` のように打たせます。4 人とも同じ bot のときの席の回転は同じ対局の繰り返しなので、このときの順位は使いません。
-
-**東 1 局だけ（`--single-kyoku`、`run_match(..., single_kyoku=True)`）**：本場 0、供託なし、全員 25,000 点、席 0 が親で、半荘の東 1 局と同じ牌山と席で打ち、結果にかかわらずその局で終わります（riichienv の game mode 0）。点数と順位の影響なしに手組みを比べられます。表、jsonl の行（`kyoku_stats`）、2v2 の対の行には、局の収支の平均（最終点 − 25,000）と、席ごとの和了率・放銃率が出ます。`--save-scores` には最終点と、対局・席ごとの `win`・`deal_in` が入ります。
-
-## 3. プレイヤー
-
-| プレイヤー | 中身 |
+| 表 | 中身 |
 |---|---|
-| `tsumogiri` | ツモ切り（できなければ見送り、それもなければ最初の合法手） |
-| `rulebot`、`rulebot:latest` | ルールベースのボット（[`docs/rulebot.md`](rulebot.md)）。`rulebot` は標準の設定（`STANDARD`） |
-| `suzume[-組][:KEY=VALUE...]` | 教師に合わせた MLP で打つボット（[`docs/suzume.md`](suzume.md)）。`suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4`、`suzume-mlp1`、`suzume-mlp1-flat`。例 `suzume-mlp1:call=0` |
+| Standings | 平均順位、ポイント、1〜4 位の率。2v2 では、牌山ごとに対にした差も出す |
+| Play per kyoku | 1 局あたりの和了率、放銃率、副露率（チー・ポン・大明槓をした局）、立直率（宣言した局） |
+| Hand points | 平均和了点、平均放銃点（どちらも本場と供託を除く）、調整打点効率（和了率 × 平均和了点 − 放銃率 × 平均放銃点、1 局あたりの点） |
+| Time | プレイヤーごとの判断の数、時間、1 判断あたりの時間と、arena 自体（対局エンジンとループ）の時間。内蔵のボットと arena はスレッドごとの時間の合計、Python のプレイヤーは `act_batch` にかかった時間 |
 
-ほかのパッケージは、`yamawake.register_agent`・`register_resolver` か、エントリポイントのグループ `yamawake.agents` でプレイヤーを足せます。`--opt KEY=VALUE` はそのファクトリにオプションを渡します。
+ポイントは 25,000 点持ち 30,000 点返し、順位点 +90 / +45 / 0 / −135、オカ 20 の精算です（`rules.DEFAULT_RULE`）。
 
-## 4. Python
+`--single-kyoku` では、全員 25,000 点、本場 0 で、半荘の東 1 局と同じ牌山を打ち、その 1 局で終えます。点数状況の影響なしに手組みを比べるためのもので、局の収支と和了率・放銃率を出します。
 
-    from yamawake import RulebotAgent, TsumogiriAgent, run_match
+## 3. Python
 
-    r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()],
-                  walls=50)
-    print(r.table())          # プレイヤーごとの平均順位 / pt と、牌山単位の標準誤差
-    r.paired()                # 2v2 の牌山ごとの対の差
+``` python
+from yamawake import RulebotAgent, TsumogiriAgent, build_agent, run_match
 
-`build_agent(プレイヤーの指定)` で、コマンドラインと同じ指定からプレイヤーを作れます。
+r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=50)
+print(r.table())          # 平均順位、ポイント、標準誤差
+r.paired()                # 2v2 の牌山ごとの対の差
+agent = build_agent("suzume-mlp1:call=0")   # コマンドラインと同じ指定
+```
 
-**打ち手の作り方**：`lane = "observation"`、`act_batch(decisions) -> [riichienv.Action]`、`describe() -> dict` を持つ任意のオブジェクトです。`Decision` は `riichienv.Observation` と、エンコーダが要る文脈（その局のイベント `kyoku_events`、`drawable_count`、`reacting_to`、`dora_indicator_types`）を持ちます。打ち手は `reducer_factory`（局ごとに作り直すイベントの畳み込み。`Decision.reducer` で読める）と `annotate(decision) -> dict`（`Decision.extra` に入る）も定義できます。
+`run_match` の引数は、コマンドラインのオプションと同じです（`walls`、`wall_base`、`single_kyoku`、`record_logs`、`save_scores` など）。統計は `play_stats=True` のときだけ集計し、`r.play_stats()` で読めます。時間は `r.time_stats()`、コマンドラインと同じ表は `yamawake.report.report(r)` で得られます。`run_match` 自体は何も表示しません。
 
-**1 局面の判断**：`decide(プレイヤーの指定, 観測, その局の mjai の出来事)` は、rulebot か suzume の判断を 1 つ返します（`{"action": (action_type, tile, consume_tiles)}`。suzume は決めたルール `rule` 付き、rulebot は `debug=True` で判断の材料 `debug` 付き）。対局ループと同じ関数で判断するので、対局中と同じ答えになります（4 席を `decide("rulebot")` で打たせた半荘は、ループの中の rulebot の半荘と同じになる）。ただし suzume は、その局の前の判断の記憶（押し引きの状態など）を持たずに始めます。`Decision` の `kyoku_events` をそのまま渡せます（山の残り枚数は観測が持つ）。
+**1 局面の判断**：`decide(プレイヤーの指定, 観測, kyoku_events)` は、rulebot か suzume の判断を 1 つ返します。
+suzume は決めたルールの名前を、rulebot は `debug=True` で判断の材料を付けて返します。
 
-### 低水準：足並みをそろえたループ
+## 4. 自作のプレイヤー
 
-手番を全て自分で制御したいとき（例：モデルのサーバーが考えている間にエンコードするオンラインの自己対戦）：
+プレイヤーは、次のものを持つ任意のオブジェクトです。
 
-    import riichienv as rv
-    from yamawake import SelfPlayLoop, SeatTracker, decision_of, mjai_action_spec
-    from yamawake.rulebot import STANDARD
-    from yamawake.walls import blob_for_wall
+| 属性 | 中身 |
+|---|---|
+| `lane = "observation"` | 必ずこの値にする。arena が観測を `act_batch` に渡して手を選ばせる、という指定（内蔵の rulebot・suzume は Rust の中で判断するので別の値） |
+| `act_batch(decisions)` | 判断のリストを受け、合法手を 1 つずつ、同じ順のリストで返す。そのプレイヤーの手番を待つ全ての対局の判断が 1 回で届くので、モデルはまとめて推論できる |
+| `describe()` | 結果と牌譜に載せる名前（`{"kind": ..., "name": ...}`） |
+| `reducer_factory`（任意） | 局ごとにイベントを畳み込むオブジェクトを作る。局の始めに作り直し、イベントごとに `.apply(event)` を呼ぶ。`Decision.reducer` で読める |
+| `annotate(decision)`（任意） | 判断ごとに dict を返す。`Decision.extra` に入る |
 
-    loop = SelfPlayLoop(seeds, 2,                          # 2 = 半荘
-                        bot_seats=[[(3, "rulebot", STANDARD)] for _ in seeds],
-                        wall_tables=[blob_for_wall(s) for s in seeds], split_wall=True)
-    trackers = {}
-    while (batch := loop.collect()) is not None:       # GIL を解放。rulebot は中で打つ
-        specs = []
-        for g, s, b64 in zip(batch["games"], batch["seats"], batch["obs"]):
-            obs = rv.Observation.deserialize_from_base64(b64)
-            tr = trackers.setdefault((g, s), SeatTracker())
-            tr.feed(obs.new_events())                   # 各イベントは 1 度だけ届く
-            specs.append(mjai_action_spec(my_choice(decision_of(g, s, obs, tr))))
-        loop.apply(specs)                               # 行ごとに正確に 1 手、順番どおり
-    loop.scores(), loop.mjai_log(0)
+各判断 `Decision` は次のものを持ちます。
 
-`collect()` は全対局が終わると `None`、それまでは `{"n", "games", "seats", "obs"}` を返します。次の `collect()` の前に、`apply` で全ての行に答える必要があります。ループの中で判断するプレイヤーは `bot_seats=[[(席, "rulebot" か "suzume", 設定), ...], ...]` で置けます。
+| 属性 | 中身 |
+|---|---|
+| `obs` | RiichiEnv の環境が返す観測と同じ `riichienv.Observation`（[RiichiEnv の説明](https://github.com/smly/RiichiEnv#observation)）。合法手 `legal_actions()`、手牌 `hand`、ツモ牌 `drawn_tile`、河 `discards`、点数 `scores` など。牌は 136 の番号（`// 4` で牌種 0〜33） |
+| `seat` | 自分の席番号（0〜3。起家が 0 で、mjai の `actor` と同じ番号） |
+| `kyoku_events` | その局の始めから今までの mjai 形式のイベント（他家のツモは伏せる）。`obs.events` には自分の前の手番からの差分しか入っていないので、局の経過を読むにはこちらを使う |
+| `drawable_count` | 山の残り枚数 |
+| `reacting_to` | 他家の打牌・加槓への応答（鳴き・ロン・槍槓）のとき、その相手の席番号。自分の手番では `None` |
+| `dora_indicator_types` | ドラ表示牌の牌種（0〜33） |
 
-ほかに `yamawake._core` には、`run_sp`（一人麻雀の向聴・打点の DP）と `suzume_rules`（suzume のルールの一覧）があります。`rules` モジュールには精算（`UmaRule`：ウマ・オカ、`rank_of`、`final_pt`）があります。
+### 作ったモデルを組み込む
 
-## 5. 牌譜を見る・調べる
+以下は、手元のモデルを包むときのおおまかな例です。
+`my_encode`（観測から特徴量を作る関数）と `model.predict`（まとめて推論する関数）は、自分のものに置き換えます。
+
+``` python
+import numpy as np
+from yamawake import RulebotAgent, lineup, run_match
+
+
+class MyModelAgent:
+    lane = "observation"
+
+    def __init__(self, model):
+        self.model = model                                   # your trained model
+
+    def act_batch(self, decisions):
+        x = np.stack([my_encode(d) for d in decisions])      # your features, one row per decision
+        scores = self.model.predict(x)                       # one batched forward: (n, n_actions)
+        actions = []
+        for d, s in zip(decisions, scores):
+            legal = d.obs.legal_actions()
+            actions.append(max(legal, key=lambda a: s[a.encode()]))   # best legal action
+        return actions
+
+    def describe(self):
+        return {"kind": "my-model", "name": "my-model"}
+
+
+r = run_match(lineup(MyModelAgent(load_my_model()), RulebotAgent(), "2v2"))
+print(r.table())
+```
+
+`a.encode()` は、riichienv の行動の番号（0〜81。`obs.mask()` の合法手の印と同じ並び）です。モデルの出力が別の並びなら、そこを自分の対応に置き換えます。riichienv の特徴量を使うなら、`my_encode` の代わりに `d.obs.encode()` なども使えます。
+
+### 動く例
+
+例：和了できれば和了し、他家の立直には現物を切り、それ以外はツモ切りするプレイヤー。立直した席番号の記録に `reducer_factory` を、判断ごとの前処理に `annotate` を使っています。
+
+``` python
+import riichienv as rv
+from yamawake import RulebotAgent, lineup, run_match
+
+AT = rv.ActionType
+
+
+class RiichiTracker:
+    """Seats that declared riichi in this kyoku (rebuilt at every kyoku)."""
+
+    def __init__(self):
+        self.seats = set()
+
+    def apply(self, event):
+        if event["type"] == "reach":
+            self.seats.add(event["actor"])
+
+
+class SafeFirstAgent:
+    """Win when possible; against riichi, discard a tile every riichi seat has
+    discarded (genbutsu); otherwise discard the drawn tile. Never calls."""
+
+    lane = "observation"
+    reducer_factory = RiichiTracker          # d.reducer
+
+    def annotate(self, d):                   # d.extra
+        return {"riichi_seats": sorted(d.reducer.seats - {d.seat})}
+
+    def act_batch(self, decisions):
+        return [self.act(d) for d in decisions]
+
+    def act(self, d):
+        legal = d.obs.legal_actions()
+        by_type = {}
+        for a in legal:
+            by_type.setdefault(a.action_type, []).append(a)
+        for t in (AT.TSUMO, AT.RON):
+            if t in by_type:
+                return by_type[t][0]
+        discards = by_type.get(AT.DISCARD)
+        if not discards:                     # calls, kyushu, ...: pass
+            return by_type[AT.PASS][0] if AT.PASS in by_type else legal[0]
+        riichi = d.extra["riichi_seats"]
+        if riichi:
+            safe = set.intersection(*({t // 4 for t in d.obs.discards[s]} for s in riichi))
+            for a in discards:
+                if a.tile // 4 in safe:
+                    return a
+        for a in discards:
+            if a.tile == d.obs.drawn_tile:
+                return a
+        return discards[-1]
+
+    def describe(self):
+        return {"kind": "safe-first", "name": "safe-first"}
+
+
+r = run_match(lineup(SafeFirstAgent(), RulebotAgent(), "2v2"), walls=100)
+print(r.table())
+```
+
+### 名前で指定する
+
+`register_agent(名前, factory)` で登録すると、`build_agent` やコマンドラインと同じ指定で使えます。`factory(spec, **options)` は指定の全体（`safe-first:xxx` なら `:xxx` も含む）と `--opt` の値を受け取ります。
+
+``` python
+from yamawake import register_agent
+from yamawake.arena import main
+
+register_agent("safe-first", lambda spec, **opts: SafeFirstAgent())
+main(["--mode", "2v2", "--players", "safe-first", "rulebot"])
+```
+
+`yamawake-arena` コマンドから使うには、自作のパッケージのエントリポイントのグループ `yamawake.agents` に、登録する関数を置きます（引数なしで 1 回呼ばれる）。
+
+``` toml
+[project.entry-points."yamawake.agents"]
+safe-first = "my_package.agents:register"   # def register(): register_agent("safe-first", ...)
+```
+
+## 5. 低水準のループ
+
+手番を全て自分で制御したいとき（モデルのサーバーとつなぐ自己対戦など）は、`SelfPlayLoop` を直接使います。
+
+``` python
+import riichienv as rv
+from yamawake import SelfPlayLoop, SeatTracker, decision_of, mjai_action_spec
+from yamawake.rulebot import STANDARD
+from yamawake.walls import blob_for_wall
+
+loop = SelfPlayLoop(seeds, 2,                      # 2 = 半荘
+                    bot_seats=[[(3, "rulebot", STANDARD)] for _ in seeds],
+                    wall_tables=[blob_for_wall(s) for s in seeds], split_wall=True)
+trackers = {}
+while (batch := loop.collect()) is not None:   # Python の手番を待つ全ての行
+    specs = []
+    for g, s, b64 in zip(batch["games"], batch["seats"], batch["obs"]):
+        obs = rv.Observation.deserialize_from_base64(b64)
+        tr = trackers.setdefault((g, s), SeatTracker())
+        tr.feed(obs.new_events())
+        specs.append(mjai_action_spec(my_choice(decision_of(g, s, obs, tr))))
+    loop.apply(specs)                           # 全ての行に、順番どおり 1 手ずつ
+loop.scores(), loop.mjai_log(0)
+```
+
+`collect()` は全対局が終わると `None` を返します。次の `collect()` の前に、`apply` で全ての行に答えます。ループの中で打つボットは `bot_seats` で席番号ごとに置けます（`"rulebot"` か `"suzume"` と設定）。
+
+## 6. 牌譜
 
 ### handstats
 
-`--record-logs` で書いた牌譜から、指定した名前のプレイヤーの統計を出します。同じ牌山・同じ並びの 2 つの実行を、局（ファイル・局・本場・席、配牌が同じもの）と半荘（ファイル・席）で対にして比べられます。標準誤差は対局のファイルごとにまとめて計算します。
+`--record-logs` の牌譜から、指定した名前のプレイヤーの統計を出します。`--vs` を付けると、同じ牌山で打った 2 つの実行を局ごと・半荘ごとに対にして比べます。
 
-    python -m yamawake.handstats LOGDIR --name suzume
-    python -m yamawake.handstats LOGDIR --name suzume --vs OTHER --vs-name rulebot --json out.json
+``` bash
+python -m yamawake.handstats LOGDIR --name suzume
+python -m yamawake.handstats LOGDIR --name suzume --vs OTHER --vs-name rulebot --json out.json
+```
 
-| 区分 | 統計 |
-|---|---|
-| 半荘 | 平均順位、順位分布、最終の点数、トビ率 |
-| 速さと打点 | 聴牌率、巡目ごとの聴牌率、初聴牌の巡目、聴牌時の打点の見込み（ロン・ツモ）、立直・門前・役なし・待ちなしの率、ダマの率 |
-| 局の結果 | 和了・放銃・被ツモ・横移動・流局の率と点数、流局時の聴牌率、立直率、副露率、親の連荘率、局の収支 |
-| 立直 | 先制の率、巡目、待ちの見えていない枚数、良形率、その後の和了・放銃・流局の率、和了点、一発・裏ドラの率 |
-| 副露 | 副露数、その後の和了・放銃の率、和了点 |
-| 和了 | 巡目、ツモの率、翻数、満貫以上・跳満以上などの率、役の頻度 |
-| 放銃 | 相手の状態（立直・副露・ダマ）、自分の状態（立直中・副露中・門前） |
-
-和了の役と打点は、牌譜に書かれていないので、riichienv の評価器で計算し直します（牌譜の点数と、ダブロンの 2 人目の本場を除いて一致する）。定義の詳細は `python -m yamawake.handstats --help` にあります。
+出る統計は、順位の分布、聴牌率と打点、和了・放銃・流局の率と点数、立直と副露の成績、役の頻度などです。定義の詳細は `--help` にあります。
 
 ### tenhou6
 
-mjai の牌譜を、天鳳の牌譜ビューアが読む tenhou.net/6 の JSON に変換します（`yamawake.tenhou6`）。
+mjai の牌譜を、天鳳の牌譜ビューアが読む形式（tenhou.net/6 の JSON）に変換します。
 
-    from yamawake.tenhou6 import convert_file, dump
+``` python
+from yamawake.tenhou6 import convert_file, dump
+dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")
+```
 
-## 6. 制限
+## 7. 制限
 
 - arena の rulebot は大明槓をしません（[`docs/rulebot.md`](rulebot.md)）。
-- 対局の最後に残った供託の扱いは、エンジン（riichienv）に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。
+- 対局の最後に残った供託の扱いは、riichienv に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。

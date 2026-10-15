@@ -50,6 +50,13 @@ pub struct GameSlot {
     /// Per seat: what a suzume bot keeps across its decisions within
     /// the kyoku (cleared at each start_kyoku; untouched for other seats).
     suzume_memo: [SeatMemo; 4],
+    /// Per seat: the in-loop bot's decisions and the wall-clock time they
+    /// took (nanoseconds, observation building included).
+    pub bot_decisions: [u64; 4],
+    pub bot_nanos: [u64; 4],
+    /// Wall-clock time of all this game's work in the loop (nanoseconds):
+    /// engine steps, observations, events and the in-loop bots.
+    pub work_nanos: u64,
 }
 
 impl GameSlot {
@@ -79,6 +86,9 @@ impl GameSlot {
             auto_actions: HashMap::new(),
             suzume_trace: Vec::new(),
             suzume_memo: Default::default(),
+            bot_decisions: [0; 4],
+            bot_nanos: [0; 4],
+            work_nanos: 0,
         };
         slot.drain_events()?;
         Ok(slot)
@@ -219,6 +229,8 @@ impl LockstepLoop {
             .par_iter_mut()
             .enumerate()
             .map(|(gi, slot)| {
+                let t_work = std::time::Instant::now();
+                let rows = (|| {
                 // Advance past ticks whose every actor is a rulebot / suzume
                 // seat; stop at the first tick that needs an external decision
                 // (or at game end) and hold the tick's in-loop decisions for
@@ -231,15 +243,19 @@ impl LockstepLoop {
                     let mut auto: HashMap<u8, Action> = HashMap::new();
                     let mut external: Vec<u8> = Vec::new();
                     for seat in actors {
-                        match bot_seats[gi].iter().find(|(s, _)| *s == seat) {
-                            Some((_, Bot::Rulebot(cfg))) => {
-                                auto.insert(seat, slot.rulebot_action(seat, cfg)?);
+                        let t0 = std::time::Instant::now();
+                        let action = match bot_seats[gi].iter().find(|(s, _)| *s == seat) {
+                            Some((_, Bot::Rulebot(cfg))) => slot.rulebot_action(seat, cfg)?,
+                            Some((_, Bot::Suzume(cfg))) => slot.suzume_action(seat, cfg)?,
+                            None => {
+                                external.push(seat);
+                                continue;
                             }
-                            Some((_, Bot::Suzume(cfg))) => {
-                                auto.insert(seat, slot.suzume_action(seat, cfg)?);
-                            }
-                            None => external.push(seat),
-                        }
+                        };
+                        let i = usize::from(seat);
+                        slot.bot_decisions[i] += 1;
+                        slot.bot_nanos[i] += t0.elapsed().as_nanos() as u64;
+                        auto.insert(seat, action);
                     }
                     if external.is_empty() {
                         slot.step(&auto)?;
@@ -263,6 +279,9 @@ impl LockstepLoop {
                         })
                         .collect::<Result<Vec<_>, String>>();
                 }
+                })();
+                slot.work_nanos += t_work.elapsed().as_nanos() as u64;
+                rows
             })
             .collect::<Result<Vec<_>, String>>()?;
 
@@ -335,7 +354,10 @@ impl LockstepLoop {
                     for (seat, action) in slot.auto_actions.clone() {
                         actions.insert(seat, action);
                     }
-                    slot.step(&actions)
+                    let t_work = std::time::Instant::now();
+                    let r = slot.step(&actions);
+                    slot.work_nanos += t_work.elapsed().as_nanos() as u64;
+                    r
                 }
                 None => Ok(()),
             })

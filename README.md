@@ -58,6 +58,8 @@ uv を使わずに、Rust の環境があれば `pip install git+https://github.
     uv run yamawake-arena --mode 2v2 --players tsumogiri rulebot --walls 100
     uv run python -m yamawake.arena --mode 1v3 --players suzume rulebot
 ```    
+結果は、順位とポイント、1 局あたりの和了率・放銃率・副露率・立直率、平均打点と調整打点効率、プレイヤーごとと arena 自体の計算時間を、表にまとめて標準出力に出します（[`docs/arena.md`](docs/arena.md#2-コマンドライン)）。
+
 Python からの利用は以下のように行います。
 ``` python
     from yamawake import RulebotAgent, TsumogiriAgent, run_match
@@ -104,7 +106,7 @@ Python からの利用は以下のように行います。
     print(r.table())
 ```
 
-`register_agent("my-agent", lambda spec, **opts: MyAgent())` で名前を登録すると、同じプロセスの中で `yamawake.arena.main(["--players", "my-agent", "rulebot", ...])` のように名前で指定できます。`yamawake-arena` コマンドから使うには、自作のパッケージのエントリポイントのグループ `yamawake.agents` に登録の関数を置きます。
+`register_agent("my-agent", lambda spec, **opts: MyAgent())` で名前を登録すると、同じプロセスの中で `yamawake.arena.main(["--players", "my-agent", "rulebot", ...])` のように名前で指定できます。`yamawake-arena` コマンドから使うには、自作のパッケージのエントリポイントのグループ `yamawake.agents` に登録の関数を置きます。判断に使える情報の一覧と、より詳しいコード例は [`docs/arena.md`](docs/arena.md#4-自作のプレイヤー) にあります。
 
 
 その他、低水準のループ、1 局面の判断（`decide`）、牌譜の統計（`handstats`）と天鳳の牌譜への変換（`tenhou6`）など、詳細は [`docs/arena.md`](docs/arena.md) を参照してください。
