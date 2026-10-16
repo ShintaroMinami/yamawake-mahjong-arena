@@ -276,5 +276,4 @@ dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")
 
 ## 8. 制限
 
-- arena の rulebot は大明槓をしません（[`docs/rulebot.md`](rulebot.md)）。
 - 対局の最後に残った供託の扱いは、riichienv に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。
