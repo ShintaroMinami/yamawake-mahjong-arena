@@ -33,8 +33,8 @@ only from the players' choices.
   bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
 
 On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
-470 hanchan/min with four rulebots and
-about 170 hanchan/min with four suzume bots.
+515 hanchan/min with four rulebots and
+about 163 hanchan/min with four suzume bots.
 For reference, a Mac (Apple M4 Pro) does about 1,120 (rulebot) and 400
 (suzume) hanchan/min on one thread, and about 10,000 and 3,500 hanchan/min on
 all its threads (14 cores).
@@ -46,17 +46,29 @@ The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
 
+suzume compared with publicly available models:
+
 <img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
 
-On a Mac with an Apple M4 Pro, four rulebots run at about 1,120 hanchan/min and
-four suzume bots at about 400 hanchan/min on one thread, and about 10,000 and
-3,500 hanchan/min on all its threads (14 cores).
+- suzume is slightly weaker than the group of third-party trained mortal-v4
+  models.
+- suzume was trained with RLActor-225 (unpublished) as its teacher; that
+  teacher is slightly stronger than the retrained Mortal models.
+- It runs about 10 times as fast as TanyaoDojo and about 25 times as fast as
+  mortal-v4.
 
-TODO: suzume's strength measured in matches against
-- tsumogiri
-- 電脳麻将 (Majiang)
-- mortal-298k
-- etc.
+Sources of the models compared:
+
+| Model | Source |
+|---|---|
+| mortal-298k | [VoidShine/mortal-298k](https://huggingface.co/VoidShine/mortal-298k) ([mortal-v4](https://github.com/Equim-chan/Mortal), 298k steps) |
+| mortal-582500 | [Yuchen1457/mortal-582500](https://huggingface.co/Yuchen1457/mortal-582500) (mortal-v4, 582,500 steps) |
+| mortal-S42 | [haor/Mortal-S42](https://huggingface.co/haor/Mortal-S42) (mortal-v4, S42.8k) |
+| TanyaoDojo | `bc_v2_g186.pkl` from [Twu31/TanyaoDojo](https://huggingface.co/Twu31/TanyaoDojo) (code: [twu3202/TanyaoDojo](https://github.com/twu3202/TanyaoDojo)) |
+| 電脳麻将 (Majiang) | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0, run by [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 |
+| mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go) (a Go port of [gimite/mjai-manue](https://github.com/gimite/mjai-manue)) |
+| rulebot | this repository ([`docs/rulebot.md`](docs/rulebot.md)) |
+| RLActor-225 | unpublished |
 
 ## Install
 

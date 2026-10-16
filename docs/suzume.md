@@ -84,21 +84,42 @@ agent = SuzumeAgent({"riichi": 0})
 
 ## 5. ベンチマーク
 
-（追加予定：ツモ切り、電脳麻将、Mortal など）
+suzume と現在公開されているモデルとの性能比較は以下の通りです。
+
+<img src="images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
+
+- suzumeはmortal-v4の第三者学習モデルグループより少し弱い程度の性能です。
+- suzumeはRLActor-225(未公開)を教師として学習されたモデルですが、この教師モデルはmortal再学習モデルより少し強いです。
+- 速度はTanyaoDojoの10倍程度、mortal-v4の25倍程度と高速に動作します。
+
+比較したモデルの出典：
+
+| モデル | 出典 |
+|---|---|
+| mortal-298k | [VoidShine/mortal-298k](https://huggingface.co/VoidShine/mortal-298k)（[mortal-v4](https://github.com/Equim-chan/Mortal)、298k ステップ） |
+| mortal-582500 | [Yuchen1457/mortal-582500](https://huggingface.co/Yuchen1457/mortal-582500)（mortal-v4、582,500 ステップ） |
+| mortal-S42 | [haor/Mortal-S42](https://huggingface.co/haor/Mortal-S42)（mortal-v4、S42.8k） |
+| TanyaoDojo | [Twu31/TanyaoDojo](https://huggingface.co/Twu31/TanyaoDojo) の `bc_v2_g186.pkl`（コード：[twu3202/TanyaoDojo](https://github.com/twu3202/TanyaoDojo)） |
+| 電脳麻将 | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0 を [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 で実行 |
+| mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go)（[gimite/mjai-manue](https://github.com/gimite/mjai-manue) の Go 移植） |
+| rulebot | このリポジトリ（[`rulebot.md`](rulebot.md)） |
+| RLActor-225 | 未公開 |
+
+平均順位は、各モデル 2 体と suzume（`suzume-mlp3`）2 体の 2 vs 2 で、標準牌山の先頭 1,000 牌山を席の回転 2 回ずつ（2,000 半荘）打った結果です。
+図のバイオリンとボックスプロットは、牌山を選び直して推定し直した 400 回（ブートストラップ）の分布で、箱は四分位、ひげは 95% の範囲、点は推定値です。
+表の時間は 4 人とも同じモデルで、CPU 1 個だけを使って推論したときの値です（電脳麻将、mjai-manue は 20 牌山、そのほかは 256 牌山。下の「6. 計算速度」は 20 牌山の値のため、少し異なります）。
 
 ## 6. 計算速度
 
-1 CPU（1 コアに固定し、1 スレッドで実行）、4 人とも同じボット、20 牌山、席の回転なし（20 半荘）、1 回の計測。
+1 CPU（1 コアに固定し、1 スレッドで実行）、4 人とも同じボット、256 牌山、席の回転なし（20 半荘）、1 回の計測。
 CPU は AMD EPYC 7702（Zen 2、定格 2.0 GHz・最大 3.35 GHz。計測したマシンの周波数の上限は 2.18 GHz）：
 
 | ボット | 半荘/分 | 1 判断あたりの時間 |
 |---|---|---|
-| `suzume-mlp3` | 約 170 | 約 0.55 ms |
-| `suzume-mlp3-flat` | 約 170 | 約 0.53 ms |
-| `suzume-mlp3-avoid4` | 約 160 | 約 0.56 ms |
-| `suzume-mlp1` | 約 190 | 約 0.45 ms |
-| `suzume-mlp1-flat` | 約 190 | 約 0.44 ms |
-| rulebot（参考） | 約 470 | 約 0.17 ms |
+| `suzume-mlp3(-flat)` | 約 162.9 | 約 0.53 ms |
+| `suzume-mlp3-avoid4` | 約 159.7 | 約 0.54 ms |
+| `suzume-mlp1(-flat)` | 約 192.2 | 約 0.43 ms |
+| rulebot（参考） | 約 515.1 | 約 0.16 ms |
 | ツモ切り（参考、`tsumogiri`） | 約 1,420 | 約 0.017 ms |
 
 1 判断あたりの時間は、ボット自身の判断にかかった時間です（対局エンジンとループの時間を含まない。出力の Time の表の ms/decision と同じ）。
