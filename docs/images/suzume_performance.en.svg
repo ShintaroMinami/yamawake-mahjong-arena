@@ -2,7 +2,6 @@
 <svg x="0" y="0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 420" width="520" height="420" font-family="-apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif">
 <style>
 .bg{fill:#ffffff}.fg{fill:#1d1d1f}.mu{fill:#6e6e73}.gr{stroke:#e5e5ea}.ax{stroke:#8e8e93}.band{fill:#e5e5ea}.zb{fill:#f6f6f6}.hd{stroke:#222222;stroke-width:0.5}.suzume{stroke:#2e86de}.suzumef{fill:#2e86de}.mortal{stroke:#c0392b}.mortalf{fill:#c0392b}.rulebot{stroke:#7f6a5a}.rulebotf{fill:#7f6a5a}.diannao{stroke:#e67e22}.diannaof{fill:#e67e22}.tanyao{stroke:#16a085}.tanyaof{fill:#16a085}.rlactor{stroke:#8e44ad}.rlactorf{fill:#8e44ad}.manue{stroke:#b7950b}.manuef{fill:#b7950b}
-@media (prefers-color-scheme: dark){.bg{fill:#1c1c1e}.fg{fill:#f2f2f7}.mu{fill:#a1a1a6}.gr{stroke:#3a3a3c}.band{fill:#3a3a3c}.zb{fill:#242426}.hd{stroke:#e5e5ea}.suzume{stroke:#64a8ff}.suzumef{fill:#64a8ff}.mortal{stroke:#ff6b5e}.mortalf{fill:#ff6b5e}.rulebot{stroke:#bfa898}.rulebotf{fill:#bfa898}.diannao{stroke:#ffa64d}.diannaof{fill:#ffa64d}.tanyao{stroke:#3fd6b6}.tanyaof{fill:#3fd6b6}.rlactor{stroke:#c58cff}.rlactorf{fill:#c58cff}.manue{stroke:#f1d04b}.manuef{fill:#f1d04b}}
 </style>
 <rect class="bg" width="520" height="420"/>
 <text class="fg" x="279" y="22" font-size="13.5" font-weight="600" text-anchor="middle">Average rank in a 2 vs 2 against suzume (suzume = 2.50)</text>
@@ -104,7 +103,6 @@
 <svg x="540" y="3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 382 379" width="382" height="379" font-family="-apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif">
 <style>
 .bg{fill:#ffffff}.fg{fill:#1d1d1f}.mu{fill:#6e6e73}.gr{stroke:#e5e5ea}.ax{stroke:#8e8e93}.band{fill:#e5e5ea}.zb{fill:#f6f6f6}.hd{stroke:#222222;stroke-width:0.5}.suzume{stroke:#2e86de}.suzumef{fill:#2e86de}.mortal{stroke:#c0392b}.mortalf{fill:#c0392b}.rulebot{stroke:#7f6a5a}.rulebotf{fill:#7f6a5a}.diannao{stroke:#e67e22}.diannaof{fill:#e67e22}.tanyao{stroke:#16a085}.tanyaof{fill:#16a085}.rlactor{stroke:#8e44ad}.rlactorf{fill:#8e44ad}.manue{stroke:#b7950b}.manuef{fill:#b7950b}
-@media (prefers-color-scheme: dark){.bg{fill:#1c1c1e}.fg{fill:#f2f2f7}.mu{fill:#a1a1a6}.gr{stroke:#3a3a3c}.band{fill:#3a3a3c}.zb{fill:#242426}.hd{stroke:#e5e5ea}.suzume{stroke:#64a8ff}.suzumef{fill:#64a8ff}.mortal{stroke:#ff6b5e}.mortalf{fill:#ff6b5e}.rulebot{stroke:#bfa898}.rulebotf{fill:#bfa898}.diannao{stroke:#ffa64d}.diannaof{fill:#ffa64d}.tanyao{stroke:#3fd6b6}.tanyaof{fill:#3fd6b6}.rlactor{stroke:#c58cff}.rlactorf{fill:#c58cff}.manue{stroke:#f1d04b}.manuef{fill:#f1d04b}}
 </style>
 <rect class="bg" width="382" height="379"/>
 <text class="mu" x="1" y="348" font-size="8">Average rank: 2 vs 2 against suzume on 1,000 split fixed walls (2,000 hanchan).</text>
