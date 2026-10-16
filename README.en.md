@@ -46,7 +46,10 @@ The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
 
-suzume compared with publicly available models:
+suzume compared with other publicly available models:
+on the left, each model's average rank over 2,000 hanchan of 2 vs 2 against
+suzume on split fixed walls; on the right, each model's average time per
+decision (a discard or a call) and the hanchan it plays per minute.
 
 <img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
 
