@@ -16,3 +16,22 @@ tmp_scripts/
 *.pdb
 **/mutants.out*/
 rustc-ice-*.txt
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+Icon?
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
