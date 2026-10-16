@@ -1,4 +1,5 @@
 /target/
+/paper/
 src/engine/riichienv-core/target/
 .venv/
 __pycache__/
