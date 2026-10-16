@@ -46,6 +46,12 @@ The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
 
+<img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
+
+On a Mac with an Apple M4 Pro, four rulebots run at about 1,120 hanchan/min and
+four suzume bots at about 400 hanchan/min on one thread, and about 10,000 and
+3,500 hanchan/min on all its threads (14 cores).
+
 TODO: suzume's strength measured in matches against
 - tsumogiri
 - 電脳麻将 (Majiang)

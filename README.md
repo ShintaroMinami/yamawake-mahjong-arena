@@ -26,6 +26,10 @@ Python のプレイヤーは、判断 1 回ごとに観測の受け渡しで約 
 
 ## suzume の性能
 
+<img src="docs/images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
+
+Apple M4 Pro の Mac では、1 スレッドで rulebot 4 人が約 1,120 半荘/分、suzume 4 人が約 400 半荘/分、全てのスレッド（14 コア）を使うと rulebot 4 人が約 10,000 半荘/分、suzume 4 人が約 3,500 半荘/分で動作します。
+
 ここに対戦ベースで測定した suzume の強さを記載
 - ツモ切り
 - 電脳麻将
