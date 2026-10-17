@@ -129,9 +129,10 @@ class SuzumeAgent:
     def __init__(self, config: dict | None = None, name: str = "suzume", models: str = "suzume") -> None:
         """Args: config: option dict (`yamawake.suzume` lists them; an unknown
         knob raises ValueError here); name: its label; models: the model set
-        (`MODEL_SETS`)."""
+        (`MODEL_SETS`), or `dir:<path>` for a set read from a directory (for
+        fitting new models; `src/rust/suzume/params.rs`, `load_dir`)."""
         from yamawake._core import suzume_config
-        if models not in MODEL_SETS:
+        if models not in MODEL_SETS and not models.startswith("dir:"):
             raise ValueError(f"unknown suzume model set {models!r} (sets: {', '.join(MODEL_SETS)})")
         if "models" in (config or {}):
             raise ValueError("the model set is picked by the player name, not an option")

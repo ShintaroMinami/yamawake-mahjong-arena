@@ -13,6 +13,8 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::eval::dp::{Akas, Counts, Input, Solver};
 
+mod features;
+
 fn counts_from(obj: &Bound<'_, PyAny>) -> PyResult<Counts> {
     let v: Vec<u8> = obj.extract()?;
     let mut c = [0u8; 34];
@@ -478,5 +480,6 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decide_one, m)?)?;
     m.add_class::<SelfPlayLoop>()?;
     m.add_class::<SuzumeSeat>()?;
+    m.add_class::<features::SuzumeFeatures>()?;
     Ok(())
 }

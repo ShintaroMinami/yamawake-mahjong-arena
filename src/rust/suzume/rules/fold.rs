@@ -44,7 +44,7 @@ impl Rule for PfDiscard {
         }
         let feats = seat_features(ctx);
         let legal = legal_types(ctx);
-        let state = predict(&ctx.models.state, ctx.view, &feats, &legal);
+        let state = predict(&ctx.models.pf().state, ctx.view, &feats, &legal);
         ctx.memo().pf.state = state;
         if state == PfState::Push || !matches!(kind_of(ctx)?, 0 | 2) {
             return None;
@@ -54,7 +54,7 @@ impl Rule for PfDiscard {
                 return Some(a);
             }
         }
-        let md = if state == PfState::Mawashi { &ctx.models.mawashi } else { &ctx.models.fold };
+        let md = if state == PfState::Mawashi { &ctx.models.pf().mawashi } else { ctx.models.fold() };
         let (t, aka) = choice_by(ctx, md, &feats)?;
         ctx.discard_action(t, aka)
     }

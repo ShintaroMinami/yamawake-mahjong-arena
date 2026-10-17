@@ -35,7 +35,7 @@
 
 use super::ctx::Ctx;
 use super::mlp::add_bias;
-use super::params::FoldMlp;
+use super::params::{FoldMlp, FoldTables};
 use super::rules::universal_mlp::mlp_choice;
 use super::view::{MjView, NEVER, Threat};
 use crate::eval::feat::tiles::AKA_TILE_TYPES;
@@ -107,7 +107,9 @@ impl FoldMlp {
     pub fn sit_bias(&self, v: &MjView) -> Vec<f64> {
         self.sit.as_ref().map_or_else(Vec::new, |s| s.bias(&self.net, v))
     }
+}
 
+impl FoldTables {
     /// The wait rate of a pattern count at an own-turn bin.
     fn rate(&self, patterns: f64, turn_bin: usize) -> f64 {
         let bin = self.pattern_edges.iter().filter(|&&e| e < patterns).count();
@@ -212,8 +214,8 @@ impl FoldInputs {
 
 /// The raw features of every tile type against the scored seat `r`
 /// (absolute; any other seat, riichi or not), in `FEATURES` order, with the
-/// tables and caps of the fold model `md`.
-pub fn features(md: &FoldMlp, view: &MjView, r: usize, inp: &FoldInputs) -> [[f64; N_FEATURES]; 34] {
+/// tables and caps `md` (`Models::tables`).
+pub fn features(md: &FoldTables, view: &MjView, r: usize, inp: &FoldInputs) -> [[f64; N_FEATURES]; 34] {
     let me = usize::from(view.seat);
     let th = &view.threats[r];
     let genbutsu = &th.safe;
@@ -355,13 +357,13 @@ pub fn seat_features(ctx: &Ctx) -> [(usize, [[f64; N_FEATURES]; 34]); 3] {
     let inp = FoldInputs::of(ctx);
     std::array::from_fn(|k| {
         let s = (usize::from(v.seat) + k + 1) % 4;
-        (s, features(&ctx.models.fold, v, s, &inp))
+        (s, features(ctx.models.tables(), v, s, &inp))
     })
 }
 
 /// The fold discard (`choice_by` with the fold model).
 pub fn fold_choice(ctx: &Ctx) -> Option<(u8, bool)> {
-    choice_by(ctx, &ctx.models.fold, &seat_features(ctx))
+    choice_by(ctx, ctx.models.fold(), &seat_features(ctx))
 }
 
 /// The discard of model `md` (the fold or the mawashi model) on the features

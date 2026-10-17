@@ -124,9 +124,9 @@ fn model_in_state(ctx: &Ctx, state: PfState) -> Option<&'static Umlp> {
     let (p, m) = (push_model(ctx)?, ctx.models);
     Some(match state {
         PfState::Push => p,
-        _ if std::ptr::eq(p, &m.riichi) => &m.riichi_m,
-        PfState::Mawashi if std::ptr::eq(p, &m.call) => &m.call_m,
-        PfState::Fold if std::ptr::eq(p, &m.call) => &m.call_f,
+        _ if std::ptr::eq(p, &m.riichi) => &m.pf().riichi_m,
+        PfState::Mawashi if std::ptr::eq(p, &m.call) => &m.pf().call_m,
+        PfState::Fold if std::ptr::eq(p, &m.call) => &m.pf().call_f,
         _ => p,
     })
 }

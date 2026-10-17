@@ -11,8 +11,12 @@
 //! file and rebuilding. A missing or malformed key stops the program on
 //! first use. A suzume bot picks its model set by its name (`ModelSet`, in its
 //! config); a decision reads it from its context (`Ctx::models`).
+//!
+//! For fitting new models, a set can also be read from a directory at run
+//! time (`ModelSet::Dir`, the name `dir:<path>`; `load_dir` lists its files).
 
-use std::sync::OnceLock;
+use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -83,6 +87,20 @@ pub struct FoldMlp {
     /// The head: one score from the last layer.
     pub w2: Vec<f64>,
     pub b2: f64,
+    /// The tables and caps its features read.
+    pub tables: FoldTables,
+    /// The soft minimum's temperature (`"tau"`): a tile type's score is
+    /// `-tau ln sum exp(-s / tau)` over its scores against every other seat
+    /// (the file must say `"seats": "all"`, `"combine": "softmin"`).
+    pub tau: f64,
+    /// The situation inputs (`sit_inputs`; after `inputs`), if any.
+    pub sit: Option<Sit>,
+}
+
+/// The tables and caps the fold features read (`fold_model::features`): a
+/// fold-model file's, or a `fold_tables.json` of a directory set.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoldTables {
     /// The rate a non-genbutsu tile type is the riichi seat's wait, by
     /// pattern bin (rows) and own-turn bin (columns), row-major.
     pub wait_table: Vec<f64>,
@@ -99,12 +117,6 @@ pub struct FoldMlp {
     /// A riichi seat's early discards (the outside features): its first
     /// this many.
     pub early_discards: u8,
-    /// The soft minimum's temperature (`"tau"`): a tile type's score is
-    /// `-tau ln sum exp(-s / tau)` over its scores against every other seat
-    /// (the file must say `"seats": "all"`, `"combine": "softmin"`).
-    pub tau: f64,
-    /// The situation inputs (`sit_inputs`; after `inputs`), if any.
-    pub sit: Option<Sit>,
 }
 
 /// The push / fold state model (`params/state/<state>.json`; `suzume::pf`):
@@ -173,6 +185,9 @@ pub const MODEL_FILES: [&str; 6] = ["discard_P_12", "discard_P_3", "discard_P_t"
 /// | `suzume-mlp3-avoid4` (last-place avoidance) | `normal_mlp3` (with the situation inputs) | `normal_mlp3` |
 /// | `suzume-mlp1` (light) | `flat_mlp1` | `normal_mlp1` |
 /// | `suzume-mlp1-flat` (light, East 1) | `flat_mlp1` | `flat_mlp1` |
+///
+/// `Dir` is a set read from a directory at run time (`dir:<path>`,
+/// `load_dir`), for fitting new models; it is not one of `ALL`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModelSet {
     #[default]
@@ -181,23 +196,28 @@ pub enum ModelSet {
     Mlp3Avoid4,
     Mlp1,
     Mlp1Flat,
+    /// The `n`-th directory set loaded in this process (`DIR_SETS`).
+    Dir(u16),
 }
 
 impl ModelSet {
     pub const ALL: [ModelSet; 5] = [ModelSet::Mlp3, ModelSet::Mlp3Flat, ModelSet::Mlp3Avoid4, ModelSet::Mlp1, ModelSet::Mlp1Flat];
 
-    /// The player name of the set.
-    pub const fn name(self) -> &'static str {
+    /// The player name of the set (`dir:<path>` for a directory set, its
+    /// path as loaded).
+    pub fn name(self) -> &'static str {
         match self {
             ModelSet::Mlp3 => "suzume-mlp3",
             ModelSet::Mlp3Flat => "suzume-mlp3-flat",
             ModelSet::Mlp3Avoid4 => "suzume-mlp3-avoid4",
             ModelSet::Mlp1 => "suzume-mlp1",
             ModelSet::Mlp1Flat => "suzume-mlp1-flat",
+            ModelSet::Dir(n) => dir_sets().lock().expect("dir sets")[usize::from(n)].0,
         }
     }
 
-    /// The set of a player name (`suzume` is the default set's other name).
+    /// The built-in set of a player name (`suzume` is the default set's
+    /// other name).
     pub fn from_name(name: &str) -> Option<Self> {
         if name == "suzume" {
             return Some(Self::default());
@@ -205,10 +225,33 @@ impl ModelSet {
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
-    /// The set's position in `ALL` (for per-set caches).
-    pub const fn index(self) -> usize {
-        self as usize
+    /// The set of a name: a built-in one (`from_name`) or `dir:<path>`, read
+    /// on first use in this process (`load_dir`; the same path again gives
+    /// the same set).
+    pub fn parse(name: &str) -> Result<Self, String> {
+        if let Some(path) = name.strip_prefix("dir:") {
+            return Self::from_dir(path);
+        }
+        Self::from_name(name).ok_or_else(|| format!("not a model set: {name:?}"))
     }
+
+    fn from_dir(path: &str) -> Result<Self, String> {
+        let name = format!("dir:{path}");
+        let mut sets = dir_sets().lock().expect("dir sets");
+        if let Some(n) = sets.iter().position(|(m, _)| *m == name) {
+            return Ok(ModelSet::Dir(n as u16));
+        }
+        let models = load_dir(Path::new(path))?;
+        let n = u16::try_from(sets.len()).map_err(|_| "too many directory model sets".to_string())?;
+        sets.push((Box::leak(name.into_boxed_str()), Box::leak(Box::new(models))));
+        Ok(ModelSet::Dir(n))
+    }
+}
+
+/// The directory sets loaded in this process: (name, models).
+fn dir_sets() -> &'static Mutex<Vec<(&'static str, &'static Models)>> {
+    static D: OnceLock<Mutex<Vec<(&'static str, &'static Models)>>> = OnceLock::new();
+    D.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 /// The JSON texts of one model set.
@@ -263,12 +306,23 @@ pub struct Models {
     pub riichi: Umlp,
     pub call: Umlp,
     pub kan: Umlp,
+    /// The fold model (`fold=1` with `pf=0`, and the F state of `pf=1`);
+    /// every built-in set has one.
+    pub fold: Option<FoldMlp>,
+    /// The tables the fold features read: the fold model's, or a directory
+    /// set's `fold_tables.json`.
+    pub tables: Option<FoldTables>,
+    /// The push / fold models (`pf=1`); every built-in set has them.
+    pub pf: Option<PfModels>,
+}
+
+/// The models only push / fold (`pf=1`) reads.
+pub struct PfModels {
     /// The push / fold MLPs (`PF_MODEL_KINDS`): riichi in M (also F's), call
     /// in M and in F, each with its push model's inputs and states.
     pub riichi_m: Umlp,
     pub call_m: Umlp,
     pub call_f: Umlp,
-    pub fold: FoldMlp,
     /// A fold-model file fitted to the mawashi state's discards, reading the
     /// fold model's features and tables.
     pub mawashi: FoldMlp,
@@ -281,6 +335,40 @@ impl Models {
     pub fn push_models(&self) -> [&Umlp; 6] {
         [&self.discard12, &self.discard3, &self.tenpai, &self.riichi, &self.call, &self.kan]
     }
+
+    /// The fold model (a set without one cannot take `fold=1` or `pf=1`,
+    /// `SuzumeConfig::from_pairs`).
+    pub fn fold(&self) -> &FoldMlp {
+        self.fold.as_ref().expect("a model set without discard_F (fold=1 / pf=1 need it)")
+    }
+
+    /// The fold features' tables.
+    pub fn tables(&self) -> &FoldTables {
+        self.tables.as_ref().expect("a model set without fold tables (discard_F.json or fold_tables.json)")
+    }
+
+    /// The push / fold models.
+    pub fn pf(&self) -> &PfModels {
+        self.pf.as_ref().expect("a model set without the push / fold models (pf=1 needs them)")
+    }
+}
+
+/// Checks the models a set's fold and push / fold parts share: the mawashi
+/// model reads the fold model's inputs and tables, the state model its inputs.
+fn check_pf(fold: &FoldMlp, pf: &PfModels, push: [&Umlp; 2]) -> Result<(), String> {
+    if pf.mawashi.inputs != fold.inputs || pf.mawashi.tables != fold.tables {
+        return Err("discard_M.json: inputs / tables differ from discard_F.json's".into());
+    }
+    if pf.state.inputs != fold.inputs {
+        return Err("state model: inputs differ from the fold model's".into());
+    }
+    let [riichi, call] = push;
+    for (md, base) in [(&pf.riichi_m, riichi), (&pf.call_m, call), (&pf.call_f, call)] {
+        if (&md.kind, &md.inputs, &md.states) != (&base.kind, &base.inputs, &base.states) {
+            return Err(format!("{}: kind / inputs / states differ from its push model's", md.kind));
+        }
+    }
+    Ok(())
 }
 
 fn parse_set(f: &SetFiles) -> Models {
@@ -290,26 +378,83 @@ fn parse_set(f: &SetFiles) -> Models {
     }
     let fold = parse_fold(f.fold).unwrap_or_else(|e| panic!("params/hand/{d}/discard_F.json: {e}"));
     let mawashi = parse_fold(f.mawashi).unwrap_or_else(|e| panic!("params/hand/{d}/discard_M.json: {e}"));
-    let same = mawashi.inputs == fold.inputs
-        && mawashi.wait_table == fold.wait_table
-        && mawashi.pattern_edges == fold.pattern_edges
-        && mawashi.turn_edges == fold.turn_edges
-        && mawashi.turn_cap == fold.turn_cap
-        && mawashi.last_ago_cap == fold.last_ago_cap
-        && mawashi.early_discards == fold.early_discards;
-    assert!(same, "params/hand/{d}/discard_M.json: inputs / tables differ from discard_F.json's");
     let (sname, stext) = f.state;
     let state = parse_state(stext).unwrap_or_else(|e| panic!("params/state/{sname}.json: {e}"));
-    assert!(state.inputs == fold.inputs, "params/state/{sname}.json: inputs differ from hand {d}'s fold model");
     let [discard12, discard3, tenpai, riichi, call, kan] = umlps(d, &MODEL_FILES, &f.umlp);
     let [riichi_m, call_m, call_f] = umlps(d, &PF_MODEL_KINDS, &f.pf_umlp);
-    Models { discard12, discard3, tenpai, riichi, call, kan, riichi_m, call_m, call_f, fold, mawashi, state }
+    let pf = PfModels { riichi_m, call_m, call_f, mawashi, state };
+    check_pf(&fold, &pf, [&riichi, &call]).unwrap_or_else(|e| panic!("params/hand/{d} (state {sname}): {e}"));
+    let tables = Some(fold.tables.clone());
+    Models { discard12, discard3, tenpai, riichi, call, kan, fold: Some(fold), tables, pf: Some(pf) }
+}
+
+/// A model set read from directory `dir`, laid out as a hand set of
+/// `params/hand/` plus its state model:
+///
+/// | file | |
+/// |---|---|
+/// | `discard_P_12`, `discard_P_3`, `discard_P_t`, `riichi_P`, `call_P`, `kan` (`.json`) | required |
+/// | `discard_F.json` | the fold model (`fold=1`, `pf=1`) |
+/// | `riichi_M`, `call_M`, `call_F`, `discard_M`, `state` (`.json`) | the push / fold models (`pf=1`): all or none, and only with `discard_F.json` |
+/// | `fold_tables.json` | the fold features' tables (`FoldTables` keys) when there is no `discard_F.json` |
+///
+/// Without a fold model or the push / fold models, the set plays only with
+/// the options that do not need them (`pf=0`, and `fold=0` without a fold
+/// model).
+pub fn load_dir(dir: &Path) -> Result<Models, String> {
+    let read = |name: &str| -> Result<Option<String>, String> {
+        let p = dir.join(format!("{name}.json"));
+        match std::fs::read_to_string(&p) {
+            Ok(t) => Ok(Some(t)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("{}: {e}", p.display())),
+        }
+    };
+    let at = |name: &str, e: String| format!("{}: {e}", dir.join(format!("{name}.json")).display());
+    let umlp = |name: &str| -> Result<Option<Umlp>, String> {
+        read(name)?.map(|t| parse_umlp(&t).map_err(|e| at(name, e))).transpose()
+    };
+    let need = |name: &str| -> Result<Umlp, String> { umlp(name)?.ok_or_else(|| at(name, "missing".into())) };
+    let [discard12, discard3, tenpai, riichi, call, kan] = [0, 1, 2, 3, 4, 5].map(|i| need(MODEL_FILES[i]));
+    let (discard12, discard3, tenpai, riichi, call, kan) = (discard12?, discard3?, tenpai?, riichi?, call?, kan?);
+    let fold = read("discard_F")?.map(|t| parse_fold(&t).map_err(|e| at("discard_F", e))).transpose()?;
+    let pf_names = ["riichi_M", "call_M", "call_F", "discard_M", "state"];
+    let present: Vec<bool> = pf_names.iter().map(|n| dir.join(format!("{n}.json")).exists()).collect();
+    let pf = if present.iter().all(|&p| p) {
+        let fold = fold.as_ref().ok_or_else(|| at("discard_F", "missing (the push / fold models need it)".into()))?;
+        let mawashi = parse_fold(&read("discard_M")?.unwrap_or_default()).map_err(|e| at("discard_M", e))?;
+        let state = parse_state(&read("state")?.unwrap_or_default()).map_err(|e| at("state", e))?;
+        let [riichi_m, call_m, call_f] = [0, 1, 2].map(|i| need(pf_names[i]));
+        let pf = PfModels { riichi_m: riichi_m?, call_m: call_m?, call_f: call_f?, mawashi, state };
+        check_pf(fold, &pf, [&riichi, &call]).map_err(|e| format!("{}: {e}", dir.display()))?;
+        Some(pf)
+    } else if present.iter().any(|&p| p) {
+        return Err(format!("{}: the push / fold models {pf_names:?} come all or none", dir.display()));
+    } else {
+        None
+    };
+    let tables = match (&fold, read("fold_tables")?) {
+        (Some(f), None) => Some(f.tables.clone()),
+        (None, Some(t)) => {
+            let v: Value = serde_json::from_str(&t).map_err(|e| at("fold_tables", e.to_string()))?;
+            Some(parse_tables(&v).map_err(|e| at("fold_tables", e))?)
+        }
+        (None, None) => None,
+        (Some(_), Some(_)) => return Err(format!("{}: fold_tables.json next to discard_F.json (the fold model's tables are used)", dir.display())),
+    };
+    Ok(Models { discard12, discard3, tenpai, riichi, call, kan, fold, tables, pf })
 }
 
 /// The parsed models of set `s`.
 pub fn set_models(s: ModelSet) -> &'static Models {
     static M: [OnceLock<Models>; ModelSet::ALL.len()] = [const { OnceLock::new() }; ModelSet::ALL.len()];
-    M[s.index()].get_or_init(|| parse_set(&SET_FILES[s.index()]))
+    match s {
+        ModelSet::Dir(n) => dir_sets().lock().expect("dir sets")[usize::from(n)].1,
+        _ => {
+            let i = ModelSet::ALL.iter().position(|&x| x == s).expect("a built-in set");
+            M[i].get_or_init(|| parse_set(&SET_FILES[i]))
+        }
+    }
 }
 
 /// The parsed `params/suzume.json`.
@@ -417,13 +562,30 @@ fn rows(v: &Value, key: &str) -> Result<(usize, Vec<f64>), String> {
     Ok((n, out))
 }
 
+fn parse_tables(v: &Value) -> Result<FoldTables, String> {
+    let (n_pat, wait_table) = rows(v, "wait_table")?;
+    let t = FoldTables {
+        wait_table,
+        pattern_edges: nums(v, &["pattern_edges"])?,
+        turn_edges: nums(v, &["turn_edges"])?.iter().map(|&x| x as u8).collect(),
+        turn_cap: num(v, &["turn_cap"])?,
+        last_ago_cap: num(v, &["last_ago_cap"])?,
+        early_discards: num(v, &["early_discards"])? as u8,
+    };
+    if n_pat != t.pattern_edges.len() + 1 || t.wait_table.len() != n_pat * (t.turn_edges.len() + 1) {
+        return Err("wait_table is not (pattern bins) x (turn bins)".into());
+    }
+    if t.turn_cap <= 0.0 || t.last_ago_cap <= 0.0 {
+        return Err("turn_cap / last_ago_cap must be positive".into());
+    }
+    Ok(t)
+}
+
 fn parse_fold(text: &str) -> Result<FoldMlp, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let inputs = strs(&v, &["inputs"])?;
     let sit = parse_sit(&v, inputs.len())?;
     let net = parse_hidden(&v, inputs.len() + sit.as_ref().map_or(0, |s| s.mean.len()))?;
-    let (n_pat, wait_table) = rows(&v, "wait_table")?;
-    let turn_edges = nums(&v, &["turn_edges"])?;
     let md = FoldMlp {
         cols: positions(&inputs, &crate::suzume::fold_model::FEATURES)?,
         inputs,
@@ -432,12 +594,7 @@ fn parse_fold(text: &str) -> Result<FoldMlp, String> {
         net,
         w2: nums(&v, &["w2"])?,
         b2: num(&v, &["b2"])?,
-        wait_table,
-        pattern_edges: nums(&v, &["pattern_edges"])?,
-        turn_edges: turn_edges.iter().map(|&x| x as u8).collect(),
-        turn_cap: num(&v, &["turn_cap"])?,
-        last_ago_cap: num(&v, &["last_ago_cap"])?,
-        early_discards: num(&v, &["early_discards"])? as u8,
+        tables: parse_tables(&v)?,
         tau: num(&v, &["tau"])?,
         sit,
     };
@@ -450,12 +607,6 @@ fn parse_fold(text: &str) -> Result<FoldMlp, String> {
     }
     if md.mean.len() != n_in || md.std.len() != n_in || md.std.iter().any(|&s| s <= 0.0) {
         return Err("mean / std do not match the inputs".into());
-    }
-    if n_pat != md.pattern_edges.len() + 1 || md.wait_table.len() != n_pat * (md.turn_edges.len() + 1) {
-        return Err("wait_table is not (pattern bins) x (turn bins)".into());
-    }
-    if md.turn_cap <= 0.0 || md.last_ago_cap <= 0.0 {
-        return Err("turn_cap / last_ago_cap must be positive".into());
     }
     Ok(md)
 }
@@ -511,13 +662,14 @@ mod tests {
         let ms = set_models(ModelSet::default());
         let kinds = ["discard12", "discard3", "tenpai", "riichi", "call", "kan"];
         assert_eq!(ms.push_models().map(|x| x.kind.as_str()), kinds);
-        let f = &ms.fold;
+        let (f, pf) = (ms.fold(), ms.pf());
         assert_eq!(f.net.w1.len(), f.net.widths[0] * f.inputs.len());
-        for (md, base) in [(&ms.riichi_m, &ms.riichi), (&ms.call_m, &ms.call), (&ms.call_f, &ms.call)] {
+        for (md, base) in [(&pf.riichi_m, &ms.riichi), (&pf.call_m, &ms.call), (&pf.call_f, &ms.call)] {
             assert_eq!((&md.kind, &md.inputs, &md.states), (&base.kind, &base.inputs, &base.states));
         }
-        assert_eq!(ms.mawashi.inputs, f.inputs);
-        assert_eq!(ms.state.inputs, f.inputs);
+        assert_eq!(pf.mawashi.inputs, f.inputs);
+        assert_eq!(pf.state.inputs, f.inputs);
+        assert_eq!(ms.tables(), &f.tables);
     }
 
     /// Every model set parses (`parse_set` checks the shared inputs); the
@@ -526,9 +678,9 @@ mod tests {
     fn every_model_set_parses() {
         let depth = |s: ModelSet| set_models(s).discard12.net.widths.len();
         assert_eq!(ModelSet::ALL.map(depth), [3, 3, 3, 1, 1]);
-        let sit = |s: ModelSet| set_models(s).state.n_sit;
+        let sit = |s: ModelSet| set_models(s).pf().state.n_sit;
         assert_eq!(ModelSet::ALL.map(sit), [21, 0, 21, 21, 0]);
-        let umlp_sit = |s: ModelSet| set_models(s).push_models().iter().all(|m| m.sit.is_some()) && set_models(s).fold.sit.is_some();
+        let umlp_sit = |s: ModelSet| set_models(s).push_models().iter().all(|m| m.sit.is_some()) && set_models(s).fold().sit.is_some();
         assert_eq!(ModelSet::ALL.map(umlp_sit), [false, false, true, false, false]);
         for s in ModelSet::ALL {
             assert_eq!(ModelSet::from_name(s.name()), Some(s));

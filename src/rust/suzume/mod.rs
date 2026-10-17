@@ -143,6 +143,14 @@ pub fn decide_observation(
     cfg: &SuzumeConfig,
     memo: &mut SeatMemo,
 ) -> Result<(Action, u8), String> {
+    let view = view_of(obs, kyoku_events, cfg, false)?;
+    decide_with_memo(&view, cfg, memo)
+}
+
+/// The view a decision of `decide_observation` plays on (also what the
+/// feature dumps read, so they see the same view): the river record is
+/// applied when a rule of `cfg` reads it, or always with `river`.
+pub fn view_of(obs: &Observation, kyoku_events: &[Value], cfg: &SuzumeConfig, river: bool) -> Result<MjView, String> {
     let legal = obs.legal_actions_method();
     if legal.is_empty() {
         return Err(format!("suzume at seat {} has no legal actions", obs.player_id));
@@ -151,8 +159,8 @@ pub fn decide_observation(
     // Only the fold and push / fold rules read the river record
     // (genbutsu, early cuts, red fives, recency).
     let own_discard = !view.in_riichi && view.find(ActionType::Discard).is_some();
-    if (cfg.fold && !cfg.pf && view.riichi_threats().next().is_some()) || (cfg.pf && own_discard) {
+    if river || (cfg.fold && !cfg.pf && view.riichi_threats().next().is_some()) || (cfg.pf && own_discard) {
         view.apply_river(&view::river_from_mjai(kyoku_events)?);
     }
-    decide_with_memo(&view, cfg, memo)
+    Ok(view)
 }

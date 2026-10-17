@@ -67,7 +67,7 @@ impl SuzumeConfig {
             "riichi" => self.riichi = flag()?,
             "fold" => self.fold = flag()?,
             "pf" => self.pf = flag()?,
-            "models" => self.models = ModelSet::from_name(value.trim()).ok_or_else(|| bad(&"not a model set"))?,
+            "models" => self.models = ModelSet::parse(value.trim()).map_err(|e| bad(&e))?,
             "fold_shanten" => {
                 let v: i8 = value.trim().parse().map_err(|e| bad(&e))?;
                 if !(0..=8).contains(&v) {
@@ -86,6 +86,22 @@ impl SuzumeConfig {
         for (k, v) in pairs {
             cfg.set(k, v)?;
         }
+        cfg.check_models()?;
         Ok(cfg)
+    }
+
+    /// Whether the model set has the models the switches play with: `pf=1`
+    /// needs the push / fold models, `fold=1` (with `pf=0`) the fold model
+    /// (a directory set may lack them, `params::load_dir`).
+    pub fn check_models(&self) -> Result<(), String> {
+        let m = super::params::set_models(self.models);
+        let name = self.models.name();
+        if self.pf && m.pf.is_none() {
+            return Err(format!("suzume model set {name} has no push / fold models: use pf=0"));
+        }
+        if self.fold && !self.pf && m.fold.is_none() {
+            return Err(format!("suzume model set {name} has no fold model (discard_F): use fold=0"));
+        }
+        Ok(())
     }
 }
