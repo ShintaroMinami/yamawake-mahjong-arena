@@ -10,9 +10,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::suzume::ctx::Ctx;
-use crate::suzume::fold_model::{FEATURES, FoldInputs, seat_features};
+use crate::suzume::fold_model::{FEATURES, FoldInputs, features, seat_features};
 use crate::suzume::rules::universal_mlp::mlp_choice;
 use crate::suzume::universal::{UContext, Universal, kan_universal, kind_of, riichi_keep_row, u_names};
+use crate::suzume::view::river_from_mjai;
 use crate::suzume::{MjView, SeatMemo, SuzumeConfig, pf, view_of};
 
 use super::{observation_with_wall, suzume_config_from};
@@ -146,9 +147,13 @@ impl SuzumeFeatures {
     /// `FEATURES`, "seats": [relative seat 1..3, from the shimocha],
     /// "features": [seat][tile type][feature] (raw), "legal": the legal
     /// discard types, "shanten_after": [tile type] (None off the legal
-    /// ones), "sit"}; None without a legal discard. `hand_mlp` is the set's
-    /// push model's; the tables are the set's (`params::Models::tables`).
-    fn fold_features<'py>(&mut self, py: Python<'py>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<Option<Bound<'py, PyDict>>> {
+    /// ones), "sit"}; None without a legal discard, unless `any_decision` (then
+    /// any decision: the features of every tile type, with "legal" empty and the
+    /// shanten columns 0 when no discard is legal, e.g. for the seat columns of a
+    /// call decision). `hand_mlp` is the set's push model's; the tables are the
+    /// set's (`params::Models::tables`).
+    #[pyo3(signature = (obs_b64, kyoku_events, any_decision=false))]
+    fn fold_features<'py>(&mut self, py: Python<'py>, obs_b64: String, kyoku_events: Vec<String>, any_decision: bool) -> PyResult<Option<Bound<'py, PyDict>>> {
         if crate::suzume::params::set_models(self.cfg.models).tables.is_none() {
             return Err(PyValueError::new_err(format!(
                 "model set {} has no fold tables (discard_F.json or fold_tables.json)",
@@ -157,7 +162,7 @@ impl SuzumeFeatures {
         }
         let p = self.prepare(&obs_b64, &kyoku_events, true).map_err(PyValueError::new_err)?;
         let r = self.with_ctx(&p, |ctx| {
-            if ctx.discard_cands().is_empty() {
+            if ctx.discard_cands().is_empty() && !any_decision {
                 return None;
             }
             let shanten = FoldInputs::of(ctx).shanten_after;
@@ -172,6 +177,91 @@ impl SuzumeFeatures {
         out.set_item("legal", legal)?;
         out.set_item("shanten_after", shanten.to_vec())?;
         out.set_item("sit", pf::situation(&p.view).to_vec())?;
+        Ok(Some(out))
+    }
+
+    /// The fold features of an own-turn discard decision with no other seat
+    /// in riichi, against each other seat as if it had declared riichi on its
+    /// latest discard and the riichi were accepted now (the hypothetical riichi
+    /// of the first push / fold labels): the observation's `riichi_declared`
+    /// set for that seat (nothing else changed) and that discard flagged as
+    /// the declaring one. The features are those of the river cut right after
+    /// that discard, but `last_ago` and `other_wait_est` those of the whole
+    /// river. {"seats": [relative seat of each scored seat, 1..3; the seats
+    /// with a discard], "features": [seat][tile type][feature], "legal",
+    /// "shanten_after"}; None without a legal discard, an error when some
+    /// other seat is in riichi.
+    fn fold_features_hypo<'py>(&mut self, py: Python<'py>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if crate::suzume::params::set_models(self.cfg.models).tables.is_none() {
+            return Err(PyValueError::new_err(format!("model set {} has no fold tables", self.cfg.models.name())));
+        }
+        let events: Vec<serde_json::Value> = kyoku_events
+            .iter()
+            .map(|l| serde_json::from_str(l).map_err(|e| PyValueError::new_err(format!("bad event: {e}"))))
+            .collect::<Result<_, _>>()?;
+        let obs = observation_with_wall(&obs_b64, &events).map_err(PyValueError::new_err)?;
+        let seat = usize::from(obs.player_id);
+        if (0..4).any(|s| s != seat && obs.riichi_declared[s]) {
+            return Err(PyValueError::new_err("another seat is in riichi: use fold_features"));
+        }
+        let rows = river_from_mjai(&events).map_err(PyValueError::new_err)?;
+        let legal = obs.legal_actions_method();
+        const FROM_FULL: [usize; 2] = [6, 15];          // other_wait_est, last_ago
+        let mut seats = Vec::new();
+        let mut feats = Vec::new();
+        let mut legal_types = None;
+        for k in 1..=3usize {
+            let s = (seat + k) % 4;
+            let Some(last) = rows.iter().rposition(|r| usize::from(r.seat) == s) else { continue };
+            let mut o = obs.clone();
+            o.riichi_declared[s] = true;
+            let mut flagged = rows.clone();
+            flagged[last].riichi = true;
+            let mut one = |river: &[crate::suzume::view::RiverRow]| {
+                let mut view = MjView::from_observation(&o, legal.clone());
+                view.apply_river(river);
+                let p = Prepared { view, seat };
+                self.with_ctx(&p, |ctx| {
+                    if ctx.discard_cands().is_empty() {
+                        return None;
+                    }
+                    let inp = FoldInputs::of(ctx);
+                    Some((features(ctx.models.tables(), ctx.view, s, &inp), pf::legal_types(ctx), inp.shanten_after))
+                })
+            };
+            let Some((trunc, lt, sh)) = one(&flagged[..=last]) else { return Ok(None) };
+            let Some((full, _, _)) = one(&flagged) else { return Ok(None) };
+            let merged: Vec<Vec<f64>> = (0..34)
+                .map(|t| {
+                    let mut r = trunc[t].to_vec();
+                    for c in FROM_FULL {
+                        r[c] = full[t][c];
+                    }
+                    r
+                })
+                .collect();
+            seats.push(k);
+            feats.push(merged);
+            legal_types.get_or_insert((lt, sh));
+        }
+        let out = PyDict::new_bound(py);
+        let (lt, sh) = match legal_types {
+            Some(x) => x,
+            None => {
+                // No other seat has discarded yet: the legal types alone.
+                let view = view_of(&obs, &events, &self.cfg, false).map_err(PyValueError::new_err)?;
+                let p = Prepared { view, seat };
+                match self.with_ctx(&p, |ctx| (!ctx.discard_cands().is_empty()).then(|| (pf::legal_types(ctx), FoldInputs::of(ctx).shanten_after))) {
+                    Some(x) => x,
+                    None => return Ok(None),
+                }
+            }
+        };
+        out.set_item("names", FEATURES.to_vec())?;
+        out.set_item("seats", seats)?;
+        out.set_item("features", feats)?;
+        out.set_item("legal", lt)?;
+        out.set_item("shanten_after", sh.to_vec())?;
         Ok(Some(out))
     }
 }

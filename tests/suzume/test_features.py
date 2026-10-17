@@ -6,6 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 import riichienv as rv
 
@@ -168,3 +169,53 @@ def test_fold_tables_give_the_fold_models_features(tmp_path):
     g = Grab()
     run_match([g, RulebotAgent(), g, RulebotAgent()], walls=1, flight=4)
     assert sum(seen) > 100
+
+
+def test_a_hypothetical_riichi_matches_a_real_one_just_declared(tmp_path):
+    """Right after a seat's riichi was declared and accepted, with no discard
+    since, its fold features are those of the hypothetical riichi on the same
+    position with the riichi taken back out (the observation's flag and the
+    stream's reach events)."""
+    import base64
+    d = _push_set(tmp_path / "push", tables=True)
+    feats = SuzumeFeatures({"models": f"dir:{d}", "pf": 0, "fold": 0})
+    checked = []
+
+    class Grab:
+        lane = LANE_OBSERVATION
+
+        def __init__(self):
+            self.player = {}
+
+        def act_batch(self, decisions):
+            out = []
+            for dd in decisions:
+                p = self.player.setdefault((dd.game, dd.seat), SuzumePlayer("suzume"))
+                ev = dd.kyoku_events
+                dahai = [i for i, e in enumerate(ev) if e["type"] == "dahai"]
+                reach = [e for e in ev if e["type"] == "reach"]
+                if (len(reach) == 1 and dahai and ev[dahai[-1] - 1]["type"] == "reach"
+                        and ev[dahai[-1]]["actor"] == reach[0]["actor"] != dd.seat
+                        and ev[-1]["type"] == "tsumo" and ev[-1]["actor"] == dd.seat):
+                    r = reach[0]["actor"]
+                    obs = dd.obs.serialize_to_base64()
+                    real = feats.fold_features(obs, [json.dumps(e) for e in ev])
+                    j = json.loads(base64.b64decode(obs))
+                    j["riichi_declared"][r] = False
+                    obs2 = base64.b64encode(json.dumps(j).encode()).decode()
+                    ev2 = [e for e in ev if not (e["type"] in ("reach", "reach_accepted") and e.get("actor") == r)]
+                    hypo = feats.fold_features_hypo(obs2, [json.dumps(e) for e in ev2])
+                    if real is not None:
+                        k = (r - dd.seat) % 4
+                        assert hypo["seats"] == [s for s in (1, 2, 3) if any(e["type"] == "dahai" and e["actor"] == (dd.seat + s) % 4 for e in ev)]
+                        np.testing.assert_array_equal(np.array(real["features"][k - 1]), np.array(hypo["features"][hypo["seats"].index(k)]))
+                        checked.append(1)
+                out.append(p.act(dd.obs, dd.kyoku_events))
+            return out
+
+        def describe(self):
+            return {"kind": "grab", "name": "grab"}
+
+    g = Grab()
+    run_match([g, RulebotAgent(), g, RulebotAgent()], walls=8, flight=8)
+    assert len(checked) >= 5
