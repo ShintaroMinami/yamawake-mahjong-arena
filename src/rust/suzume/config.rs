@@ -39,9 +39,9 @@ pub struct SuzumeConfig {
     /// Push / fold by the predicted state (`suzume::pf`).
     /// Replaces `fold`.
     pub pf: bool,
-    /// The model set, picked by the player name (`suzume-mlp3` / `suzume`,
-    /// `suzume-mlp3-flat`, `suzume-mlp3-avoid4`, `suzume-mlp1`,
-    /// `suzume-mlp1-flat`; `params::ModelSet`). Not an
+    /// The legacy model set, picked by the player name (`legacy-suzume-mlp3`,
+    /// `legacy-suzume-mlp3-flat`, `legacy-suzume-mlp3-avoid4`, `legacy-suzume-mlp1`,
+    /// `legacy-suzume-mlp1-flat`; `params::ModelSet`). Not an
     /// option: each set is its own player.
     pub models: ModelSet,
 }

@@ -11,7 +11,7 @@ from yamawake.context import SeatTracker
 from yamawake.external import SuzumeObservationAgent, SuzumePlayer
 
 
-@pytest.mark.parametrize("spec", ["suzume", "suzume-mlp1"])
+@pytest.mark.parametrize("spec", ["suzume", "legacy-suzume-mlp1"])
 def test_the_observation_lane_suzume_plays_the_in_loop_games(spec):
     """Through Python's riichienv the observation loses the live wall; the
     player restores it from the events and keeps the kyoku memo, so the games

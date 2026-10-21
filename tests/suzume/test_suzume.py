@@ -1,4 +1,7 @@
-"""suzume: seating and options, short matches, recorded logs and traces, the switches, the rule list."""
+"""suzume: seating and options, short matches, recorded logs and traces, the switches, the rule list.
+
+The traces, switches and rules are the legacy sets' (`legacy-suzume-mlp3`); the default `suzume` is an A1 set.
+"""
 from __future__ import annotations
 
 import gzip
@@ -33,26 +36,35 @@ def test_suzume_x4_completes_and_records(default_logs):
     assert "universal_mlp" in seen
 
 
-def test_suzume_vs_rulebot_1v3(tmp_path):
-    r = run_match(lineup(SuzumeAgent(), RulebotAgent()), walls=2, flight=8, record_logs=tmp_path)
+LEGACY = "legacy-suzume-mlp3"
+
+
+def _legacy(config: dict | None = None, name: str = LEGACY) -> SuzumeAgent:
+    return SuzumeAgent(config, name=name, models=LEGACY)
+
+
+@pytest.mark.parametrize("make, traces", [(SuzumeAgent, 0), (_legacy, 8)])
+def test_suzume_vs_rulebot_1v3(tmp_path, make, traces):
+    a = make()
+    r = run_match(lineup(a, RulebotAgent()), walls=2, flight=8, record_logs=tmp_path)
     assert r.protocol["rotations"] == 4 and r.games == 8
     assert sum(s.avg_rank for s in r.slots) == pytest.approx(10.0)
     head = json.loads(gzip.open(sorted(tmp_path.glob("arena-*.json.gz"))[0], "rt").readline())
-    assert sorted(head["names"]) == ["rulebot", "rulebot", "rulebot", "suzume"]
-    assert len(list(tmp_path.glob("*.suzume.json"))) == 8
+    assert sorted(head["names"]) == sorted(["rulebot", "rulebot", "rulebot", a.name])
+    assert len(list(tmp_path.glob("*.suzume.json"))) == traces
 
 
 @pytest.fixture(scope="module")
 def default_logs(tmp_path_factory):
-    """Four default suzume bots on 2 standard walls, recorded."""
+    """Four legacy suzume bots (default options) on 2 standard walls, recorded."""
     out = tmp_path_factory.mktemp("default")
-    run_match([SuzumeAgent()] * 4, walls=2, record_logs=out)
+    run_match([_legacy()] * 4, walls=2, record_logs=out)
     return out
 
 
 @pytest.mark.parametrize("option, events", [("riichi", {"reach"}), ("call", {"chi", "pon"})])
 def test_switch_off_never_acts(tmp_path, default_logs, option, events):
-    off = SuzumeAgent({option: 0}, name=f"{option}0")
+    off = _legacy({option: 0}, name=f"{option}0")
     run_match([off] * 4, walls=2, record_logs=tmp_path)
     assert not any(e["type"] in events for log in tmp_path.glob("arena-*.json.gz") for e in _events(log))
     # The default bot does act on the same walls.
@@ -62,16 +74,24 @@ def test_switch_off_never_acts(tmp_path, default_logs, option, events):
 def test_seat_spec_and_options():
     assert set(KNOBS) == {"kan", "call", "riichi", "fold", "fold_shanten", "pf"}
     assert effective_config() == {"kan": True, "call": True, "riichi": True, "fold": True, "fold_shanten": 1, "pf": True}
-    a = build_agent("suzume:call=0:pf=0")
-    assert a.name.startswith("suzume:") and a.lane == "suzume"
+    a = build_agent("legacy-suzume-mlp3:call=0:pf=0")
+    assert a.name.startswith("legacy-suzume-mlp3:") and a.lane == "suzume"
     assert effective_config(a.config) == {"kan": True, "call": False, "riichi": True, "fold": True, "fold_shanten": 1, "pf": False}
-    # --opt options reach suzume bots; the spec's own pairs win; others are ignored.
-    b = build_agent("suzume:kan=1", kan="0", riichi="0", device="cpu")
-    assert b.config == {"kan": "1", "riichi": "0"}
+    # --opt options reach legacy suzume bots; the spec's own pairs win; others are ignored.
+    b = build_agent("legacy-suzume-mlp3:kan=1", kan="0", riichi="0", device="cpu")
+    assert b.config == {"kan": "1", "riichi": "0", "models": "legacy-suzume-mlp3"}
     for bad in ({"ron_rate": 0.3}, {"dp_max_shanten": 2}, {"universal_mode": 1}, {"disable": "kan_mlp"},
                 {"kan": 2}, {"fold_shanten": 9}, {"bogus": 1}):
         with pytest.raises(ValueError):
-            SuzumeAgent(bad)
+            _legacy(bad)
+    # The current sets play on the A1 lane and take no options.
+    for name in ("suzume", "suzume-rla225"):
+        c = build_agent(name)
+        assert c.lane == "a1" and c.config == {"a1": name}
+        with pytest.raises(ValueError):
+            build_agent(f"{name}:call=0")
+        with pytest.raises(ValueError):
+            build_agent(name, call="0")
 
 
 def test_rule_list(capsys):

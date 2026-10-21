@@ -2,7 +2,7 @@
 //! choose the option; the kan MLP decides kans against that choice.
 //!
 //! One model per decision kind (`params::models`, from
-//! `params/hand/<hand>/<file>.json`, `params::MODEL_FILES`; docs/suzume.md):
+//! `params/legacy/hand/<hand>/<file>.json`, `params::MODEL_FILES`; docs/suzume.md):
 //!
 //! | model (file) | scope |
 //! |---|---|
@@ -98,7 +98,10 @@ fn push_model(ctx: &Ctx) -> Option<&'static Umlp> {
     let m = ctx.models;
     Some(match kind_of(ctx)? {
         0 if ctx.min_shanten()? >= 3 => &m.discard3,
-        0 => &m.discard12,
+        0 => match &m.discard_split {
+            Some((one, two)) => if ctx.min_shanten()? <= 1 { one } else { two },
+            None => &m.discard12,
+        },
         1 => &m.riichi,
         2 => &m.tenpai,
         _ => {

@@ -41,6 +41,7 @@
 //! `decide` returns the deciding rule's registry index (`FALLBACK` for the
 //! fallback); the arena records it per decision (`GameSlot::suzume_trace`).
 
+pub mod a1;
 pub mod config;
 pub mod ctx;
 pub mod fold_model;

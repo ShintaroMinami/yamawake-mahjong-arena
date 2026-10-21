@@ -1,9 +1,11 @@
 //! The fixed parameters of suzume, read from `params/` at the repository
 //! root: the DP's constants and the weights the universal features read
-//! (`params/suzume.json`), and the models of each model set (`ModelSet`):
-//! a hand model set (`params/hand/<hand>/`, one file per decision and
-//! push / fold state, `MODEL_FILES`) and a push / fold state model
-//! (`params/state/<state>.json`).
+//! (`params/suzume.json`), and the models of each legacy model set
+//! (`ModelSet`): a hand model set (`params/legacy/hand/<hand>/`, one file per
+//! decision and push / fold state, `MODEL_FILES`) and a push / fold state
+//! model (`params/legacy/state/<state>.json`). The current sets
+//! (`params/suzume/`) are A1's (`suzume::a1::BUILTIN`); their features set is
+//! here (`features_set`).
 //!
 //! They are not options: the files are embedded at build time and parsed
 //! once on first use, so a caller cannot vary them, and the models always
@@ -44,7 +46,7 @@ pub struct Params {
     pub context_top_margin: i32,
 }
 
-/// One per-decision MLP (`params/hand/<hand>/`, `MODEL_FILES`).
+/// One per-decision MLP (`params/legacy/hand/<hand>/`, `MODEL_FILES`).
 #[derive(Debug)]
 pub struct Umlp {
     pub kind: String,
@@ -71,7 +73,7 @@ pub struct Umlp {
     pub sit: Option<Sit>,
 }
 
-/// The fold model (`params/hand/<hand>/discard_F.json`; `suzume::fold_model`):
+/// The fold model (`params/legacy/hand/<hand>/discard_F.json`; `suzume::fold_model`):
 /// one MLP scoring each discard against one riichi seat, and the tables its
 /// features read.
 #[derive(Debug)]
@@ -119,7 +121,7 @@ pub struct FoldTables {
     pub early_discards: u8,
 }
 
-/// The push / fold state model (`params/state/<state>.json`; `suzume::pf`):
+/// The push / fold state model (`params/legacy/state/<state>.json`; `suzume::pf`):
 /// each (other seat, legal discard type) row of the fold model's features,
 /// next to the situation (`sit`) -> `relu(W1 [(x - mean) / std, sit] + b1)`
 /// and any further layers
@@ -167,27 +169,29 @@ const PARAMS_JSON: &str = include_str!("../../../params/suzume.json");
 /// states of its push model (`riichi`, `call`).
 pub const PF_MODEL_KINDS: [&str; 3] = ["riichi_M", "call_M", "call_F"];
 
-/// The file names (`params/hand/<hand>/<name>.json`) of the per-decision
+/// The file names (`params/legacy/hand/<hand>/<name>.json`) of the per-decision
 /// models: the P-state models of each decision (the M / F ones are named by
 /// their `PF_MODEL_KINDS`, the fold and mawashi models `discard_F` /
 /// `discard_M`).
 pub const MODEL_FILES: [&str; 6] = ["discard_P_12", "discard_P_3", "discard_P_t", "riichi_P", "call_P", "kan"];
 
-/// A set of the models suzume plays with, picked by the player name: a hand
-/// model set and a state model. The names say what they were fitted on
-/// (`flat` East 1 games, `normal` hanchan games) and how deep they are (`mlp1`
-/// one hidden layer, `mlp3` three).
+/// A legacy set of the models suzume played with until 2026-10-21 (the
+/// player `suzume` is now the A1 set, `suzume::a1`), picked by the player
+/// name: a hand model set and a state model. The names say what they were
+/// fitted on (`flat` East 1 games, `normal` hanchan games) and how deep they
+/// are (`mlp1` one hidden layer, `mlp3` three).
 ///
-/// | player | hand (`params/hand/`) | state (`params/state/`) |
+/// | player | hand (`params/legacy/hand/`) | state (`params/legacy/state/`) |
 /// |---|---|---|
-/// | `suzume-mlp3` (also `suzume`, the default) | `flat_mlp3` | `normal_mlp3` |
-/// | `suzume-mlp3-flat` (East 1) | `flat_mlp3` | `flat_mlp3` |
-/// | `suzume-mlp3-avoid4` (last-place avoidance) | `normal_mlp3` (with the situation inputs) | `normal_mlp3` |
-/// | `suzume-mlp1` (light) | `flat_mlp1` | `normal_mlp1` |
-/// | `suzume-mlp1-flat` (light, East 1) | `flat_mlp1` | `flat_mlp1` |
+/// | `legacy-suzume-mlp3` (the default of a `SuzumeConfig`) | `flat_mlp3` | `normal_mlp3` |
+/// | `legacy-suzume-mlp3-flat` (East 1) | `flat_mlp3` | `flat_mlp3` |
+/// | `legacy-suzume-mlp3-avoid4` (last-place avoidance) | `normal_mlp3` (with the situation inputs) | `normal_mlp3` |
+/// | `legacy-suzume-mlp1` (light) | `flat_mlp1` | `normal_mlp1` |
+/// | `legacy-suzume-mlp1-flat` (light, East 1) | `flat_mlp1` | `flat_mlp1` |
 ///
 /// `Dir` is a set read from a directory at run time (`dir:<path>`,
-/// `load_dir`), for fitting new models; it is not one of `ALL`.
+/// `load_dir`), for fitting new models, or the A1 sets' features set
+/// (`features_set`); it is not one of `ALL`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ModelSet {
     #[default]
@@ -207,21 +211,18 @@ impl ModelSet {
     /// path as loaded).
     pub fn name(self) -> &'static str {
         match self {
-            ModelSet::Mlp3 => "suzume-mlp3",
-            ModelSet::Mlp3Flat => "suzume-mlp3-flat",
-            ModelSet::Mlp3Avoid4 => "suzume-mlp3-avoid4",
-            ModelSet::Mlp1 => "suzume-mlp1",
-            ModelSet::Mlp1Flat => "suzume-mlp1-flat",
+            ModelSet::Mlp3 => "legacy-suzume-mlp3",
+            ModelSet::Mlp3Flat => "legacy-suzume-mlp3-flat",
+            ModelSet::Mlp3Avoid4 => "legacy-suzume-mlp3-avoid4",
+            ModelSet::Mlp1 => "legacy-suzume-mlp1",
+            ModelSet::Mlp1Flat => "legacy-suzume-mlp1-flat",
             ModelSet::Dir(n) => dir_sets().lock().expect("dir sets")[usize::from(n)].0,
         }
     }
 
-    /// The built-in set of a player name (`suzume` is the default set's
-    /// other name).
+    /// The built-in set of a player name (the player `suzume` is not one of
+    /// these sets since 2026-10-21: it is the A1 set `suzume::a1::BUILTIN`).
     pub fn from_name(name: &str) -> Option<Self> {
-        if name == "suzume" {
-            return Some(Self::default());
-        }
         Self::ALL.into_iter().find(|s| s.name() == name)
     }
 
@@ -269,21 +270,21 @@ macro_rules! set_files {
         SetFiles {
             hand: $hand,
             umlp: [
-                include_str!(concat!("../../../params/hand/", $hand, "/discard_P_12.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/discard_P_3.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/discard_P_t.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/riichi_P.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/call_P.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/kan.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/discard_P_12.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/discard_P_3.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/discard_P_t.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/riichi_P.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/call_P.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/kan.json")),
             ],
             pf_umlp: [
-                include_str!(concat!("../../../params/hand/", $hand, "/riichi_M.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/call_M.json")),
-                include_str!(concat!("../../../params/hand/", $hand, "/call_F.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/riichi_M.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/call_M.json")),
+                include_str!(concat!("../../../params/legacy/hand/", $hand, "/call_F.json")),
             ],
-            fold: include_str!(concat!("../../../params/hand/", $hand, "/discard_F.json")),
-            mawashi: include_str!(concat!("../../../params/hand/", $hand, "/discard_M.json")),
-            state: ($state, include_str!(concat!("../../../params/state/", $state, ".json"))),
+            fold: include_str!(concat!("../../../params/legacy/hand/", $hand, "/discard_F.json")),
+            mawashi: include_str!(concat!("../../../params/legacy/hand/", $hand, "/discard_M.json")),
+            state: ($state, include_str!(concat!("../../../params/legacy/state/", $state, ".json"))),
         }
     };
 }
@@ -306,6 +307,11 @@ pub struct Models {
     pub riichi: Umlp,
     pub call: Umlp,
     pub kan: Umlp,
+    /// An optional split of `discard12` by the lowest after-discard shanten
+    /// (`discard_P_1` for 1, `discard_P_2` for 2; a directory set with both,
+    /// 2026-10-18): when present they decide those discards and `discard12`
+    /// is not read. No built-in set has them.
+    pub discard_split: Option<(Umlp, Umlp)>,
     /// The fold model (`fold=1` with `pf=0`, and the F state of `pf=1`);
     /// every built-in set has one.
     pub fold: Option<FoldMlp>,
@@ -374,22 +380,22 @@ fn check_pf(fold: &FoldMlp, pf: &PfModels, push: [&Umlp; 2]) -> Result<(), Strin
 fn parse_set(f: &SetFiles) -> Models {
     let d = f.hand;
     fn umlps<const N: usize>(d: &str, files: &[&str; N], texts: &[&str; N]) -> [Umlp; N] {
-        std::array::from_fn(|i| parse_umlp(texts[i]).unwrap_or_else(|e| panic!("params/hand/{d}/{}.json: {e}", files[i])))
+        std::array::from_fn(|i| parse_umlp(texts[i]).unwrap_or_else(|e| panic!("params/legacy/hand/{d}/{}.json: {e}", files[i])))
     }
-    let fold = parse_fold(f.fold).unwrap_or_else(|e| panic!("params/hand/{d}/discard_F.json: {e}"));
-    let mawashi = parse_fold(f.mawashi).unwrap_or_else(|e| panic!("params/hand/{d}/discard_M.json: {e}"));
+    let fold = parse_fold(f.fold).unwrap_or_else(|e| panic!("params/legacy/hand/{d}/discard_F.json: {e}"));
+    let mawashi = parse_fold(f.mawashi).unwrap_or_else(|e| panic!("params/legacy/hand/{d}/discard_M.json: {e}"));
     let (sname, stext) = f.state;
-    let state = parse_state(stext).unwrap_or_else(|e| panic!("params/state/{sname}.json: {e}"));
+    let state = parse_state(stext).unwrap_or_else(|e| panic!("params/legacy/state/{sname}.json: {e}"));
     let [discard12, discard3, tenpai, riichi, call, kan] = umlps(d, &MODEL_FILES, &f.umlp);
     let [riichi_m, call_m, call_f] = umlps(d, &PF_MODEL_KINDS, &f.pf_umlp);
     let pf = PfModels { riichi_m, call_m, call_f, mawashi, state };
-    check_pf(&fold, &pf, [&riichi, &call]).unwrap_or_else(|e| panic!("params/hand/{d} (state {sname}): {e}"));
+    check_pf(&fold, &pf, [&riichi, &call]).unwrap_or_else(|e| panic!("params/legacy/hand/{d} (state {sname}): {e}"));
     let tables = Some(fold.tables.clone());
-    Models { discard12, discard3, tenpai, riichi, call, kan, fold: Some(fold), tables, pf: Some(pf) }
+    Models { discard12, discard3, tenpai, riichi, call, kan, discard_split: None, fold: Some(fold), tables, pf: Some(pf) }
 }
 
 /// A model set read from directory `dir`, laid out as a hand set of
-/// `params/hand/` plus its state model:
+/// `params/legacy/hand/` plus its state model:
 ///
 /// | file | |
 /// |---|---|
@@ -410,26 +416,38 @@ pub fn load_dir(dir: &Path) -> Result<Models, String> {
             Err(e) => Err(format!("{}: {e}", p.display())),
         }
     };
-    let at = |name: &str, e: String| format!("{}: {e}", dir.join(format!("{name}.json")).display());
+    load_with(read, &dir.display().to_string())
+}
+
+/// A model set laid out as `load_dir` lists, its files read by `read` (the
+/// JSON text of `<name>.json`, `None` when absent); `label` names the set in
+/// errors.
+fn load_with(read: impl Fn(&str) -> Result<Option<String>, String>, label: &str) -> Result<Models, String> {
+    let at = |name: &str, e: String| format!("{label}/{name}.json: {e}");
     let umlp = |name: &str| -> Result<Option<Umlp>, String> {
         read(name)?.map(|t| parse_umlp(&t).map_err(|e| at(name, e))).transpose()
     };
     let need = |name: &str| -> Result<Umlp, String> { umlp(name)?.ok_or_else(|| at(name, "missing".into())) };
     let [discard12, discard3, tenpai, riichi, call, kan] = [0, 1, 2, 3, 4, 5].map(|i| need(MODEL_FILES[i]));
     let (discard12, discard3, tenpai, riichi, call, kan) = (discard12?, discard3?, tenpai?, riichi?, call?, kan?);
+    let discard_split = match (umlp("discard_P_1")?, umlp("discard_P_2")?) {
+        (Some(a), Some(b)) => Some((a, b)),
+        (None, None) => None,
+        _ => return Err(format!("{label}: discard_P_1 and discard_P_2 come both or none")),
+    };
     let fold = read("discard_F")?.map(|t| parse_fold(&t).map_err(|e| at("discard_F", e))).transpose()?;
     let pf_names = ["riichi_M", "call_M", "call_F", "discard_M", "state"];
-    let present: Vec<bool> = pf_names.iter().map(|n| dir.join(format!("{n}.json")).exists()).collect();
+    let present: Vec<bool> = pf_names.iter().map(|n| read(n).map(|t| t.is_some())).collect::<Result<_, _>>()?;
     let pf = if present.iter().all(|&p| p) {
         let fold = fold.as_ref().ok_or_else(|| at("discard_F", "missing (the push / fold models need it)".into()))?;
         let mawashi = parse_fold(&read("discard_M")?.unwrap_or_default()).map_err(|e| at("discard_M", e))?;
         let state = parse_state(&read("state")?.unwrap_or_default()).map_err(|e| at("state", e))?;
         let [riichi_m, call_m, call_f] = [0, 1, 2].map(|i| need(pf_names[i]));
         let pf = PfModels { riichi_m: riichi_m?, call_m: call_m?, call_f: call_f?, mawashi, state };
-        check_pf(fold, &pf, [&riichi, &call]).map_err(|e| format!("{}: {e}", dir.display()))?;
+        check_pf(fold, &pf, [&riichi, &call]).map_err(|e| format!("{label}: {e}"))?;
         Some(pf)
     } else if present.iter().any(|&p| p) {
-        return Err(format!("{}: the push / fold models {pf_names:?} come all or none", dir.display()));
+        return Err(format!("{label}: the push / fold models {pf_names:?} come all or none"));
     } else {
         None
     };
@@ -440,9 +458,35 @@ pub fn load_dir(dir: &Path) -> Result<Models, String> {
             Some(parse_tables(&v).map_err(|e| at("fold_tables", e))?)
         }
         (None, None) => None,
-        (Some(_), Some(_)) => return Err(format!("{}: fold_tables.json next to discard_F.json (the fold model's tables are used)", dir.display())),
+        (Some(_), Some(_)) => return Err(format!("{label}: fold_tables.json next to discard_F.json (the fold model's tables are used)")),
     };
-    Ok(Models { discard12, discard3, tenpai, riichi, call, kan, fold, tables, pf })
+    Ok(Models { discard12, discard3, tenpai, riichi, call, kan, discard_split, fold, tables, pf })
+}
+
+/// The features set of the built-in A1 sets (`suzume::a1::BUILTIN`), `params/suzume/features/`: the six push
+/// models of `legacy-suzume-mlp3` (`params/legacy/hand/flat_mlp3/`, copied) and the A1 sets' fold tables
+/// (`fold_tables.json`), laid out as a `load_dir` set without a fold model. A1 builds its rows (and the kan rows'
+/// first choice) with it. It is a directory-like set (`ModelSet::Dir`) named `suzume-features`, made on first use;
+/// no player name gives it.
+pub fn features_set() -> ModelSet {
+    const FILES: [(&str, &str); 7] = [
+        ("discard_P_12", include_str!("../../../params/suzume/features/discard_P_12.json")),
+        ("discard_P_3", include_str!("../../../params/suzume/features/discard_P_3.json")),
+        ("discard_P_t", include_str!("../../../params/suzume/features/discard_P_t.json")),
+        ("riichi_P", include_str!("../../../params/suzume/features/riichi_P.json")),
+        ("call_P", include_str!("../../../params/suzume/features/call_P.json")),
+        ("kan", include_str!("../../../params/suzume/features/kan.json")),
+        ("fold_tables", include_str!("../../../params/suzume/features/fold_tables.json")),
+    ];
+    static S: OnceLock<ModelSet> = OnceLock::new();
+    *S.get_or_init(|| {
+        let read = |name: &str| Ok(FILES.iter().find(|(n, _)| *n == name).map(|(_, t)| t.to_string()));
+        let models = load_with(read, "params/suzume/features").unwrap_or_else(|e| panic!("{e}"));
+        let mut sets = dir_sets().lock().expect("dir sets");
+        let n = u16::try_from(sets.len()).expect("too many directory model sets");
+        sets.push(("suzume-features", Box::leak(Box::new(models))));
+        ModelSet::Dir(n)
+    })
 }
 
 /// The parsed models of set `s`.
@@ -464,26 +508,26 @@ pub fn params() -> &'static Params {
 }
 
 /// Each of `inputs` as its index in `names`.
-fn positions<S: AsRef<str>>(inputs: &[String], names: &[S]) -> Result<Vec<usize>, String> {
+pub(crate) fn positions<S: AsRef<str>>(inputs: &[String], names: &[S]) -> Result<Vec<usize>, String> {
     inputs
         .iter()
         .map(|n| names.iter().position(|x| x.as_ref() == n).ok_or_else(|| format!("no input column {n}")))
         .collect()
 }
 
-fn get<'a>(v: &'a Value, path: &[&str]) -> Result<&'a Value, String> {
+pub(crate) fn get<'a>(v: &'a Value, path: &[&str]) -> Result<&'a Value, String> {
     path.iter().try_fold(v, |v, k| v.get(*k).ok_or_else(|| format!("missing key {}", path.join("."))))
 }
 
-fn num(v: &Value, path: &[&str]) -> Result<f64, String> {
+pub(crate) fn num(v: &Value, path: &[&str]) -> Result<f64, String> {
     get(v, path)?.as_f64().ok_or_else(|| format!("{} is not a number", path.join(".")))
 }
 
-fn nums(v: &Value, path: &[&str]) -> Result<Vec<f64>, String> {
+pub(crate) fn nums(v: &Value, path: &[&str]) -> Result<Vec<f64>, String> {
     vector(get(v, path)?, &path.join("."))
 }
 
-fn strs(v: &Value, path: &[&str]) -> Result<Vec<String>, String> {
+pub(crate) fn strs(v: &Value, path: &[&str]) -> Result<Vec<String>, String> {
     get(v, path)?
         .as_array()
         .ok_or_else(|| format!("{} is not a list", path.join(".")))?
@@ -685,7 +729,7 @@ mod tests {
         for s in ModelSet::ALL {
             assert_eq!(ModelSet::from_name(s.name()), Some(s));
         }
-        assert_eq!(ModelSet::from_name("suzume"), Some(ModelSet::Mlp3));
+        assert_eq!(ModelSet::from_name("suzume"), None);
         assert_eq!(ModelSet::from_name("suzume-flat"), None);
     }
 

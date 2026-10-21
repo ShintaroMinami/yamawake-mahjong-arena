@@ -22,6 +22,6 @@ def test_cli_runs_a_2v2_and_writes_its_outputs(tmp_path, capsys):
 
 
 def test_cli_seats_suzume_with_an_option(capsys):
-    main(["--mode", "1v3", "--players", "suzume-mlp1", "tsumogiri", "--walls", "1", "--opt", "kan=0"])
+    main(["--mode", "1v3", "--players", "legacy-suzume-mlp1", "tsumogiri", "--walls", "1", "--opt", "kan=0"])
     out = capsys.readouterr().out
-    assert "suzume-mlp1" in out and "tsumogiri" in out
+    assert "legacy-suzume-mlp1" in out and "tsumogiri" in out

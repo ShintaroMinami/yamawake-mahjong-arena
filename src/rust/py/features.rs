@@ -86,6 +86,8 @@ fn universal_dict<'py>(py: Python<'py>, u: &Universal, view: &MjView) -> PyResul
     out.set_item("state", u.state.clone())?;
     out.set_item("context", context_dict(py, &u.context, view)?)?;
     out.set_item("sit", pf::situation(view).to_vec())?;
+    // own minus each other seat's score / 25000, from the shimocha (the A1 `seat:score_diff` columns)
+    out.set_item("score_diff", crate::suzume::a1::score_diffs(view).to_vec())?;
     Ok(out)
 }
 

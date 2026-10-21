@@ -161,6 +161,14 @@ impl GameSlot {
     }
 }
 
+impl GameSlot {
+    /// Decide one A1 bot in-loop (`suzume::a1::decide` with the seat's kyoku memo).
+    pub fn a1_action(&mut self, seat: u8, a1: &crate::suzume::a1::A1Config) -> Result<Action, String> {
+        let obs = self.state.get_observation(seat);
+        crate::suzume::a1::decide(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])
+    }
+}
+
 /// The tsumogiri bot's move: discard the drawn tile, else pass, else the
 /// first legal action (as the Python `PythonTsumogiriAgent`).
 pub fn tsumogiri(obs: &riichienv_core::observation::Observation) -> Result<Action, String> {
@@ -191,6 +199,8 @@ pub enum Bot {
     Rulebot(RulebotConfig),
     Suzume(SuzumeConfig),
     Tsumogiri,
+    /// A1 (`suzume::a1`), a research bot timed against suzume.
+    A1(crate::suzume::a1::A1Config),
 }
 
 /// One collect() tick's rows, in pending/apply order.
@@ -267,6 +277,7 @@ impl LockstepLoop {
                             Some((_, Bot::Rulebot(cfg))) => slot.rulebot_action(seat, cfg)?,
                             Some((_, Bot::Suzume(cfg))) => slot.suzume_action(seat, cfg)?,
                             Some((_, Bot::Tsumogiri)) => slot.tsumogiri_action(seat)?,
+                            Some((_, Bot::A1(a1))) => slot.a1_action(seat, a1)?,
                             None => {
                                 external.push(seat);
                                 continue;

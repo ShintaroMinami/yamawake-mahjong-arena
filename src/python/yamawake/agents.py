@@ -7,8 +7,13 @@ business. Two lanes exist, and an agent declares which one it wants:
                        the agent gets the situation and returns a move
     LANE_RULEBOT       decided inside Rust (`config` is the knob dict);
                        nothing reaches Python
-    LANE_SUZUME       the same for suzume (`config` is its option dict)
+    LANE_SUZUME       the same for the legacy suzume sets (`config` is its
+                       option dict)
     LANE_TSUMOGIRI     the same for the tsumogiri bot (no options)
+    LANE_A1            the same for suzume's A1 sets (`config`: {"a1": a
+                       built-in set's name}, or {"a1": a model directory, the
+                       rest the suzume config of its features set} as
+                       suzume-train plays its fits)
 
 One call per tick, never one per decision: every game in flight waiting on this
 agent arrives in one list, which is what lets a model batch its forward.
@@ -19,9 +24,10 @@ An observation agent may also carry the two context hooks of `context.py`:
 
 Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
 same moves through the observation lane), `rulebot`, `rulebot:kobalab`,
-`suzume[:KEY=VALUE[:KEY=VALUE...]]` (e.g. `suzume:call=0`; `suzume` is
-`suzume-mlp3`, and `suzume-mlp3-flat`, `suzume-mlp3-avoid4`, `suzume-mlp1`
-and `suzume-mlp1-flat` are the other model sets, `MODEL_SETS`), plus
+`suzume` (the default set) and `suzume-rla225` (`SUZUME_SETS`, no options),
+the legacy sets `legacy-suzume-mlp3[:KEY=VALUE[:KEY=VALUE...]]` (e.g.
+`legacy-suzume-mlp3:call=0`; also `legacy-suzume-mlp3-flat`, `legacy-suzume-mlp3-avoid4`,
+`legacy-suzume-mlp1`, `legacy-suzume-mlp1-flat`, `LEGACY_SETS`), plus
 whatever other packages register -- by name (`register_agent`), by a resolver
 for open-ended specs such as checkpoint paths (`register_resolver`), or through
 the `yamawake.agents` entry-point group, whose callables are run once (with no
@@ -35,15 +41,16 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import riichienv as rv
 
-from yamawake._core import suzume_model_sets
+from yamawake._core import a1_model_sets, suzume_model_sets
 from yamawake.context import Decision
 
 LANE_OBSERVATION = "observation"
 LANE_RULEBOT = "rulebot"
 LANE_SUZUME = "suzume"
 LANE_TSUMOGIRI = "tsumogiri"
+LANE_A1 = "a1"
 #: The lanes decided inside the Rust loop.
-IN_LOOP_LANES = (LANE_RULEBOT, LANE_SUZUME, LANE_TSUMOGIRI)
+IN_LOOP_LANES = (LANE_RULEBOT, LANE_SUZUME, LANE_TSUMOGIRI, LANE_A1)
 
 
 @runtime_checkable
@@ -115,32 +122,43 @@ class RulebotAgent:
         return {"kind": "rulebot", "name": self.name}
 
 
-#: The suzume model sets, each its own player name (`src/rust/suzume/params.rs`,
-#: `ModelSet`: a hand model set from `params/hand/` and a state model from
-#: `params/state/`); `suzume` is the default set, `suzume-mlp3`.
-MODEL_SETS = ("suzume", *suzume_model_sets())
+#: The suzume sets, each its own player name: A1 sets (`src/rust/suzume/a1.rs`,
+#: `BUILTIN`, `params/suzume/`), the default `suzume` first; they take no options.
+SUZUME_SETS = tuple(a1_model_sets())
+#: The legacy suzume sets until 2026-10-21 (`src/rust/suzume/params.rs`,
+#: `ModelSet`: a hand model set from `params/legacy/hand/` and a state model
+#: from `params/legacy/state/`); they take the suzume options.
+LEGACY_SETS = tuple(suzume_model_sets())
+MODEL_SETS = (*SUZUME_SETS, *LEGACY_SETS)
 
 
 class SuzumeAgent:
-    """The suzume bot (`src/rust/suzume/`): decided inside the Rust loop."""
+    """The suzume bot (`src/rust/suzume/`): decided inside the Rust loop.
 
-    lane = LANE_SUZUME
+    A set of `SUZUME_SETS` plays on the A1 lane (`config` `{"a1": <set>}`), a
+    legacy set (`LEGACY_SETS`, or `dir:<path>`) on the suzume lane.
+    """
 
     def __init__(self, config: dict | None = None, name: str = "suzume", models: str = "suzume") -> None:
-        """Args: config: option dict (`yamawake.suzume` lists them; an unknown
-        knob raises ValueError here); name: its label; models: the model set
-        (`MODEL_SETS`), or `dir:<path>` for a set read from a directory (for
-        fitting new models; `src/rust/suzume/params.rs`, `load_dir`)."""
+        """Args: config: option dict, legacy sets only (`yamawake.suzume` lists
+        them; an unknown knob raises ValueError here); name: its label;
+        models: the model set (`MODEL_SETS`), or `dir:<path>` for a legacy-layout
+        set read from a directory (for fitting new models;
+        `src/rust/suzume/params.rs`, `load_dir`)."""
         from yamawake._core import suzume_config
         if models not in MODEL_SETS and not models.startswith("dir:"):
             raise ValueError(f"unknown suzume model set {models!r} (sets: {', '.join(MODEL_SETS)})")
         if "models" in (config or {}):
             raise ValueError("the model set is picked by the player name, not an option")
-        self.config = dict(config or {})
-        if models != "suzume":
-            self.config["models"] = models
-        suzume_config(self.config)
         self.name = name
+        if models in SUZUME_SETS:
+            if config:
+                raise ValueError(f"{models} takes no options (got {', '.join(config)}); the legacy sets do")
+            self.lane, self.config = LANE_A1, {"a1": models}
+            return
+        self.lane = LANE_SUZUME
+        self.config = {**(config or {}), "models": models}
+        suzume_config(self.config)
 
     def describe(self) -> dict:
         """`{"kind": "suzume", "name": <name>, "config": <options>}`."""
@@ -223,7 +241,7 @@ def decide(spec: str, obs_b64: str, kyoku_events: list, debug: bool = False) -> 
 
     Args:
         spec: A rulebot or suzume player spec (`build_agent`), e.g. `rulebot`
-            or `suzume-mlp1:call=0`.
+            or `legacy-suzume-mlp1:call=0`.
         obs_b64: The seat's riichienv `Observation`, `serialize_to_base64()`.
         kyoku_events: The kyoku's mjai events so far, from its `start_kyoku`
             (JSON lines or dicts; `Decision.kyoku_events` is one).
@@ -231,7 +249,7 @@ def decide(spec: str, obs_b64: str, kyoku_events: list, debug: bool = False) -> 
 
     Returns:
         `{"action": (action_type, tile, consume_tiles)}`, plus `rule` (the
-        deciding suzume rule) or, with `debug`, `debug` (rulebot). A suzume
+        deciding suzume rule; `a1` for a set of `SUZUME_SETS`) or, with `debug`, `debug` (rulebot). A suzume
         bot starts from an empty kyoku memo (no push / fold state carried
         from its earlier decisions).
 

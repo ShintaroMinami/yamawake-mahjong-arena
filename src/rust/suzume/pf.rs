@@ -1,5 +1,5 @@
 //! Push / fold (`pf=1`; design: docs/suzume.md, "押し引き"): at each own-turn
-//! discard decision out of riichi, the state model (`params/state/<state>.json`,
+//! discard decision out of riichi, the state model (`params/legacy/state/<state>.json`,
 //! fitted to the pf_hmm posteriors of the
 //! teacher's decisions in the hanchan games) predicts the push (P), mawashi
 //! (M) or fold (F) state from the fold model's features against every other

@@ -32,14 +32,14 @@ class SuzumePlayer:
     """One seat of suzume, fed observations and the kyoku's mjai events."""
 
     def __init__(self, spec: str = "suzume") -> None:
-        """Args: spec: a suzume player spec, e.g. `suzume-mlp1:call=0`.
+        """Args: spec: a suzume player spec, e.g. `suzume` or `legacy-suzume-mlp1:call=0`.
 
         Raises:
             ValueError: The spec is not a suzume bot.
         """
         from yamawake._core import SuzumeSeat
         agent = build_agent(spec)
-        if getattr(agent, "lane", None) != "suzume":
+        if getattr(agent, "lane", None) not in ("suzume", "a1"):
             raise ValueError(f"{spec!r} is not a suzume bot")
         self.name = agent.name
         self.config = dict(agent.config)
@@ -56,7 +56,7 @@ class SuzumePlayer:
 
         Returns:
             One of `obs.legal_actions()`; `last_rule` names the suzume rule
-            that chose it.
+            that chose it (`a1` for a set of `SUZUME_SETS`).
         """
         lines = [e if isinstance(e, str) else json.dumps(e) for e in kyoku_events]
         t, tile, consume, self.last_rule = self._seat.decide(obs.serialize_to_base64(), lines)

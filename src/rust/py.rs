@@ -262,8 +262,9 @@ fn bot_from(kind: &str, config: &Bound<'_, PyDict>) -> PyResult<crate::arena::Bo
         "rulebot" => Ok(crate::arena::Bot::Rulebot(rulebot_config_from(config)?)),
         "suzume" => Ok(crate::arena::Bot::Suzume(suzume_config_from(config)?)),
         "tsumogiri" => Ok(crate::arena::Bot::Tsumogiri),
+        "a1" => Ok(crate::arena::Bot::A1(a1_config_from(config)?)),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "no in-loop bot {kind:?} (rulebot, suzume, tsumogiri)"
+            "no in-loop bot {kind:?} (rulebot, suzume, tsumogiri, a1)"
         ))),
     }
 }
@@ -283,6 +284,26 @@ fn rulebot_config_from(overrides: &Bound<'_, PyDict>) -> PyResult<crate::rulebot
     Ok(cfg)
 }
 
+/// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`, nothing else), or
+/// {"a1": <A1 model directory>, the rest: the suzume config of its features set}.
+fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1Config> {
+    use pyo3::exceptions::{PyKeyError, PyValueError};
+    let rest = config.copy()?;
+    let a1: String = rest
+        .get_item("a1")?
+        .ok_or_else(|| PyKeyError::new_err("an a1 bot needs \"a1\": <built-in set or model directory>"))?
+        .extract()?;
+    rest.del_item("a1")?;
+    if let Some(c) = crate::suzume::a1::A1Config::builtin(&a1) {
+        if !rest.is_empty() {
+            return Err(PyValueError::new_err(format!("{a1} takes no options")));
+        }
+        return Ok(c);
+    }
+    let models = crate::suzume::a1::A1Models::load(&a1).map_err(PyValueError::new_err)?;
+    Ok(crate::suzume::a1::A1Config { cfg: suzume_config_from(&rest)?, models })
+}
+
 /// An suzume config from an option dict (each value read as its string
 /// form, as `SuzumeConfig::set` takes it).
 fn suzume_config_from(knobs: &Bound<'_, PyDict>) -> PyResult<crate::suzume::SuzumeConfig> {
@@ -294,11 +315,16 @@ fn suzume_config_from(knobs: &Bound<'_, PyDict>) -> PyResult<crate::suzume::Suzu
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// The suzume model sets' player names (`suzume::params::ModelSet`), the
-/// default first; `suzume` also names the default.
+/// The legacy suzume model sets' player names (`suzume::params::ModelSet`).
 #[pyfunction]
 fn suzume_model_sets() -> Vec<&'static str> {
     crate::suzume::params::ModelSet::ALL.iter().map(|s| s.name()).collect()
+}
+
+/// The built-in A1 sets' player names (`suzume::a1::BUILTIN`), the default `suzume` first.
+#[pyfunction]
+fn a1_model_sets() -> Vec<&'static str> {
+    crate::suzume::a1::BUILTIN.iter().map(|b| b.name).collect()
 }
 
 /// Every suzume rule in registry order, as dicts: name, mode, decision,
@@ -342,8 +368,8 @@ fn suzume_config<'py>(py: Python<'py>, knobs: &Bound<'py, PyDict>) -> PyResult<B
 /// from an empty kyoku memo (`SuzumeSeat` keeps one).
 ///
 /// Returns {"action": (action_type, tile, consume_tiles)}, plus "rule" (the
-/// deciding suzume rule) or, with `debug`, "debug" (the rulebot's branch
-/// inputs).
+/// deciding suzume rule; `a1` for an A1 bot) or, with `debug`, "debug" (the
+/// rulebot's branch inputs).
 #[pyfunction]
 #[pyo3(signature = (kind, config, obs_b64, kyoku_events, debug=false))]
 fn decide_one<'py>(
@@ -372,16 +398,20 @@ fn decide_one<'py>(
                 Bot::Suzume(cfg) => {
                     let mut memo = crate::suzume::SeatMemo::default();
                     let (a, r) = crate::suzume::decide_observation(&obs, &events, cfg, &mut memo)?;
-                    Ok((a, Some(r), None))
+                    Ok((a, Some(crate::suzume::decider_name(r)), None))
                 }
                 Bot::Tsumogiri => Ok((crate::arena::tsumogiri(&obs)?, None, None)),
+                Bot::A1(a1) => {
+                    let mut memo = crate::suzume::SeatMemo::default();
+                    Ok((crate::suzume::a1::decide(&obs, &events, a1, &mut memo)?, Some("a1"), None))
+                }
             }
         })
         .map_err(PyValueError::new_err)?;
     let out = PyDict::new_bound(py);
     out.set_item("action", (action.action_type as u8, action.tile, action.consume_tiles.clone()))?;
     if let Some(r) = rule {
-        out.set_item("rule", crate::suzume::decider_name(r))?;
+        out.set_item("rule", r)?;
     }
     if let Some(d) = dbg {
         out.set_item("debug", d)?;
@@ -425,6 +455,8 @@ fn observation_with_wall(
 #[pyclass(module = "yamawake._core")]
 struct SuzumeSeat {
     cfg: crate::suzume::SuzumeConfig,
+    /// An A1 bot (a config with `"a1"`, `a1_config_from`): it decides instead of `cfg`.
+    a1: Option<crate::suzume::a1::A1Config>,
     memo: crate::suzume::SeatMemo,
     kyoku: Option<String>,
 }
@@ -433,7 +465,11 @@ struct SuzumeSeat {
 impl SuzumeSeat {
     #[new]
     fn new(config: &Bound<'_, PyDict>) -> PyResult<Self> {
-        Ok(Self { cfg: suzume_config_from(config)?, memo: Default::default(), kyoku: None })
+        if config.contains("a1")? {
+            let a1 = a1_config_from(config)?;
+            return Ok(Self { cfg: a1.cfg, a1: Some(a1), memo: Default::default(), kyoku: None });
+        }
+        Ok(Self { cfg: suzume_config_from(config)?, a1: None, memo: Default::default(), kyoku: None })
     }
 
     /// `(action_type, tile, consume_tiles, rule)` for the seat's observation
@@ -449,7 +485,7 @@ impl SuzumeSeat {
             self.memo.clear();
             self.kyoku = start;
         }
-        let (cfg, memo) = (&self.cfg, &mut self.memo);
+        let (cfg, a1, memo) = (&self.cfg, &self.a1, &mut self.memo);
         let (action, rule) = py
             .allow_threads(|| -> Result<_, String> {
                 let events: Vec<serde_json::Value> = kyoku_events
@@ -457,10 +493,14 @@ impl SuzumeSeat {
                     .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
                     .collect::<Result<_, _>>()?;
                 let obs = observation_with_wall(&obs_b64, &events)?;
-                crate::suzume::decide_observation(&obs, &events, cfg, memo)
+                match a1 {
+                    Some(a1) => Ok((crate::suzume::a1::decide(&obs, &events, a1, memo)?, "a1")),
+                    None => crate::suzume::decide_observation(&obs, &events, cfg, memo)
+                        .map(|(a, r)| (a, crate::suzume::decider_name(r))),
+                }
             })
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
-        Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), crate::suzume::decider_name(rule)))
+        Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), rule))
     }
 
     /// Forget the kyoku memo (the next decision starts a fresh kyoku).
@@ -476,6 +516,7 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_sp, m)?)?;
     m.add_function(wrap_pyfunction!(suzume_rules, m)?)?;
     m.add_function(wrap_pyfunction!(suzume_model_sets, m)?)?;
+    m.add_function(wrap_pyfunction!(a1_model_sets, m)?)?;
     m.add_function(wrap_pyfunction!(suzume_config, m)?)?;
     m.add_function(wrap_pyfunction!(decide_one, m)?)?;
     m.add_class::<SelfPlayLoop>()?;

@@ -12,13 +12,13 @@ def test_decide_answers_a_position_with_a_legal_action():
     """A suzume bot answers a live observation with a legal action and its rule."""
     loop = SelfPlayLoop([7], 0, [[]], split_wall=False)
     batch = loop.collect()
-    rules = {r["name"] for r in suzume_rules()} | {"fallback"}
+    rules = {r["name"] for r in suzume_rules()} | {"fallback", "a1"}
     for b64 in batch["obs"]:
         obs = rv.Observation.deserialize_from_base64(b64)
         tr = SeatTracker()
         tr.feed(obs.new_events())
         legal = {(int(a.action_type), a.tile, tuple(a.consume_tiles)) for a in obs.legal_actions()}
-        for spec in ("suzume", "suzume-mlp1:call=0"):
+        for spec in ("suzume", "legacy-suzume-mlp1:call=0"):
             d = decide(spec, b64, tr.events)
             action_type, tile, consume = d["action"]
             assert (action_type, tile, tuple(consume)) in legal and d["rule"] in rules

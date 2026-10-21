@@ -28,7 +28,7 @@
 //!   seat's best after-discard shanten.
 //!
 //! Scores are `w2 . relu(W1 (x - mean) / std + b1) + b2`
-//! (`params/hand/<hand>/discard_F.json`); each tile type's scores against
+//! (`params/legacy/hand/<hand>/discard_F.json`); each tile type's scores against
 //! every other seat are combined by their soft minimum (`FoldMlp::combine`).
 //! The highest-scoring legal type is discarded (the lower type on a tie),
 //! the plain copy before a red five.

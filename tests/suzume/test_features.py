@@ -16,15 +16,15 @@ from yamawake.agents import LANE_OBSERVATION
 from yamawake.external import SuzumePlayer
 
 ROOT = Path(__file__).resolve().parents[2]
-HAND = ROOT / "params" / "hand" / "flat_mlp3"
+HAND = ROOT / "params" / "legacy" / "hand" / "flat_mlp3"
 PUSH = ["discard_P_12", "discard_P_3", "discard_P_t", "riichi_P", "call_P", "kan"]
 TABLE_KEYS = ["wait_table", "pattern_edges", "turn_edges", "turn_cap", "last_ago_cap", "early_discards"]
 
 
 def _full_set(d: Path) -> Path:
-    """The default set (`suzume`: hand flat_mlp3, state normal_mlp3) as a directory."""
+    """The legacy set `legacy-suzume-mlp3` (hand flat_mlp3, state normal_mlp3) as a directory."""
     shutil.copytree(HAND, d)
-    shutil.copy(ROOT / "params" / "state" / "normal_mlp3.json", d / "state.json")
+    shutil.copy(ROOT / "params" / "legacy" / "state" / "normal_mlp3.json", d / "state.json")
     return d
 
 
@@ -45,9 +45,9 @@ def _logs(tmp_path: Path, name: str, agent) -> list[bytes]:
     return [gzip.decompress(p.read_bytes()) for p in sorted(out.glob("arena-*.json.gz"))]
 
 
-def test_a_directory_copy_of_the_default_set_plays_the_same_games(tmp_path):
+def test_a_directory_copy_of_suzume_mlp3_plays_the_same_games(tmp_path):
     d = _full_set(tmp_path / "full")
-    assert _logs(tmp_path, "dir", SuzumeAgent(models=f"dir:{d}")) == _logs(tmp_path, "builtin", SuzumeAgent())
+    assert _logs(tmp_path, "dir", SuzumeAgent(models=f"dir:{d}")) == _logs(tmp_path, "builtin", SuzumeAgent(models="legacy-suzume-mlp3"))
 
 
 def test_a_push_only_set_plays_only_without_push_fold_and_fold(tmp_path):
@@ -57,7 +57,7 @@ def test_a_push_only_set_plays_only_without_push_fold_and_fold(tmp_path):
     with pytest.raises(ValueError, match="fold=0"):
         suzume_config({"models": f"dir:{d}", "pf": 0})
     agent = SuzumeAgent({"pf": 0, "fold": 0}, models=f"dir:{d}")
-    assert _logs(tmp_path, "dir", agent) == _logs(tmp_path, "builtin", SuzumeAgent({"pf": 0, "fold": 0}))
+    assert _logs(tmp_path, "dir", agent) == _logs(tmp_path, "builtin", SuzumeAgent({"pf": 0, "fold": 0}, models="legacy-suzume-mlp3"))
 
 
 def test_a_bad_directory_set_is_an_error(tmp_path):
@@ -85,7 +85,7 @@ class _Checker:
         self.spec = {"pf": 0, "fold": 0, "models": models}
         self.players: dict = {}
         self.features = SuzumeFeatures(self.spec)
-        self.full = SuzumeFeatures({"models": "suzume"})
+        self.full = SuzumeFeatures({"models": "legacy-suzume-mlp3"})
         self.checked = {"universal_mlp": 0, "fold": 0, "kan": 0}
 
     def act_batch(self, decisions):
@@ -93,7 +93,7 @@ class _Checker:
         for d in decisions:
             key = (d.game, d.seat)
             if key not in self.players:
-                self.players[key] = SuzumePlayer("suzume:pf=0:fold=0")
+                self.players[key] = SuzumePlayer("legacy-suzume-mlp3:pf=0:fold=0")
             lines = [json.dumps(e) for e in d.kyoku_events]
             a = self.players[key].act(d.obs, d.kyoku_events)
             obs = d.obs.serialize_to_base64()
@@ -142,7 +142,7 @@ def test_fold_tables_give_the_fold_models_features(tmp_path):
     features as the full set (same push models, same tables)."""
     d = _push_set(tmp_path / "push", tables=True)
     a = SuzumeFeatures({"models": f"dir:{d}", "pf": 0, "fold": 0})
-    b = SuzumeFeatures({"models": "suzume-mlp3-flat"})
+    b = SuzumeFeatures({"models": "legacy-suzume-mlp3-flat"})
     seen = []
 
     class Grab:
@@ -154,7 +154,7 @@ def test_fold_tables_give_the_fold_models_features(tmp_path):
         def act_batch(self, decisions):
             out = []
             for dd in decisions:
-                p = self.player.setdefault((dd.game, dd.seat), SuzumePlayer("suzume"))
+                p = self.player.setdefault((dd.game, dd.seat), SuzumePlayer("legacy-suzume-mlp3"))
                 lines = [json.dumps(e) for e in dd.kyoku_events]
                 obs = dd.obs.serialize_to_base64()
                 fa, fb = a.fold_features(obs, lines), b.fold_features(obs, lines)
@@ -190,7 +190,7 @@ def test_a_hypothetical_riichi_matches_a_real_one_just_declared(tmp_path):
         def act_batch(self, decisions):
             out = []
             for dd in decisions:
-                p = self.player.setdefault((dd.game, dd.seat), SuzumePlayer("suzume"))
+                p = self.player.setdefault((dd.game, dd.seat), SuzumePlayer("legacy-suzume-mlp3"))
                 ev = dd.kyoku_events
                 dahai = [i for i, e in enumerate(ev) if e["type"] == "dahai"]
                 reach = [e for e in ev if e["type"] == "reach"]
@@ -219,3 +219,18 @@ def test_a_hypothetical_riichi_matches_a_real_one_just_declared(tmp_path):
     g = Grab()
     run_match([g, RulebotAgent(), g, RulebotAgent()], walls=8, flight=8)
     assert len(checked) >= 5
+
+
+def test_a_split_discard_p_12_is_read_both_or_none(tmp_path):
+    same = _full_set(tmp_path / "same")
+    for k in (1, 2):                                      # both halves = discard_P_12: the same games
+        shutil.copy(same / "discard_P_12.json", same / f"discard_P_{k}.json")
+    assert _logs(tmp_path, "same", SuzumeAgent(models=f"dir:{same}")) == _logs(tmp_path, "builtin", SuzumeAgent(models="legacy-suzume-mlp3"))
+    other = _full_set(tmp_path / "other")                 # a different 2-shanten model: the split is played
+    shutil.copy(other / "discard_P_12.json", other / "discard_P_1.json")
+    shutil.copy(other / "discard_P_3.json", other / "discard_P_2.json")
+    assert _logs(tmp_path, "other", SuzumeAgent(models=f"dir:{other}")) != _logs(tmp_path, "builtin2", SuzumeAgent(models="legacy-suzume-mlp3"))
+    one = _full_set(tmp_path / "one")
+    shutil.copy(one / "discard_P_12.json", one / "discard_P_1.json")
+    with pytest.raises(ValueError, match="both or none"):
+        suzume_config({"models": f"dir:{one}"})

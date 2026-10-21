@@ -26,7 +26,7 @@ static PF_DISCARD: RuleInfo = RuleInfo {
     mode: Mode::Fold,
     decision: DecisionKind::Discard,
     description: "pf=1: predict the push / mawashi / fold state; in M or F discard by the mawashi or fold model \
-                  (params/state, params/hand discard_M / discard_F)",
+                  (params/legacy/state, params/legacy/hand discard_M / discard_F)",
 };
 
 impl Rule for PfDiscard {
@@ -62,7 +62,7 @@ impl Rule for PfDiscard {
 
 /// Betaori: with another seat in riichi, no own riichi and the best
 /// after-discard shanten at least `fold_shanten`, discard what the fold
-/// model (`fold_model`, `params/hand/<hand>/discard_F.json`) scores highest: each
+/// model (`fold_model`, `params/legacy/hand/<hand>/discard_F.json`) scores highest: each
 /// tile type's scores against every other seat combined by their soft
 /// minimum (`FoldMlp::combine`), the lower type on a tie, the plain copy
 /// before the red five.
@@ -72,7 +72,7 @@ static FOLD_DISCARD: RuleInfo = RuleInfo {
     name: "fold_discard",
     mode: Mode::Fold,
     decision: DecisionKind::Discard,
-    description: "fold=1 (not with pf=1): betaori against a riichi from fold_shanten out (the fold MLP, params/hand discard_F)",
+    description: "fold=1 (not with pf=1): betaori against a riichi from fold_shanten out (the fold MLP, params/legacy/hand discard_F)",
 };
 
 impl Rule for FoldDiscard {

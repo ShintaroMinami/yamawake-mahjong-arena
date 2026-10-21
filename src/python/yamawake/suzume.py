@@ -3,9 +3,10 @@ universal features, fitted to a reinforcement-learned teacher.
 
     python -m yamawake.suzume list        # every rule, in evaluation order
 
-Seat it with `agents.SuzumeAgent(config)` or the player spec
-`suzume[:KEY=VALUE...]`. Options (`KNOBS`; everything else is fixed with the
-models):
+Seat it with `agents.SuzumeAgent()` or the player spec `suzume` (also
+`suzume-rla225`; `agents.SUZUME_SETS`): these sets take no options. The legacy
+sets (`legacy-suzume-mlp3[:KEY=VALUE...]` and the others of `agents.LEGACY_SETS`)
+take these options (`KNOBS`; everything else is fixed with the models):
 
     kan            0/1 (default 1): make kans when the kan MLP prefers them
     call           0/1 (default 1): chi and pon when the call MLP prefers them
@@ -16,7 +17,7 @@ models):
     pf             0/1 (default 1): push / fold by the predicted push / mawashi /
                    fold state (replaces `fold`)
 
-e.g. `--players suzume:call=0 rulebot`.
+e.g. `--players legacy-suzume-mlp3:call=0 rulebot`.
 """
 
 from __future__ import annotations
