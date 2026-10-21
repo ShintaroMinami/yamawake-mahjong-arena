@@ -29,14 +29,14 @@ only from the players' choices.
   parallel (see [`docs/arena.md`](docs/arena.md)).
 - **rulebot**: a fast rule-based bot, useful as a baseline (see
   [`docs/rulebot.md`](docs/rulebot.md)).
-- **suzume**: a distilled model of a reinforcement-learned mahjong AI; a light
-  bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
+- **suzume**: a distilled model of a reinforcement-learned mahjong AI
+  (Mortal-S42); a light bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
 
 On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
 515 hanchan/min with four rulebots and
-about 163 hanchan/min with four suzume bots.
-For reference, a Mac (Apple M4 Pro) does about 1,120 (rulebot) and 400
-(suzume) hanchan/min on one thread, and about 10,000 and 3,500 hanchan/min on
+about 170 hanchan/min with four suzume bots.
+For reference, a Mac (Apple M4 Pro) does about 1,200 (rulebot) and 400
+(suzume) hanchan/min on one thread, and about 10,000 and 3,700 hanchan/min on
 all its threads (14 cores).
 A Python player pays about 55 µs per decision (on the same EPYC CPU) to pass
 the observation back and forth, about twice the arena's own time per decision
@@ -54,10 +54,12 @@ decision (a discard or a call) and the hanchan it plays per minute.
 <img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
 
 - suzume is slightly weaker than the group of third-party trained mortal-v4
-  models.
-- suzume was trained with RLActor-225 (unpublished) as its teacher; that
-  teacher is slightly stronger than the retrained Mortal models.
-- It runs about 10 times as fast as TanyaoDojo and about 25 times as fast as
+  models and TanyaoDojo.
+- suzume was trained with mortal-S42 as its teacher; it trails its teacher by
+  about 0.03 in average rank.
+- suzume-rla225 was trained the same way with RLActor-225 (unpublished) as its
+  teacher; it is about as strong as suzume.
+- It runs about 10 times as fast as TanyaoDojo and about 30 times as fast as
   mortal-v4.
 
 Sources of the models compared:
@@ -70,6 +72,7 @@ Sources of the models compared:
 | TanyaoDojo | `bc_v2_g186.pkl` from [Twu31/TanyaoDojo](https://huggingface.co/Twu31/TanyaoDojo) (code: [twu3202/TanyaoDojo](https://github.com/twu3202/TanyaoDojo)) |
 | 電脳麻将 (Majiang) | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0, run by [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 |
 | mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go) (a Go port of [gimite/mjai-manue](https://github.com/gimite/mjai-manue)) |
+| windshadow-sl | [windshadow233/Mahjong-AI](https://github.com/windshadow233/Mahjong-AI) (a reimplementation of the supervised stage of Suphx) |
 | rulebot | this repository ([`docs/rulebot.md`](docs/rulebot.md)) |
 | RLActor-225 | unpublished |
 
@@ -120,11 +123,8 @@ From Python:
 |---|---|
 | `tsumogiri` | a bot that discards every draw |
 | `rulebot` | the fast rule-based bot |
-| `suzume` (= `suzume-mlp3`), `suzume-mlp3-flat`, `suzume-mlp3-avoid4` | light, reasonably strong bots (3-layer MLPs) |
-| `suzume-mlp1`, `suzume-mlp1-flat` | lighter bots, slightly weaker (1-layer MLPs) |
-
-> **Note:** `flat` models were trained on East 1 games only; `avoid4` was
-> trained under a rule that weighs avoiding last place.
+| `suzume` | a light, reasonably strong bot (per-decision 3-layer MLPs taught by Mortal-S42) |
+| `suzume-rla225` | the same build as `suzume`, taught by RLActor-225 (unpublished) |
 
 ## Playing your own agent
 

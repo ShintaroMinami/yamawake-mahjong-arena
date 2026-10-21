@@ -28,7 +28,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--mode 1v3\|2v2` | 2 人を `[A, B, B, B]` か `[A, B, A, B]` に並べる |
 | `--walls N` | 牌山の数（既定は標準牌山の先頭 1,000） |
 | `--wall-base fresh\|Integer` | `fresh` で新しい牌山を引く。値を渡すとその牌山を再現する |
-| `--opt KEY=VALUE` | プレイヤーに渡すオプション（suzume のオプションなど） |
+| `--opt KEY=VALUE` | プレイヤーに渡すオプション（rulebot の設定など） |
 | `--single-kyoku` | 全対局を東 1 局だけにする（下記） |
 | `--out FILE` | 結果の集計を jsonl に追記する |
 | `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
@@ -56,13 +56,13 @@ from yamawake import RulebotAgent, TsumogiriAgent, build_agent, run_match
 r = run_match([TsumogiriAgent(), RulebotAgent(), RulebotAgent(), RulebotAgent()], walls=50)
 print(r.table())          # 順位表（コマンドラインの Standings の表と同じ）
 r.paired()                # 2v2 の牌山ごとの対の差
-agent = build_agent("suzume-mlp1:call=0")   # コマンドラインと同じ指定
+agent = build_agent("suzume-rla225")   # コマンドラインと同じ指定
 ```
 
 `run_match` の引数は、コマンドラインのオプションと同じです（`walls`、`wall_base`、`single_kyoku`、`record_logs`、`save_scores` など）。統計は `play_stats=True` のときだけ集計し、`r.play_stats()` で読めます。時間は `r.time_stats()`、コマンドラインと同じ表は `yamawake.report.report(r)` で得られます。`run_match` 自体は何も表示しません。
 
 **1 局面の判断**：`decide(プレイヤーの指定, 観測, kyoku_events)` は、rulebot か suzume の判断を 1 つ返します。
-suzume は決めたルールの名前を、rulebot は `debug=True` で判断の材料を付けて返します。
+suzume は `rule` に `a1` を、rulebot は `debug=True` で判断の材料を付けて返します。
 
 ## 4. 自作のプレイヤー
 
@@ -231,7 +231,7 @@ while (batch := loop.collect()) is not None:   # Python の手番を待つ全て
 loop.scores(), loop.mjai_log(0)
 ```
 
-`collect()` は全対局が終わると `None` を返します。次の `collect()` の前に、`apply` で全ての行に答えます。ループの中で打つボットは `bot_seats` で席番号ごとに置けます（`"rulebot"` か `"suzume"` と設定）。
+`collect()` は全対局が終わると `None` を返します。次の `collect()` の前に、`apply` で全ての行に答えます。ループの中で打つボットは `bot_seats` で席番号ごとに置けます（`"rulebot"` か、suzume なら `"a1"` と設定 `{"a1": "suzume"}`）。
 
 ## 6. 外部の対局環境で suzume を動かす
 
@@ -240,13 +240,13 @@ loop.scores(), loop.mjai_log(0)
 ``` python
 from yamawake.external import SuzumePlayer
 
-player = SuzumePlayer("suzume")                 # suzume のプレイヤー名なら何でも（suzume-mlp1:call=0 など）
+player = SuzumePlayer("suzume")                 # suzume のプレイヤー名なら何でも（suzume-rla225 など）
 action = player.act(obs, kyoku_events)          # obs.legal_actions() の 1 つ（rv.Action）
 reply = player.act_mjai(obs, kyoku_events)      # 同じ手を mjai の形で（tsumogiri つき）
-player.last_rule                                # その手を決めた suzume のルールの名前
+player.last_rule                                # 手を決めた処理の名前（suzume は a1）
 ```
 
-- **arena と同じ手**：判断は arena の中の suzume と同じ Rust の処理です。局の間に覚えておくもの（立直の宣言牌、押し引きの状態の履歴）も、arena と同じく席ごとに持ち、新しい `start_kyoku` で忘れます。
+- **arena と同じ手**：判断は arena の中の suzume と同じ Rust の処理です。局の間に覚えておくもの（立直の宣言牌など）も、arena と同じく席ごとに持ち、新しい `start_kyoku` で忘れます。
 - **山の残り枚数**：riichienv の Python 版の `Observation` には、山の残り枚数（`drawable_count`）と最後に打牌した席（`last_discarder`）がありません。この 2 つは、渡された出来事から求めます（70 − ツモの数、最後の `dahai` の席）。
 - **新しい半荘**：同じ席で新しい半荘を始めるときは `player.reset()` を呼びます（呼ばなくても、局が変わると忘れます）。
 

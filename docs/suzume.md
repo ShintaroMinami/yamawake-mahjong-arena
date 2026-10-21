@@ -1,87 +1,77 @@
-# suzume：隠れマルコフモデルで推定した潜在モードにおける方策蒸留モデル
+# suzume：判断ごとの小さな MLP による方策蒸留モデル
 
-suzume は、強化学習した麻雀エージェントRLActor-225（教師）の方策を、判断/モードごとの小さな MLP に蒸留した軽量のエージェントです。
+suzume は、強化学習した麻雀エージェント [Mortal-S42](https://huggingface.co/haor/Mortal-S42)（教師）の方策を、判断の種類ごとの小さな MLP に蒸留した軽量のエージェントです。
 一般的な強化学習エージェントは arena で大量に対局させるには計算量が多いので、
 "強化学習エージェントに近い強さで速く打てる対戦相手"を作ることを目的として開発されました。
 
-- コード：[`src/rust/suzume/`](../src/rust/suzume/)（判断）、[`src/python/yamawake/suzume.py`](../src/python/yamawake/suzume.py)（Python 側：指定できるオプションと、判断の規則の一覧）
-- モデルと固定のパラメータ：[`params/`](../params/)（ビルドのときに埋め込む）
+- コード：[`src/rust/suzume/a1.rs`](../src/rust/suzume/a1.rs)（判断）、[`src/rust/suzume/universal.rs`](../src/rust/suzume/universal.rs)（選択肢の特徴量）、[`src/rust/suzume/fold_model.rs`](../src/rust/suzume/fold_model.rs)（危険度の特徴量）
+- モデル：[`params/suzume/`](../params/suzume/)（ビルドのときに埋め込む）
 
 ## 1. 使い方
 
 ``` bash
 uv run yamawake-arena --mode 2v2 --players suzume rulebot
-uv run yamawake-arena --mode 1v3 --players suzume-mlp1:call=0 rulebot
+uv run yamawake-arena --mode 1v3 --players suzume-rla225 rulebot
 ```
 
 ``` python
 from yamawake import SuzumeAgent
-agent = SuzumeAgent({"riichi": 0})
+agent = SuzumeAgent()                          # suzume
+agent = SuzumeAgent(models="suzume-rla225")    # 別の教師で学習した組
 ```
 
 ### モデルの組
 
-| モデル | 手組み | 状態予測 | 特徴 |
-|---|---|---|---|
-| `suzume`（= `suzume-mlp3`） | `flat_mlp3` | `normal_mlp3` | デフォルトの3層MLP。状態予測は局・順位・点差を考慮 |
-| `suzume-mlp3-flat` | `flat_mlp3` | `flat_mlp3` | 状態予測も東 1 局で学習（点数状況を見ない） |
-| `suzume-mlp3-avoid4` | `normal_mlp3` | `normal_mlp3` | 手組みも点数状況を見る。ラス回避型になる |
-| `suzume-mlp1` | `flat_mlp1` | `normal_mlp1` | 1 層の軽量版（局・順位・点差を考慮） |
-| `suzume-mlp1-flat` | `flat_mlp1` | `flat_mlp1` | 1 層、状態予測も東 1 局で学習 |
-
-名前は学習データ（`flat` 東 1 局、`normal` 東南の半荘）と隠れ層の数（`mlp1` 1 層、`mlp3` 3 層）を表します。手組みのモデルは [`params/hand/`](../params/hand/) の下で、表の「手組み」の名前のフォルダに判断ごとに 1 ファイルずつ（`call_P.json` など 11 個）あります。状態予測のモデルは [`params/state/`](../params/state/) の下で、表の「状態予測」の名前の `.json` です。
-
-### オプション
-
-常に反映されるオプション：
-
-| オプション | 意味 | デフォルト |
+| モデル | 教師 | フォルダ |
 |---|---|---|
-| `kan` | 0/1：カンする | 1 |
-| `call` | 0/1：チー・ポンする（大明槓は `kan` に従う） | 1 |
-| `riichi` | 0/1：立直する | 1 |
-| `pf` | 0/1：押し引きの状態を判断して打ち分ける（3 節）。0 にすると、他家の立直への対応は下の `fold` に替わる | 1 |
+| `suzume` | Mortal-S42 | [`params/suzume/suzume/`](../params/suzume/suzume/) |
+| `suzume-rla225` | RLActor-225（未公開） | [`params/suzume/rla225/`](../params/suzume/rla225/) |
 
-`pf=0` のときだけ反映されるオプション（`pf=1` では無視されます）：
-
-| オプション | 意味 | デフォルト |
-|---|---|---|
-| `fold` | 0/1：他家の立直にベタオリする | 1 |
-| `fold_shanten` | 0〜8：ベタオリに入る、打牌後の最小向聴（`fold=1` のときだけ） | 1 |
-
-これ以外の値（DP の定数など、モデルが学習の前提にした値）はオプションにせず、[`params/suzume.json`](../params/suzume.json) に固定しています。
+2 つの組は、教師と学習データだけが違い、モデルの形と学習の手順は同じです（4 節）。
+オプションはありません。
 
 ## 2. 判断の仕組み
 
-判断ごとに次のルールを上から試します（[`src/rust/suzume/registry.rs`](../src/rust/suzume/registry.rs)）。
+判断ごとに次の順に決めます（[`src/rust/suzume/a1.rs`](../src/rust/suzume/a1.rs) の `decide`）。
 
 1. 和了できれば和了する。九種九牌は流局にする。
-2. 押し引き（`pf=1`）：自分の打牌で状態を予測し、M・F ならその状態のモデルで切る（3 節）。
-3. カン：カンの MLP がカンを高く評価したときだけ実行。
-4. 打牌・立直・副露：判断ごとの MLP で選ぶ。
-5. 合法な打牌が 1 つしかなければそれを切る。
+2. 立直を宣言した直後は、立直の選択肢で選んだ牌を切る。
+3. 暗槓・加槓ができるときは、カンの MLP が、カンしない場合（下の 4. で選ぶ手）と各カンを比べる。
+4. 打牌・立直・副露：判断の種類ごとの MLP で、スコアが最大の選択肢を選ぶ。
+5. どれでも決まらないときは、合法な打牌が 1 種類ならそれを、なければパス、ツモ切り、最初の合法手の順に選ぶ。
 
-判断ごとの MLP は、打牌（向聴 1〜2、3 以上、立直できない聴牌）、立直、副露、カンの 6 種類です。判断の各選択肢を、全判断で共通の特徴量（76 列、[`src/rust/suzume/universal.rs`](../src/rust/suzume/universal.rs)）の 1 行で表し、MLP のスコアが最大の選択肢を選びます。特徴量の中心は、手牌価値計算の DP（[`src/rust/eval/dp.rs`](../src/rust/eval/dp.rs)）により計算された打牌後の手の価値（和了率・聴牌率・期待値）です。これに向聴と受け入れ、待ち、手役、打牌の性質、僅差の判断の中の比較を加えます。
+判断の種類と MLP：
 
-## 3. 押し引き
+| MLP | 判断 | 大きさ |
+|---|---|---|
+| `discard0` | 聴牌からの打牌（立直できるかどうかによらない。立直の選択肢を含む） | 3 層 × 64 |
+| `discard1` | 打牌後の最小の向聴が 1 の打牌 | 3 層 × 144 |
+| `discard2` | 打牌後の最小の向聴が 2 の打牌 | 3 層 × 144 |
+| `discard3` | 打牌後の最小の向聴が 3 以上の打牌 | 3 層 × 128 |
+| `call` | チー・ポン・大明槓とパス | 3 層 × 64 |
+| `kan` | 暗槓・加槓とカンしない場合 | 3 層 × 16 |
 
-自分の打牌ごとに、押す（P）・回す（M）・オリる（F）の状態を判断し、状態ごとのモデルで打ちます（[`src/rust/suzume/pf.rs`](../src/rust/suzume/pf.rs)）。
+判断の各選択肢を 1 行の特徴量で表し、MLP のスコアが最大の選択肢を選びます。行の特徴量は次の 3 つです。
 
-| 判断 | P | M | F |
-|---|---|---|---|
-| 打牌 | 手組みの MLP | 回し打ち（`discard_M`） | ベタオリ（`discard_F`） |
-| 立直 | `riichi_P` | `riichi_M` | `riichi_M` |
-| チー・ポン | `call_P` | `call_M` | `call_F` |
-| カン | `kan` | `kan` | しない |
+- **共通の特徴量**（[`src/rust/suzume/universal.rs`](../src/rust/suzume/universal.rs)）：全判断で共通の最大 76 列。中心は、手牌価値計算の DP（[`src/rust/eval/dp.rs`](../src/rust/eval/dp.rs)）による打牌後の手の価値（和了率・聴牌率・期待値）です。これに向聴と受け入れ、待ち、手役、打牌の性質、僅差の選択肢どうしの比較を加えます。
+- **危険度**（打牌と立直の選択肢）：切る牌の、他家 3 人（下家・対面・上家の順）それぞれに対する危険度の特徴量 37 個（[`src/rust/suzume/fold_model.rs`](../src/rust/suzume/fold_model.rs)）と、その他家との点差です。危険度の特徴量は、現物か、放銃のパターン数（両面・カンチャン・ペンチャン・シャンポン・単騎）、河の読み（早い外側・宣言牌のスジなど）、他家の副露と見え方、残る安全牌などです。副露の選択肢には、他家ごとの立直・副露・点差などの席の特徴量だけが入ります。
+- **局面の状況**：局（東 1〜南 4）、本場、供託、順位、点数と上下との点差（21 個）。判断ごとに 1 つで、全ての選択肢に共通です。
 
-- **状態予測**：危険度の特徴量を他家 3 人 × 合法な牌種の行ごとに MLP に通し、平均と最大でまとめて P・M・F の確率を出します。確率が最大の状態を使います。`normal_*` は、局、本場、順位、点差などの点数状況（21 個）も読みます。副露の判断は、直前の自分の打牌の状態を使います。
-- **ベタオリ・回し打ち**：牌種ごとに、他家 3 人それぞれへの安全度を MLP で採点し、最も危険な相手を重く見る形（−τ log Σ exp(−s/τ)）で 1 つにまとめます。この値が最も高い牌種を切ります。特徴量（38 個）は、現物か、放銃パターン数（両面・カンチャン・ペンチャン・シャンポン・単騎）、河の読み（早い外側・宣言牌のスジなど）、他家の副露と見え方、自分の手の損、残る安全牌です。
+このほかに、手の型（一般・七対子・染め手・役牌）、序盤か中盤以降か、他家の立直があるかどうかの組を one-hot で入れます。
+モデルごとに使う列は少しずつ違います（各モデルのファイルの `inputs`）。
+
+## 3. 特徴量の計算に使うモデル
+
+カンの判断では、カンしない場合の行を作るために、打牌の手を 1 つ仮に選びます。
+この仮の手と、危険度の特徴量の表（待ちになっている割合など）は、[`params/suzume/features/`](../params/suzume/features/) のモデルと表から作ります。
+suzume の手そのものは、この仮の手ではなく 2 節の MLP が決めます。
 
 ## 4. 学習
 
-- 教師（RLActor-225、鳴きあり）×4 の対局で、各判断の教師の方策に合わせて学習しました（クロスエントロピー最小化）。
-- P・M・F の状態は、教師の打牌に当てた HMM の事後確率で決めます。各状態のモデルは、その状態の事後確率で重みを付けた行で学習しました。状態予測は、その事後確率を目標に学習しています。
-- データは、`flat_*` が東 1 局 10 万局、`normal_*` が半荘です。どちらもランダム牌山（split なし）で、対局ごとに 7 : 2 : 1（train・valid・test）に分割。
+- 教師 ×4 の半荘 1 万局を記録し、各判断の教師の方策に合わせて学習しました（クロスエントロピー最小化）。教師の方策は、教師の Q 値の softmax（温度 1）です。
+- 牌山はランダム（split なし）です。牌山の seed の md5 の値で、7 : 2 : 1（train・valid・test）に分けました。
+- 最適化は schedule-free の RAdam（学習率 0.01、weight decay なし）です。まず 200 エポック（カンは 100 エポック）学習し、valid が最良のエポックが 150 以降だったモデルは 500 エポックまで延ばしました。valid で最も良かったエポックのモデルを使います。
+- MLP の幅は、打牌のモデルごとに幅を変えて学習し、2 vs 2 の対局の強さで選びました。
 
 ## 5. ベンチマーク
 
@@ -89,9 +79,10 @@ suzume と現在公開されているモデルとの性能比較は以下の通�
 
 <img src="images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
 
-- suzumeはmortal-v4の第三者学習モデルグループより少し弱い程度の性能です。
-- suzumeはRLActor-225(未公開)を教師として学習されたモデルですが、この教師モデルはmortal再学習モデルより少し強いです。
-- 速度はTanyaoDojoの10倍程度、mortal-v4の25倍程度と高速に動作します。
+- suzumeはmortal-v4の第三者学習モデルグループやTanyaoDojoより少し弱い程度の性能です。
+- suzumeの教師のmortal-S42との差は、平均順位で0.03程度です。
+- suzume-rla225（教師はRLActor-225）はsuzumeとほぼ同じ強さです。
+- 速度はTanyaoDojoの10倍程度、mortal-v4の30倍程度と高速に動作します。
 
 比較したモデルの出典：
 
@@ -104,24 +95,23 @@ suzume と現在公開されているモデルとの性能比較は以下の通�
 | 電脳麻将 | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0 を [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 で実行 |
 | mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go)（[gimite/mjai-manue](https://github.com/gimite/mjai-manue) の Go 移植） |
 | rulebot | このリポジトリ（[`rulebot.md`](rulebot.md)） |
+| windshadow-sl | [windshadow233/Mahjong-AI](https://github.com/windshadow233/Mahjong-AI)（Suphx の教師あり学習の部分の再現） |
 | RLActor-225 | 未公開 |
 
-平均順位は、各モデル 2 体と suzume（`suzume-mlp3`）2 体の 2 vs 2 で、標準牌山の先頭 1,000 牌山を席の回転 2 回ずつ（2,000 半荘）打った結果です。
+平均順位は、各モデル 2 体と suzume 2 体の 2 vs 2 で、標準牌山の先頭 1,000 牌山を席の回転 2 回ずつ（2,000 半荘）打った結果です。
 図のバイオリンとボックスプロットは、牌山を選び直して推定し直した 400 回（ブートストラップ）の分布で、箱は四分位、ひげは 95% の範囲、点は推定値です。
-表の時間は 4 人とも同じモデルで、CPU 1 個だけを使って推論したときの値です（電脳麻将、mjai-manue は 20 牌山、そのほかは 256 牌山。下の「6. 計算速度」は 20 牌山の値のため、少し異なります）。
+表の時間は 4 人とも同じモデルで、CPU 1 個だけを使って推論したときの値です（電脳麻将、mjai-manue、RLActor-225 は 20 牌山、そのほかは 256 牌山）。
 
 ## 6. 計算速度
 
-1 CPU（1 コアに固定し、1 スレッドで実行）、4 人とも同じボット、256 牌山、席の回転なし（20 半荘）、1 回の計測。
-CPU は AMD EPYC 7702（Zen 2、定格 2.0 GHz・最大 3.35 GHz。計測したマシンの周波数の上限は 2.18 GHz）：
+1 CPU（1 コアに固定し、1 スレッドで実行）、4 人とも同じボット、256 牌山、席の回転なし（256 半荘）、1 回の計測。
+CPU は AMD EPYC 7702（Zen 2、定格 2.0 GHz・最大 3.35 GHz。計測したマシンの周波数の上限は 2.0 GHz）：
 
 | ボット | 半荘/分 | 1 判断あたりの時間 |
 |---|---|---|
-| `suzume-mlp3(-flat)` | 約 162.9 | 約 0.53 ms |
-| `suzume-mlp3-avoid4` | 約 159.7 | 約 0.54 ms |
-| `suzume-mlp1(-flat)` | 約 192.2 | 約 0.43 ms |
-| rulebot（参考） | 約 515.1 | 約 0.16 ms |
-| ツモ切り（参考、`tsumogiri`） | 約 1,420 | 約 0.017 ms |
+| `suzume` | 約 173 | 約 0.52 ms |
+| `suzume-rla225` | 約 167 | 約 0.51 ms |
+| rulebot（参考） | 約 515 | 約 0.16 ms |
 
 1 判断あたりの時間は、ボット自身の判断にかかった時間です（対局エンジンとループの時間を含まない。出力の Time の表の ms/decision と同じ）。
 
@@ -129,12 +119,8 @@ CPU は AMD EPYC 7702（Zen 2、定格 2.0 GHz・最大 3.35 GHz。計測した�
 
 | ボット | 半荘/分 | 1 判断あたりの時間 |
 |---|---|---|
-| `suzume-mlp3` | 約 400 | 約 0.23 ms |
-| `suzume-mlp3-flat` | 約 390 | 約 0.22 ms |
-| `suzume-mlp3-avoid4` | 約 380 | 約 0.23 ms |
-| `suzume-mlp1` | 約 450 | 約 0.19 ms |
-| `suzume-mlp1-flat` | 約 460 | 約 0.19 ms |
-| rulebot（参考） | 約 1,120 | 約 0.07 ms |
-| ツモ切り（参考、`tsumogiri`） | 約 3,100 | 約 0.008 ms |
+| `suzume` | 約 400 | 約 0.23 ms |
+| `suzume-rla225` | 約 380 | 約 0.22 ms |
+| rulebot（参考） | 約 1,200 | 約 0.07 ms |
 
-全てのスレッド（14 コア：P コア 10・E コア 4）を使うと、500 牌山で `suzume-mlp3` 4 人が約 3,500 半荘/分、rulebot 4 人が約 10,000 半荘/分です。
+全てのスレッド（14 コア：P コア 10・E コア 4）を使うと、500 牌山で `suzume` 4 人が約 3,700 半荘/分、rulebot 4 人が約 10,000 半荘/分です。

@@ -16,12 +16,12 @@
 
 - **arena**：固定分割牌山の対戦環境。Rust の対局ループで N 局を並列に進めます（[`docs/arena.md`](docs/arena.md)を参照）。
 - **rulebot**：高速なルールベースのボット。ベースラインとして有用です（[`docs/rulebot.md`](docs/rulebot.md)を参照）。
-- **suzume**：強化学習した麻雀AIの蒸溜モデル。判断ごとの小さな MLP を用いた軽量のボット（[`docs/suzume.md`](docs/suzume.md)を参照）。
+- **suzume**：強化学習した麻雀AI（Mortal-S42）の蒸溜モデル。判断ごとの小さな MLP を用いた軽量のボット（[`docs/suzume.md`](docs/suzume.md)を参照）。
 
 1 CPU（AMD EPYC 7702、最大 2.18 GHz で計測）を使用した場合、
 rulebot 4 体なら約 515 半荘/分、
-suzume 4 体なら約 163 半荘/分 で動作します。
-参考として、Mac（Apple M4 Pro）では 1 スレッドで rulebot 4 体が約 1,120 半荘/分、suzume 4 体が約 400 半荘/分、全てのスレッド（14 コア）を使うと rulebot 4 体が約 10,000 半荘/分、suzume 4 体が約 3,500 半荘/分です。
+suzume 4 体なら約 170 半荘/分 で動作します。
+参考として、Mac（Apple M4 Pro）では 1 スレッドで rulebot 4 体が約 1,200 半荘/分、suzume 4 体が約 400 半荘/分、全てのスレッド（14 コア）を使うと rulebot 4 体が約 10,000 半荘/分、suzume 4 体が約 3,700 半荘/分です。
 Python のプレイヤーは、判断 1 回ごとに観測の受け渡しで約 55 µs かかります（同じ EPYC の 1 CPU）。これは、arena対局の1判断あたりのシステム時間（約 23 µs）の2倍程度に相当します。非常に高速なアルゴリズムを評価する場合は、この時間が全体の速さに影響する可能性があります（[`docs/arena.md`](docs/arena.md)を参照）。
 
 ## suzume の性能
@@ -31,9 +31,10 @@ suzume と現在公開されている他のモデルとの性能比較は以下�
 
 <img src="docs/images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
 
-- suzumeはmortal-v4の第三者学習モデルグループより少し弱い程度の性能です。
-- suzumeはRLActor-225(未公開)を教師として学習されたモデルですが、この教師モデルはmortal再学習モデルより少し強いです。
-- 速度はTanyaoDojoの10倍程度、mortal-v4の25倍程度と高速に動作します。
+- suzumeはmortal-v4の第三者学習モデルグループやTanyaoDojoより少し弱い程度の性能です。
+- suzumeはmortal-S42を教師として学習したモデルで、教師との差は平均順位で0.03程度です。
+- suzume-rla225はRLActor-225(未公開)を教師として同じ方法で学習したモデルで、suzumeとほぼ同じ強さです。
+- 速度はTanyaoDojoの10倍程度、mortal-v4の30倍程度と高速に動作します。
 
 比較したモデルの出典：
 
@@ -45,6 +46,7 @@ suzume と現在公開されている他のモデルとの性能比較は以下�
 | TanyaoDojo | [Twu31/TanyaoDojo](https://huggingface.co/Twu31/TanyaoDojo) の `bc_v2_g186.pkl`（コード：[twu3202/TanyaoDojo](https://github.com/twu3202/TanyaoDojo)） |
 | 電脳麻将 | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0 を [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 で実行 |
 | mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go)（[gimite/mjai-manue](https://github.com/gimite/mjai-manue) の Go 移植） |
+| windshadow-sl | [windshadow233/Mahjong-AI](https://github.com/windshadow233/Mahjong-AI)（Suphx の教師あり学習の部分の再現） |
 | rulebot | このリポジトリ（[`docs/rulebot.md`](docs/rulebot.md)） |
 | RLActor-225 | 未公開 |
 
@@ -91,10 +93,8 @@ Python からの利用は以下のように行います。
 |---|---|
 | `tsumogiri` | ツモ切りボット |
 | `rulebot` | ルールベースの高速ボット |
-| `suzume`（= `suzume-mlp3`）、`suzume-mlp3-flat`、`suzume-mlp3-avoid4` | 軽量かつある程度強いボット (3 層の MLP を使用) |
-| `suzume-mlp1`、`suzume-mlp1-flat` | 強さを少し落とした、より軽量なボット (1 層の MLP を使用) |
-
-> **Note :** flat は東 1 局の対局データのみで学習したモデル。avoid4はラス回避を重視したルールで学習したモデルです。
+| `suzume` | 軽量かつある程度強いボット（Mortal-S42 を教師に学習した、判断ごとの 3 層の MLP） |
+| `suzume-rla225` | `suzume` と同じ作りで、RLActor-225（未公開）を教師に学習したボット |
 
 ## 自作のプレイヤーとの対局
 
