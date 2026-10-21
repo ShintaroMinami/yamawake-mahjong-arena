@@ -93,10 +93,11 @@ jobs:
           python -m pip install --only-binary yamawake --find-links dist yamawake pytest
       - name: Test
         # Run from a copy of tests/ so `src/python/` is not importable and
-        # the installed wheel is what gets tested.
+        # the installed wheel is what gets tested. params/ goes along: the
+        # directory-set tests copy model files from it.
         run: |
           mkdir -p "$RUNNER_TEMP/t"
-          cp -r tests pyproject.toml "$RUNNER_TEMP/t/"
+          cp -r tests params pyproject.toml "$RUNNER_TEMP/t/"
           cd "$RUNNER_TEMP/t"
           python -c "import yamawake, sys; print(yamawake.__file__)"
           python -m pytest -q
