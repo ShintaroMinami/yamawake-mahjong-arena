@@ -28,7 +28,29 @@ agent = SuzumeAgent(models="suzume-rla225")    # 別の教師で学習した組
 | `suzume-rla225` | RLActor-225（未公開） | [`params/suzume/rla225/`](../params/suzume/rla225/) |
 
 2 つの組は、教師と学習データだけが違い、モデルの形と学習の手順は同じです（4 節）。
-オプションはありません。
+
+### 打ち方の調節
+
+`suzume` には、打ち方を調節する 3 つのパラメータがあります（2026-10 に追加）。
+既定ではどれも 0（調節なし）で、0 のときはこれまでの `suzume` と同じに打ちます。
+目的は打ち方の違う対戦相手を作ることで、強くすることではありません。
+
+| パラメータ | 調節するもの | 値 | 仕組み |
+|---|---|---|---|
+| `aggression` | 押し引き | -1 〜 1 | 脅威のある局面で、押しのモデルと降りのモデルの方策を補間する |
+| `call_tendency` | 副露の度合い | 実数 | 副露（チー・ポン・大明槓）の選択肢のスコアに足す |
+| `riichi_tendency` | 立直の度合い | 実数 | 立直の選択肢のスコアに足す |
+
+``` bash
+uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:riichi_tendency=1 suzume
+```
+``` python
+agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+```
+
+- `aggression`：判断の種類（打牌 4 種、副露、槓）ごとに、押しのモデルと降りのモデルの 2 つの小さな MLP を学習させてあります（[`params/suzume/suzume/`](../params/suzume/suzume/) の `*_push.json` / `*_fold.json`）。教師の方策のうち、他家の立直や副露などの脅威がある局面の判断だけを、教師が押したときの方策（押しのモデル）、または最も強い脅威に降りたときの方策（降りのモデル）に置き換えて学習したものです。正の値では `suzume` の対数方策に押しのモデルの対数方策を、負の値では降りのモデルの対数方策を、|値| の割合で混ぜます（`(1 - |値|) log π + |値| log π_端点`）。1 で押しのモデル、-1 で降りのモデルの打ち方になります。立直するかダマにするかは `suzume` 自身の選択のままで、`aggression` はその中で打牌を選びます。
+- `call_tendency` / `riichi_tendency`：その選択肢のスコアに値を足すので、鳴く（立直する）オッズが e^値 倍になります。
+- 3 つは組み合わせて使えます。持つのは `suzume` だけです（`suzume-rla225` で指定するとエラーになります）。
 
 ## 2. 判断の仕組み
 
@@ -74,7 +96,7 @@ suzume の手そのものは、この仮の手ではなく 2 節の MLP が決�
 
 - 教師 ×4 の半荘 1 万局を記録し、各判断の教師の方策に合わせて学習しました（クロスエントロピー最小化）。教師の方策は、教師の Q 値の softmax（温度 1）です。
 - 牌山はランダム（split なし）です。牌山の seed の md5 の値で、7 : 2 : 1（train・valid・test）に分けました。
-- 最適化は schedule-free の RAdam（学習率 0.01、weight decay なし）です。まず 200 エポック（カンは 100 エポック）学習し、valid が最良のエポックが 150 以降だったモデルは 500 エポックまで延ばしました。valid で最も良かったエポックのモデルを使います。
+- 最適化は schedule-free の RAdam（学習率 0.01、weight decay なし）です。200 エポック（カンは 100 エポック）学習し、valid で最も良かったエポックのモデルを使います。
 - MLP の幅は、打牌のモデルごとに幅を変えて学習し、2 vs 2 の対局の強さで選びました。
 
 ## 5. ベンチマーク
@@ -83,9 +105,9 @@ suzume と現在公開されているモデルとの性能比較は以下の通�
 
 <img src="images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
 
-- suzumeはmortal-v4の第三者学習モデルグループやTanyaoDojoより少し弱い程度の性能です。
-- suzumeの教師のmortal-S42との差は、平均順位で0.03程度です。
-- suzume-rla225（教師はRLActor-225）はsuzumeとほぼ同じ強さです。
+- suzumeは、mortal-v4の第三者学習モデルのうちmortal-298kとほぼ同じ強さで、mortal-582500やTanyaoDojoより少し弱い程度の性能です。
+- suzumeの教師のmortal-S42との差は、平均順位で0.05程度です。
+- suzume-rla225（教師はRLActor-225）はsuzumeとほぼ同じ強さです（平均順位で0.015程度弱い）。
 - 速度はTanyaoDojoの10倍程度、mortal-v4の30倍程度と高速に動作します。
 
 比較したモデルの出典：

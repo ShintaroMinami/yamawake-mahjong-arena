@@ -17,6 +17,7 @@
 - **arena**：固定分割牌山の対戦環境。Rust の対局ループで N 局を並列に進めます（[`docs/arena.md`](docs/arena.md)を参照）。
 - **rulebot**：高速なルールベースのボット。ベースラインとして有用です（[`docs/rulebot.md`](docs/rulebot.md)を参照）。
 - **suzume**：強化学習した麻雀AI（Mortal-S42）の蒸溜モデル。判断ごとの小さな MLP を用いた軽量のボット（[`docs/suzume.md`](docs/suzume.md)を参照）。
+  - **新機能：打ち方の調節**：押し引き・副露・立直の度合いを、それぞれ 1 つの数値で調節できます。打ち方の違う対戦相手を自由に作れます（[打ち方の調節](#suzume-の打ち方の調節)を参照）。
 
 1 CPU（AMD EPYC 7702、最大 2.18 GHz で計測）を使用した場合、
 rulebot 4 体なら約 515 半荘/分、
@@ -31,9 +32,9 @@ suzume と現在公開されている他のモデルとの性能比較は以下�
 
 <img src="docs/images/suzume_performance.svg" alt="suzume との 2 vs 2 での平均順位と、モデルごとの 1 判断の時間、半荘/分">
 
-- suzumeはmortal-v4の第三者学習モデルグループやTanyaoDojoより少し弱い程度の性能です。
-- suzumeはmortal-S42を教師として学習したモデルで、教師との差は平均順位で0.03程度です。
-- suzume-rla225はRLActor-225(未公開)を教師として同じ方法で学習したモデルで、suzumeとほぼ同じ強さです。
+- suzumeは、mortal-v4の第三者学習モデルのうちmortal-298kとほぼ同じ強さで、mortal-582500やTanyaoDojoより少し弱い程度の性能です。
+- suzumeはmortal-S42を教師として学習したモデルで、教師との差は平均順位で0.05程度です。
+- suzume-rla225はRLActor-225(未公開)を教師として同じ方法で学習したモデルで、suzumeとほぼ同じ強さです（平均順位で0.015程度弱い）。
 - 速度はTanyaoDojoの10倍程度、mortal-v4の30倍程度と高速に動作します。
 
 比較したモデルの出典：
@@ -95,6 +96,31 @@ Python からの利用は以下のように行います。
 | `rulebot` | ルールベースの高速ボット |
 | `suzume` | 軽量かつある程度強いボット（Mortal-S42 を教師に学習した、判断ごとの 3 層の MLP） |
 | `suzume-rla225` | `suzume` と同じ作りで、RLActor-225（未公開）を教師に学習したボット |
+
+## suzume の打ち方の調節
+
+`suzume` には、打ち方を調節する 3 つのパラメータがあります。
+既定ではどれも 0（調節なし）で、0 のときはこれまでの `suzume` と同じに打ちます。
+
+| パラメータ | 調節するもの | 値 |
+|---|---|---|
+| `aggression` | 押し引き | -1 〜 1。正で押し寄り（放銃率・和了率が上がる）、負で降り寄り |
+| `call_tendency` | 副露の度合い | 実数。正で鳴きやすく、負で鳴きにくくなる |
+| `riichi_tendency` | 立直の度合い | 実数。正で立直しやすく、負でダマに寄る |
+
+プレイヤーの指定に `:名前=値` で付けます。
+``` bash
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=0.5 suzume
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_tendency=1:riichi_tendency=-1 suzume
+```
+``` python
+    from yamawake import SuzumeAgent
+    agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+```
+- `aggression` は、`suzume` の方策に、押しのモデルか降りのモデルの方策を混ぜます。この 2 つのモデルは、他家の立直などの脅威がある局面で教師（Mortal-S42）が押したとき・降りたときの方策を学習したものです。1 で押しのモデル、-1 で降りのモデルの打ち方になります。
+- `call_tendency` は副露（チー・ポン・大明槓）の、`riichi_tendency` は立直の選択肢のスコアに足す値で、鳴く（立直する）オッズがそれぞれ e^値 倍になります。
+- 調節の目的は打ち方の違う相手を作ることで、強くすることではありません。0 から離すほど、`suzume` との対戦成績は少しずつ下がります。
+- 3 つのパラメータを持つのは `suzume` だけです（`suzume-rla225` にはありません）。詳しくは [`docs/suzume.md`](docs/suzume.md#打ち方の調節) を参照してください。
 
 ## 自作のプレイヤーとの対局
 

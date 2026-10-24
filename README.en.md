@@ -31,6 +31,8 @@ only from the players' choices.
   [`docs/rulebot.md`](docs/rulebot.md)).
 - **suzume**: a distilled model of a reinforcement-learned mahjong AI
   (Mortal-S42); a light bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
+  - **New: play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
+    can field opponents with different play styles (see [Play-style control](#play-style-control-of-suzume)).
 
 On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
 515 hanchan/min with four rulebots and
@@ -53,12 +55,12 @@ decision (a discard or a call) and the hanchan it plays per minute.
 
 <img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
 
-- suzume is slightly weaker than the group of third-party trained mortal-v4
-  models and TanyaoDojo.
+- suzume is about as strong as mortal-298k and slightly weaker than
+  mortal-582500 (both third-party trained mortal-v4 models) and TanyaoDojo.
 - suzume was trained with mortal-S42 as its teacher; it trails its teacher by
-  about 0.03 in average rank.
+  about 0.05 in average rank.
 - suzume-rla225 was trained the same way with RLActor-225 (unpublished) as its
-  teacher; it is about as strong as suzume.
+  teacher; it is about as strong as suzume (about 0.015 weaker in average rank).
 - It runs about 10 times as fast as TanyaoDojo and about 30 times as fast as
   mortal-v4.
 
@@ -125,6 +127,35 @@ From Python:
 | `rulebot` | the fast rule-based bot |
 | `suzume` | a light, reasonably strong bot (per-decision 3-layer MLPs taught by Mortal-S42) |
 | `suzume-rla225` | the same build as `suzume`, taught by RLActor-225 (unpublished) |
+
+## Play-style control of suzume
+
+`suzume` has three parameters that set its play style.
+All three default to 0 (no change); at 0, `suzume` plays as before.
+
+| Parameter | Controls | Value |
+|---|---|---|
+| `aggression` | push / fold | -1 to 1; positive pushes more (more deal-ins and wins), negative folds more |
+| `call_tendency` | how often it calls | any number; positive calls more, negative less |
+| `riichi_tendency` | how often it declares riichi | any number; positive declares more, negative stays dama more |
+
+Append them to the player spec as `:name=value`:
+``` bash
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=0.5 suzume
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_tendency=1:riichi_tendency=-1 suzume
+```
+``` python
+    from yamawake import SuzumeAgent
+    agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+```
+- `aggression` mixes suzume's policy with one of two models fitted on the teacher's (Mortal-S42) pushing or folding
+  policy in positions with a threat, such as an opponent's riichi. 1 plays like the push model, -1 like the fold
+  model.
+- `call_tendency` is added to the score of every call (chi, pon, open kan) and `riichi_tendency` to that of riichi, which
+  multiplies the odds of calling (declaring) by e^value.
+- The aim is opponents with different styles, not a stronger bot. The further from 0, the somewhat worse
+  the results against `suzume`.
+- Only `suzume` has these parameters (`suzume-rla225` does not). See [`docs/suzume.md`](docs/suzume.md#打ち方の調節).
 
 ## Playing your own agent
 
