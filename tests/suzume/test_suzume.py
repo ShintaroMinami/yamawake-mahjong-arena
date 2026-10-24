@@ -84,14 +84,15 @@ def test_seat_spec_and_options():
                 {"kan": 2}, {"fold_shanten": 9}, {"bogus": 1}):
         with pytest.raises(ValueError):
             _legacy(bad)
-    # The current sets play on the A1 lane and take no options.
+    # The current sets play on the A1 lane and take only the A1 knobs (--opt suzume options are ignored there).
     for name in ("suzume", "suzume-rla225"):
         c = build_agent(name)
         assert c.lane == "a1" and c.config == {"a1": name}
         with pytest.raises(ValueError):
             build_agent(f"{name}:call=0")
-        with pytest.raises(ValueError):
-            build_agent(name, call="0")
+        assert build_agent(name, call="0").config == {"a1": name}
+    k = build_agent("suzume:aggression=-0.5:riichi_tendency=1.25", call_tendency="0.5")
+    assert k.config == {"a1": "suzume", "aggression": "-0.5", "riichi_tendency": "1.25", "call_tendency": "0.5"}
 
 
 def test_rule_list(capsys):

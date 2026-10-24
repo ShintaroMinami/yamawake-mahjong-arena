@@ -284,8 +284,10 @@ fn rulebot_config_from(overrides: &Bound<'_, PyDict>) -> PyResult<crate::rulebot
     Ok(cfg)
 }
 
-/// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`, nothing else), or
-/// {"a1": <A1 model directory>, the rest: the suzume config of its features set}.
+/// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`), or {"a1": <A1 model
+/// directory>, optional "pmf_fixed": the P / M / F mixture weights ("P", "M", "F" or "p,m,f"; `a1::parse_pmf`),
+/// the rest: the suzume config of its features set}; both take optional "aggression": push / fold (a number in [-1, 1];
+/// `A1Config::aggression`) and "call_tendency" / "riichi_tendency" (numbers; `A1Config`).
 fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1Config> {
     use pyo3::exceptions::{PyKeyError, PyValueError};
     let rest = config.copy()?;
@@ -294,14 +296,33 @@ fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1C
         .ok_or_else(|| PyKeyError::new_err("an a1 bot needs \"a1\": <built-in set or model directory>"))?
         .extract()?;
     rest.del_item("a1")?;
+    let delta: f64 = match rest.get_item("aggression")? {
+        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("aggression {v}: not a number")))?,
+        None => 0.0,
+    };
+    rest.del_item("aggression").ok();
+    let call_tendency: f64 = match rest.get_item("call_tendency")? {
+        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("call_tendency {v}: not a number")))?,
+        None => 0.0,
+    };
+    rest.del_item("call_tendency").ok();
+    let riichi_tendency: f64 = match rest.get_item("riichi_tendency")? {
+        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("riichi_tendency {v}: not a number")))?,
+        None => 0.0,
+    };
+    rest.del_item("riichi_tendency").ok();
     if let Some(c) = crate::suzume::a1::A1Config::builtin(&a1) {
         if !rest.is_empty() {
-            return Err(PyValueError::new_err(format!("{a1} takes no options")));
+            return Err(PyValueError::new_err(format!("{a1} takes only aggression / call_tendency / riichi_tendency")));
         }
-        return Ok(c);
+        return crate::suzume::a1::A1Config::new(c.cfg, c.models, None, delta, call_tendency, riichi_tendency)
+            .map_err(PyValueError::new_err);
     }
+    let pmf: Option<String> = rest.get_item("pmf_fixed")?.map(|v| v.str().map(|s| s.to_string())).transpose()?;
+    rest.del_item("pmf_fixed").ok();
     let models = crate::suzume::a1::A1Models::load(&a1).map_err(PyValueError::new_err)?;
-    Ok(crate::suzume::a1::A1Config { cfg: suzume_config_from(&rest)?, models })
+    crate::suzume::a1::A1Config::new(suzume_config_from(&rest)?, models, pmf.as_deref(), delta, call_tendency, riichi_tendency)
+        .map_err(PyValueError::new_err)
 }
 
 /// An suzume config from an option dict (each value read as its string
@@ -503,6 +524,29 @@ impl SuzumeSeat {
         Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), rule))
     }
 
+    /// An A1 seat's P / M / F state probabilities on this decision (`a1::state_probs`; the memo kept as
+    /// `decide` keeps it); None without `state.json` or off an own-turn discard out of riichi.
+    fn a1_state_probs(&mut self, py: Python<'_>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<Option<[f64; 3]>> {
+        let Some(a1) = self.a1 else {
+            return Err(pyo3::exceptions::PyValueError::new_err("not an A1 seat"));
+        };
+        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
+        if start.is_some() && start != self.kyoku {
+            self.memo.clear();
+            self.kyoku = start;
+        }
+        let memo = &mut self.memo;
+        py.allow_threads(|| -> Result<_, String> {
+            let events: Vec<serde_json::Value> = kyoku_events
+                .iter()
+                .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
+                .collect::<Result<_, _>>()?;
+            let obs = observation_with_wall(&obs_b64, &events)?;
+            crate::suzume::a1::state_probs(&obs, &events, &a1, memo)
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+
     /// Forget the kyoku memo (the next decision starts a fresh kyoku).
     fn reset(&mut self) {
         self.memo.clear();
@@ -522,5 +566,8 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SelfPlayLoop>()?;
     m.add_class::<SuzumeSeat>()?;
     m.add_class::<features::SuzumeFeatures>()?;
+    // The state model's expert input names (`suzume::pf`; 2026-10-23), for suzume-train's rows.
+    m.add("PMF_TILE", crate::suzume::pf::PMF_TILE.to_vec())?;
+    m.add("PMF_SUMMARY", crate::suzume::pf::PMF_SUMMARY.to_vec())?;
     Ok(())
 }

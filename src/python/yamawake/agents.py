@@ -130,6 +130,10 @@ SUZUME_SETS = tuple(a1_model_sets())
 #: from `params/legacy/state/`); they take the suzume options.
 LEGACY_SETS = tuple(suzume_model_sets())
 MODEL_SETS = (*SUZUME_SETS, *LEGACY_SETS)
+#: The play-style options of an A1 set (2026-10-24): `aggression` (push / fold, -1 .. 1; needs the set's endpoint
+#: models, which only `suzume` has) and the `call_tendency` / `riichi_tendency` score offsets
+#: (`src/rust/suzume/a1.rs`, `A1Config`).
+STYLE_OPTIONS = ("aggression", "call_tendency", "riichi_tendency")
 
 
 class SuzumeAgent:
@@ -140,8 +144,9 @@ class SuzumeAgent:
     """
 
     def __init__(self, config: dict | None = None, name: str = "suzume", models: str = "suzume") -> None:
-        """Args: config: option dict, legacy sets only (`yamawake.suzume` lists
-        them; an unknown knob raises ValueError here); name: its label;
+        """Args: config: option dict: for a legacy set the suzume options
+        (`yamawake.suzume` lists them; an unknown knob raises ValueError here),
+        for an A1 set `STYLE_OPTIONS` (checked when the bot is built); name: its label;
         models: the model set (`MODEL_SETS`), or `dir:<path>` for a legacy-layout
         set read from a directory (for fitting new models;
         `src/rust/suzume/params.rs`, `load_dir`)."""
@@ -152,9 +157,11 @@ class SuzumeAgent:
             raise ValueError("the model set is picked by the player name, not an option")
         self.name = name
         if models in SUZUME_SETS:
-            if config:
-                raise ValueError(f"{models} takes no options (got {', '.join(config)}); the legacy sets do")
-            self.lane, self.config = LANE_A1, {"a1": models}
+            bad = [k for k in config or {} if k not in STYLE_OPTIONS]
+            if bad:
+                raise ValueError(f"{models} takes only {', '.join(STYLE_OPTIONS)} (got {', '.join(bad)}); the legacy sets "
+                                 "take the suzume options")
+            self.lane, self.config = LANE_A1, {"a1": models, **(config or {})}
             return
         self.lane = LANE_SUZUME
         self.config = {**(config or {}), "models": models}
@@ -274,10 +281,11 @@ def _rulebot(spec: str, **_) -> RulebotAgent:
 
 def _suzume(spec: str, **options) -> SuzumeAgent:
     """`<model set>[:KEY=VALUE...]` (`MODEL_SETS`); `--opt` options that are
-    suzume options apply too (the spec's own pairs win)."""
+    the set's options (suzume options, or `STYLE_OPTIONS` for an A1 set) apply too
+    (the spec's own pairs win)."""
     from yamawake.suzume import KNOBS
-    config = {k: v for k, v in options.items() if k in KNOBS}
     models, *pairs = spec.split(":")
+    config = {k: v for k, v in options.items() if k in (STYLE_OPTIONS if models in SUZUME_SETS else KNOBS)}
     for pair in pairs:
         k, sep, v = pair.partition("=")
         if not sep:

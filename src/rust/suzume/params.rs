@@ -130,18 +130,27 @@ pub struct FoldTables {
 ///
 /// `sit` (`"sit_inputs"`, `pf::SIT_NAMES`; none in a file without them): the
 /// decision's round, honba, sticks, rank and score gaps (`pf::situation`),
-/// standardized by `sit_mean` / `sit_std`.
+/// standardized by `sit_mean` / `sit_std`. Since 2026-10-23 (the A1 P / M / F
+/// mixture's state model) `inputs` may add `pf::PMF_TILE` names after the fold
+/// features and `sit_inputs` `pf::PMF_SUMMARY` names after `SIT_NAMES`: the
+/// experts' inputs (`a1::pmf_inputs`), e.g.
+/// `"inputs": ["patterns_log", ..., "pmf:p_diff", "pmf:f_diff"]`,
+/// `"sit_inputs": ["round_E1", ..., "has_down", "pmf:top_p1:f", "pmf:has2"]`.
 #[derive(Debug)]
 pub struct StateMlp {
-    /// Feature names (`fold_model::FEATURES`), in input order (the fold
-    /// model's).
+    /// Feature names (`fold_model::FEATURES`, then any `pf::PMF_TILE`), in
+    /// input order.
     pub inputs: Vec<String>,
-    /// The inputs as `fold_model::FEATURES` indices.
+    /// The inputs as `pf::state_input_names` indices (a `PMF_TILE` one at
+    /// `N_FEATURES + j`).
     pub cols: Vec<usize>,
     pub mean: Vec<f64>,
     pub std: Vec<f64>,
-    /// The situation inputs: 0, or `pf::SIT_NAMES.len()`.
+    /// The decision-level inputs: 0, or `pf::SIT_NAMES.len()` plus the
+    /// summary columns.
     pub n_sit: usize,
+    /// The `pf::PMF_SUMMARY` index of each summary column after `SIT_NAMES`.
+    pub summary_cols: Vec<usize>,
     pub sit_mean: Vec<f64>,
     pub sit_std: Vec<f64>,
     /// The hidden layers; the first reads `inputs.len() + n_sit`
@@ -655,7 +664,7 @@ fn parse_fold(text: &str) -> Result<FoldMlp, String> {
     Ok(md)
 }
 
-fn parse_state(text: &str) -> Result<StateMlp, String> {
+pub(crate) fn parse_state(text: &str) -> Result<StateMlp, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let (n_out, w2) = rows(&v, "W2")?;
     let b2 = nums(&v, &["b2"])?;
@@ -663,18 +672,21 @@ fn parse_state(text: &str) -> Result<StateMlp, String> {
         return Err("prev_inputs (previous-decision inputs) are no longer read".into());
     }
     let sit: Vec<String> = if v.get("sit_inputs").is_some() { strs(&v, &["sit_inputs"])? } else { Vec::new() };
-    if !sit.is_empty() && sit != crate::suzume::pf::SIT_NAMES {
-        return Err(format!("sit_inputs must be {:?}", crate::suzume::pf::SIT_NAMES));
+    let n_base = crate::suzume::pf::SIT_NAMES.len();
+    if !sit.is_empty() && (sit.len() < n_base || sit[..n_base] != crate::suzume::pf::SIT_NAMES) {
+        return Err(format!("sit_inputs must start with {:?}", crate::suzume::pf::SIT_NAMES));
     }
+    let summary_cols = if sit.is_empty() { Vec::new() } else { positions(&sit[n_base..], &crate::suzume::pf::PMF_SUMMARY)? };
     let sit_stat = |k: &str| -> Result<Vec<f64>, String> { if sit.is_empty() { Ok(Vec::new()) } else { nums(&v, &[k]) } };
     let inputs = strs(&v, &["inputs"])?;
     let net = parse_hidden(&v, inputs.len() + sit.len())?;
     let md = StateMlp {
-        cols: positions(&inputs, &crate::suzume::fold_model::FEATURES)?,
+        cols: positions(&inputs, crate::suzume::pf::state_input_names())?,
         inputs,
         mean: nums(&v, &["mean"])?,
         std: nums(&v, &["std"])?,
         n_sit: sit.len(),
+        summary_cols,
         sit_mean: sit_stat("sit_mean")?,
         sit_std: sit_stat("sit_std")?,
         net,

@@ -29,6 +29,21 @@
 //! The context (`cfg`) is a suzume config on the features set (the fold
 //! tables, and the push models whose choice the kan rows are first built
 //! with, as the Python player's `SuzumeFeatures`).
+//!
+//! P / M / F mixture (experimental, 2026-10-22): a directory set may add, for
+//! a discard kind `k` of `PMF_KINDS`, the experts `{k}_P`, `{k}_M`, `{k}_F`
+//! (A1 model files fitted with `--labels --state`), and `state.json`, a P / M / F
+//! state model (`params::StateMlp`, suzume-train `sp fit`, `--sit` or not). A
+//! decision of such a kind then takes the option of the highest
+//! `pi(o) = sum_s p_s softmax_s(o)`, `softmax_s` over the options of expert s's
+//! scores and `p` the state model's probabilities on the decision (its inputs
+//! as `sp rows` builds them: `fold_model::seat_features` on the view with the
+//! river, `hand_mlp` from the features set's push models, over every other
+//! seat and the legal discard types, and the situation), or `A1Config::pmf_fixed`.
+//! A state model may also read the experts' inputs (2026-10-23; `pmf_inputs`,
+//! `pf::PMF_TILE` / `pf::PMF_SUMMARY`): `state_inputs` builds every input of
+//! the state model, for play and for suzume-train's rows
+//! (`SuzumeFeatures.state_inputs`) alike.
 
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -38,12 +53,13 @@ use serde_json::Value;
 
 use super::config::SuzumeConfig;
 use super::ctx::Ctx;
-use super::fold_model::{FEATURES, FoldInputs, features};
+use super::fold_model::{FEATURES, FoldInputs, N_FEATURES, features, seat_features};
 use super::memo::SeatMemo;
 use super::mlp::{Hidden, Sit, add_bias, parse_hidden, parse_sit};
-use super::params::{num, nums, positions, strs};
+use super::params::{StateMlp, num, nums, parse_state, positions, strs};
+use super::pf::{N_PMF_SUMMARY, N_PMF_TILE, N_PMF_TOP, PMF_TILE_UNIVERSAL, legal_types, pmf_summary, situation};
 use super::rules::universal_mlp::mlp_choice;
-use super::universal::{N_U, kan_universal, kind_of, riichi_keep_row, u_names};
+use super::universal::{N_U, Universal, kan_universal, kind_of, riichi_keep_row, u_names};
 use super::view::{MjView, river_from_mjai};
 use super::view_of;
 
@@ -138,27 +154,278 @@ impl Model {
         self.b2 + self.w2.iter().zip(self.net.activate(z)).map(|(w, h)| w * h).sum::<f64>()
     }
 
-    /// The index of the best row (the first on a tie), the situation of view `v` added when the model reads it.
-    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> usize {
-        let si = self.state_index(state, opp);
+    /// The score of each row, the situation of view `v` added when the model reads it.
+    fn scores(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> Vec<f64> {
         let sit = self.sit.as_ref().map_or_else(Vec::new, |s| s.bias(&self.net, v));
-        let mut best = (0, f64::NEG_INFINITY);
-        for (i, r) in rows.iter().enumerate() {
-            let s = self.score(r, si, &sit);
-            if s > best.1 {
-                best = (i, s);
+        let si = self.state_index(state, opp);
+        rows.iter().map(|r| self.score(r, si, &sit)).collect()
+    }
+
+    /// The index of the best row (the first on a tie).
+    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> usize {
+        argmax(&self.scores(rows, state, opp, v))
+    }
+
+    /// The index of the best row under the play-style options (`A1Config`): `bias` (one per row, when given; the
+    /// `call_tendency` / `riichi_tendency` offsets) is added to this model's scores `s` first; then, for
+    /// `aggression` w != 0, the argmax of `(1 - |w|) s + |w| s_end`, `s_end` the scores of the endpoint model of w's
+    /// sign (`ends`: fold for w < 0, push for w > 0; `A1Models::ends`). The softmax normalizers cancel in the argmax,
+    /// so this mixes the log policies, and w = +-1 plays the endpoint itself. Without that endpoint, or w = 0: the
+    /// argmax of `s`. `riichi` (the rows that declare riichi, when the decision has any): riichi or not stays this
+    /// model's own choice and the mix picks only within that group (2026-10-23).
+    #[allow(clippy::too_many_arguments)]
+    fn best_styled(&self, ends: [Option<&Model>; 2], aggression: f64, rows: &[[f64; N_ROW]], state: &str, opp: bool,
+                   v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
+        let mut s = self.scores(rows, state, opp, v);
+        if let Some(b) = bias {
+            for (x, y) in s.iter_mut().zip(b) {
+                *x += y;
+            }
+        }
+        let own = argmax(&s);
+        let Some(end) = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0) else { return own };
+        let w = aggression.abs();
+        let group = riichi.map(|r| r[own]);
+        let mut best = (own, f64::NEG_INFINITY);
+        for (i, (y, x)) in end.scores(rows, state, opp, v).iter().zip(&s).enumerate() {
+            let t = (1.0 - w) * x + w * y;
+            if group.is_none_or(|g| riichi.unwrap()[i] == g) && t > best.1 {
+                best = (i, t);
             }
         }
         best.0
     }
 }
 
+/// The index of the highest value (the first on a tie; 0 when none beats -inf).
+fn argmax(x: &[f64]) -> usize {
+    let mut best = (0, f64::NEG_INFINITY);
+    for (i, &s) in x.iter().enumerate() {
+        if s > best.1 {
+            best = (i, s);
+        }
+    }
+    best.0
+}
+
+/// The scores of the P / M / F experts `ex` on `rows`.
+fn expert_scores(ex: &[Model; 3], rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> [Vec<f64>; 3] {
+    std::array::from_fn(|s| ex[s].scores(rows, state, opp, v))
+}
+
+/// The best row of the P / M / F experts' scores `sc` (`expert_scores`) mixed by the state probabilities `p`:
+/// the argmax of `sum_s p_s softmax_s` (the first on a tie).
+fn mixture_best(sc: &[Vec<f64>; 3], p: &[f64; 3]) -> usize {
+    let mut pi = vec![0.0; sc[0].len()];
+    for (s, &w) in sc.iter().zip(p) {
+        let top = s.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let e: Vec<f64> = s.iter().map(|x| (x - top).exp()).collect();
+        let z: f64 = e.iter().sum();
+        for (q, x) in pi.iter_mut().zip(e) {
+            *q += w * x / z;
+        }
+    }
+    argmax(&pi)
+}
+
+/// One decision's A1 rows: its universal options and rows with the danger columns, the model of its kind and the
+/// kind's `PMF_KINDS` index (none for discard12 and call).
+struct Rows<'m> {
+    u: std::rc::Rc<Universal>,
+    rows: Vec<[f64; N_ROW]>,
+    model: &'m Model,
+    /// The kind's endpoint models (`A1Models::ends`).
+    ends: [Option<&'m Model>; 2],
+    pk: Option<usize>,
+    /// `universal::kind_of`: 0 discard, 1 riichi legal, 2 tenpai, 3 call.
+    kind: u8,
+}
+
+/// The view `view` with the kyoku's river applied (what the fold features read).
+fn river_view(view: &MjView, kyoku_events: &[Value]) -> Result<MjView, String> {
+    let mut rv = view.clone();
+    rv.apply_river(&river_from_mjai(kyoku_events)?);
+    Ok(rv)
+}
+
+/// The A1 rows of the decision of `ctx` (on the view without the river; `rv` the view with it) under the models
+/// `md`; `None` without an option or out of the models' kinds.
+fn decision_rows<'m>(ctx: &Ctx, md: &'m A1Models, rv: &MjView) -> Option<Rows<'m>> {
+    let u = ctx.universal(true);
+    if u.options.is_empty() {
+        return None;
+    }
+    let kind = kind_of(ctx)?;
+    // The shanten columns read the hand only, so the decision's own candidates serve.
+    let mut shanten_after = [None; 34];
+    for c in ctx.discard_cands() {
+        shanten_after[usize::from(c.tile_type)] = Some(c.shanten);
+    }
+    let inp = FoldInputs { shanten_after, hand_mlp: [0.0; 34] };
+    let x: [_; 3] = std::array::from_fn(|k| features(ctx.models.tables(), rv, (usize::from(rv.seat) + k + 1) % 4, &inp));
+    let diff = score_diffs(ctx.view);
+    let rows: Vec<[f64; N_ROW]> = u
+        .options
+        .iter()
+        .zip(&u.rows)
+        .map(|(&(k, id), r)| {
+            let mut row = [0.0; N_ROW];
+            row[..N_U].copy_from_slice(r);
+            row[N_U..].copy_from_slice(&danger_row(k, id, &x, &diff));
+            row
+        })
+        .collect();
+    let (model, pk, kn) = match kind {
+        0 if u.context.shanten_ref >= 3 => (&md.discard3, Some(3), Some(3)),
+        0 if u.context.shanten_ref == 1 && md.discard1.is_some() => (md.discard1.as_ref().unwrap(), Some(1), Some(1)),
+        0 if u.context.shanten_ref == 2 && md.discard2.is_some() => (md.discard2.as_ref().unwrap(), Some(2), Some(2)),
+        0 => match &md.discard12 {
+            Some(m) => (m, None, None),
+            // A set without discard12 has discard1 (`A1Models::from_reader`); play reaches this only for a discard
+            // decision outside shanten 1 / 2 / >= 3.
+            None => (md.discard1.as_ref().unwrap(), Some(1), Some(1)),
+        },
+        1 | 2 => (if kind == 1 { &md.riichi } else { &md.tenpai }, Some(0), Some(0)),
+        _ => (&md.call, None, Some(4)),
+    };
+    let ends = kn.map_or([None, None], |i| md.end_models(i));
+    Some(Rows { u, rows, model, ends, pk, kind: kind as u8 })
+}
+
+/// The experts' per-tile state inputs (`pf::PMF_TILE`) from their scores `sc` (`expert_scores`) of the rows `r`:
+/// for each tile type of a discard-like option (discard, dama, break, riichi), the P expert's highest score over
+/// the type's options minus its highest over every such option, the same for the F expert, the universal `A_ev` /
+/// `A_win` of the type's option the P expert scores highest (the first on a tie), the M expert's diff and that
+/// option's `pf::PMF_TILE_UNIVERSAL` columns; 0 for the other types.
+pub fn pmf_tile(options: &[(&str, u16)], rows: &[[f64; N_ROW]], sc: &[Vec<f64>; 3]) -> [[f64; N_PMF_TILE]; 34] {
+    static A: OnceLock<[usize; 11]> = OnceLock::new();
+    let a = A.get_or_init(|| {
+        let at = |n: &str| u_names().iter().position(|x| x == n).unwrap_or_else(|| panic!("universal {n}"));
+        let mut a = [at("A_ev"), at("A_win"), 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        for (j, n) in PMF_TILE_UNIVERSAL.iter().enumerate() {
+            a[2 + j] = at(n);
+        }
+        a
+    });
+    let ninf = [f64::NEG_INFINITY; 34];
+    let (mut best, mut at) = ([ninf; 3], [None; 34]);
+    for (i, &(k, id)) in options.iter().enumerate() {
+        if !matches!(k, "discard" | "dama" | "break" | "riichi") {
+            continue;
+        }
+        let t = usize::from(tile_of(id).0);
+        if sc[0][i] > best[0][t] {
+            at[t] = Some(i);
+        }
+        for s in 0..3 {
+            best[s][t] = best[s][t].max(sc[s][i]);
+        }
+    }
+    let top = best.map(|b| b.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+    std::array::from_fn(|t| {
+        let Some(i) = at[t] else { return [0.0; N_PMF_TILE] };
+        let mut x = [0.0; N_PMF_TILE];
+        x[0] = best[0][t] - top[0];
+        x[1] = best[2][t] - top[2];
+        x[2] = rows[i][a[0]];
+        x[3] = rows[i][a[1]];
+        x[4] = best[1][t] - top[1];
+        for j in 0..PMF_TILE_UNIVERSAL.len() {
+            x[5 + j] = rows[i][a[2 + j]];
+        }
+        x
+    })
+}
+
+/// The decision's own columns of the state summary (`pf::PMF_SUMMARY`'s `dec:*`, after `N_PMF_TOP`): the
+/// universal context's progress (`1 - live wall / 70`), turn and reference shanten, riichi legal (kind 1), a
+/// tenpai decision (kind 1 or 2), the other seats in riichi, the legal discard types, a closed hand (`A_menzen`),
+/// dealer and leading (`UContext::oya` / `top`).
+fn pmf_decision(r: &Rows, view: &MjView, legal: &[usize]) -> [f64; N_PMF_SUMMARY - N_PMF_TOP] {
+    let c = &r.u.context;
+    let menzen = u_names().iter().position(|x| x == "A_menzen").map_or(0.0, |j| r.u.rows[0][j]);
+    let b = |x: bool| f64::from(u8::from(x));
+    [
+        c.progress,
+        f64::from(c.turn),
+        f64::from(c.shanten_ref),
+        b(r.kind == 1),
+        b(r.kind == 1 || r.kind == 2),
+        view.riichi_threats().count() as f64,
+        legal.len() as f64,
+        menzen,
+        b(c.oya),
+        b(c.top),
+    ]
+}
+
+/// Every input of the P / M / F state model on an own-turn discard decision (`state_inputs`).
+pub struct StateInputs {
+    /// The fold features against each other seat (`fold_model::seat_features` on the view with the river).
+    pub feats: [(usize, [[f64; N_FEATURES]; 34]); 3],
+    /// The legal discard types.
+    pub legal: Vec<usize>,
+    /// The experts' per-tile inputs (`pmf_tile`; zeros without experts).
+    pub tile: [[f64; N_PMF_TILE]; 34],
+    /// Their summary over the legal types (`pf::pmf_summary`; zeros without experts).
+    pub summary: [f64; N_PMF_SUMMARY],
+    /// Whether the decision's kind had P / M / F experts (else `tile` and `summary` are zeros).
+    pub experts: bool,
+    /// The raw situation (`pf::situation`).
+    pub sit: [f64; 21],
+}
+
+/// The state model's inputs on the decision of `ctx` (the view without the river), `rv` the view with it and
+/// `on` the decision's rows and their experts' scores when it has experts; `None` without a legal discard.
+fn inputs_on(ctx: &Ctx, rv: &MjView, on: Option<(&Rows, &[Vec<f64>; 3])>) -> Option<StateInputs> {
+    let rctx = Ctx::with_memo(rv, ctx.cfg, ctx.take_memo());
+    let legal = legal_types(&rctx);
+    let out = (!legal.is_empty()).then(|| {
+        let tile = on.map_or([[0.0; N_PMF_TILE]; 34], |(r, sc)| pmf_tile(&r.u.options, &r.rows, sc));
+        let summary = match on {
+            Some((r, _)) => {
+                let mut s = pmf_summary(&tile, &legal);
+                s[N_PMF_TOP..].copy_from_slice(&pmf_decision(r, ctx.view, &legal));
+                s
+            }
+            None => [0.0; N_PMF_SUMMARY],
+        };
+        StateInputs { feats: seat_features(&rctx), tile, summary, experts: on.is_some(), sit: situation(rv), legal }
+    });
+    ctx.put_memo(rctx.into_memo());
+    out
+}
+
+/// The state model's inputs on an own-turn discard decision of `ctx` (a view without the river) under the A1
+/// models `md`, the experts those of the decision's kind (`decision_rows`); `None` without a legal discard. The
+/// one code path of play (`decide`, `state_probs`) and of suzume-train's rows.
+pub fn state_inputs(ctx: &Ctx, md: &A1Models, kyoku_events: &[Value]) -> Result<Option<StateInputs>, String> {
+    let rv = river_view(ctx.view, kyoku_events)?;
+    let opp = ctx.view.riichi_threats().next().is_some();
+    let r = decision_rows(ctx, md, &rv);
+    let sc = r.as_ref().and_then(|r| {
+        let ex = r.pk.and_then(|k| md.pmf[k].as_deref())?;
+        Some(expert_scores(ex, &r.rows, &r.u.state.0, opp, ctx.view))
+    });
+    Ok(inputs_on(ctx, &rv, r.as_ref().zip(sc.as_ref())))
+}
+
+/// The P / M / F probabilities of state model `st` on inputs `x`.
+fn probs_of(st: &StateMlp, x: &StateInputs, rv: &MjView) -> [f64; 3] {
+    st.probs(&x.feats, &x.legal, &x.tile, &st.sit_inputs(rv, &x.summary))
+}
+
+/// The discard kinds that may have P / M / F experts (`{k}_P`, `{k}_M`, `{k}_F`): discard0 serves both the
+/// riichi-legal and the tenpai decisions.
+pub const PMF_KINDS: [&str; 4] = ["discard0", "discard1", "discard2", "discard3"];
+
 /// The models of an A1 directory (`discard0`, `discard12`, `discard3`, `call`, `kan`; or the first A1's names:
 /// `discard_P_t` + `riichi_P` for discard0, `discard_P_12`, `discard_P_3`, `call_P`, `kan`). Optional `discard1` /
-/// `discard2` (2026-10-19, the split of discard12) take the 1- / 2-shanten discards when present.
+/// `discard2` (2026-10-19, the split of discard12) take the 1- / 2-shanten discards when present; a set with both
+/// needs no `discard12` (2026-10-24: the split sets never reach it).
 pub struct A1Models {
     dir: String,
-    discard12: Model,
+    discard12: Option<Model>,
     discard1: Option<Model>,
     discard2: Option<Model>,
     discard3: Model,
@@ -166,7 +433,18 @@ pub struct A1Models {
     riichi: Model,
     call: Model,
     kan: Model,
+    /// The P / M / F experts of each `PMF_KINDS` kind, when the set has all three files.
+    pmf: [Option<Box<[Model; 3]>>; 4],
+    /// The P / M / F state model (`state.json`), when present.
+    state: Option<StateMlp>,
+    /// The endpoint models `{k}_fold.json` / `{k}_push.json` of `STYLE_KINDS` (2026-10-24: plain models fitted on the
+    /// teacher's pi_maxthr / pi_push, suzume-train `fit --endpoint`), when present; read only under
+    /// `A1Config::aggression`.
+    ends: [[Option<Model>; 2]; 6],
 }
+
+/// The kinds a set may give endpoint models (`A1Models::ends`).
+pub const STYLE_KINDS: [&str; 6] = ["discard0", "discard1", "discard2", "discard3", "call", "kan"];
 
 impl std::fmt::Debug for A1Models {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -210,17 +488,53 @@ impl A1Models {
             }
             Err(format!("{}: missing", file(names[0])))
         };
+        let mut pmf: [Option<Box<[Model; 3]>>; 4] = Default::default();
+        for (slot, k) in pmf.iter_mut().zip(PMF_KINDS) {
+            let ex = ["P", "M", "F"].map(|s| opt(&format!("{k}_{s}")));
+            if ex.iter().all(|e| matches!(e, Ok(None))) {
+                continue;
+            }
+            let [p, m, f] = ex;
+            match (p?, m?, f?) {
+                (Some(p), Some(m), Some(f)) => *slot = Some(Box::new([p, m, f])),
+                _ => return Err(format!("{label}: {k}_P / {k}_M / {k}_F: all three or none")),
+            }
+        }
+        let state = read("state")?.map(|t| parse_state(&t).map_err(|e| format!("{}: {e}", file("state")))).transpose()?;
+        let mut ends: [[Option<Model>; 2]; 6] = Default::default();
+        for (slot, k) in ends.iter_mut().zip(STYLE_KINDS) {
+            for (e, s) in slot.iter_mut().zip(["fold", "push"]) {
+                let name = format!("{k}_{s}");
+                if let Some(md) = opt(&name)? {
+                    *e = Some(md);
+                }
+            }
+        }
+        let (discard1, discard2) = (opt("discard1")?, opt("discard2")?);
+        let discard12 = match opt("discard12")? {
+            Some(md) => Some(md),
+            None if discard1.is_some() && discard2.is_some() => opt("discard_P_12")?,
+            None => Some(m(&["discard12", "discard_P_12"])?),
+        };
         Ok(Self {
             dir: label.to_string(),
-            discard12: m(&["discard12", "discard_P_12"])?,
-            discard1: opt("discard1")?,
-            discard2: opt("discard2")?,
+            discard12,
+            discard1,
+            discard2,
             discard3: m(&["discard3", "discard_P_3"])?,
             tenpai: m(&["discard0", "discard_P_t"])?,
             riichi: m(&["discard0", "riichi_P"])?,
             call: m(&["call", "call_P"])?,
             kan: m(&["kan"])?,
+            pmf,
+            state,
+            ends,
         })
+    }
+
+    /// The endpoint models (a = 0, a = 1) of `STYLE_KINDS` kind `i`.
+    fn end_models(&self, i: usize) -> [Option<&Model>; 2] {
+        [self.ends[i][0].as_ref(), self.ends[i][1].as_ref()]
     }
 
     /// The built-in set of player name `name` (`BUILTIN`), parsed on first use.
@@ -249,24 +563,23 @@ macro_rules! a1_files {
 }
 
 /// The built-in A1 sets, the default (`suzume`) first: the discard1 / discard2 split sets fitted on the
-/// Mortal-teacher games (`suzume`) and the rlactor-225-teacher games (`suzume-rla225`), and their discard12
-/// counterparts (`-d12`, for reference; 2026-10-21).
-pub static BUILTIN: [Builtin; 4] = [
+/// Mortal-teacher games (`suzume`) and the rlactor-225-teacher games (`suzume-rla225`), without discard12
+/// (2026-10-24: the discard12 counterparts `-d12` and the sets' unused discard12 models dropped).
+/// `suzume` also has the push / fold endpoint models of `aggression` (`A1Models::ends`, 2026-10-24: discard0 3x48,
+/// discard1 / discard2 3x88, discard3 3x64, call 3x40, kan 3x16).
+pub static BUILTIN: [Builtin; 2] = [
     Builtin {
         name: "suzume",
         dir: "suzume",
-        files: a1_files!("suzume", ["discard0", "discard12", "discard1", "discard2", "discard3", "call", "kan"]),
+        files: a1_files!("suzume", ["discard0", "discard1", "discard2", "discard3", "call", "kan",
+                                    "discard0_push", "discard0_fold", "discard1_push", "discard1_fold", "discard2_push",
+                                    "discard2_fold", "discard3_push", "discard3_fold", "call_push", "call_fold", "kan_push",
+                                    "kan_fold"]),
     },
     Builtin {
         name: "suzume-rla225",
         dir: "rla225",
-        files: a1_files!("rla225", ["discard0", "discard12", "discard1", "discard2", "discard3", "call", "kan"]),
-    },
-    Builtin { name: "suzume-d12", dir: "d12", files: a1_files!("d12", ["discard0", "discard12", "discard3", "call", "kan"]) },
-    Builtin {
-        name: "suzume-rla225-d12",
-        dir: "rla225_d12",
-        files: a1_files!("rla225_d12", ["discard0", "discard12", "discard3", "call", "kan"]),
+        files: a1_files!("rla225", ["discard0", "discard1", "discard2", "discard3", "call", "kan"]),
     },
 ];
 
@@ -275,6 +588,20 @@ pub static BUILTIN: [Builtin; 4] = [
 pub struct A1Config {
     pub cfg: SuzumeConfig,
     pub models: &'static A1Models,
+    /// The P / M / F weights of the experts' mixture in place of the state model's (an ablation; `None`: the
+    /// state model's).
+    pub pmf_fixed: Option<[f64; 3]>,
+    /// Push / fold in [-1, 1] (`Model::best_styled`; 2026-10-23, named `knob_delta` until 2026-10-24): > 0 toward
+    /// the push endpoint, < 0 toward the fold endpoint, applied to the kinds with endpoint models (`{k}_fold.json` /
+    /// `{k}_push.json`); 0 plays the set's own models as they are.
+    pub aggression: f64,
+    /// How readily it calls (2026-10-24, named `call_bias` at first): added to the score of every chi / pon / daiminkan option of a call decision, so
+    /// the odds of calling against passing are multiplied by `exp(call_tendency)`; 0 plays as before.
+    pub call_tendency: f64,
+    /// How readily it declares riichi (2026-10-24, named `riichi_bias` at first): added to the score of every riichi option of a riichi-legal decision, so the
+    /// odds of declaring against not declaring are multiplied by `exp(riichi_tendency)` (the riichi lock of
+    /// `Model::best_styled` then keeps that choice); 0 plays as before.
+    pub riichi_tendency: f64,
 }
 
 impl A1Config {
@@ -283,8 +610,55 @@ impl A1Config {
     pub fn builtin(name: &str) -> Option<Self> {
         let models = A1Models::builtin(name)?;
         let cfg = SuzumeConfig { pf: false, fold: false, models: super::params::features_set(), ..SuzumeConfig::default() };
-        Some(Self { cfg, models })
+        Some(Self { cfg, models, pmf_fixed: None, aggression: 0.0, call_tendency: 0.0, riichi_tendency: 0.0 })
     }
+
+    /// The bot of a directory set's `models` on the features-set config `cfg`, the mixture weights fixed by
+    /// `pmf_fixed` (`parse_pmf`) when given. A set with P / M / F experts needs `state.json` or `pmf_fixed`;
+    /// `pmf_fixed` needs experts. A nonzero `aggression` needs at least one endpoint model.
+    pub fn new(cfg: SuzumeConfig, models: &'static A1Models, pmf_fixed: Option<&str>, aggression: f64,
+               call_tendency: f64, riichi_tendency: f64) -> Result<Self, String> {
+        if ![aggression, call_tendency, riichi_tendency].iter().all(|x| x.is_finite()) {
+            return Err(format!("aggression {aggression} / call_tendency {call_tendency} / riichi_tendency {riichi_tendency}: not finite"));
+        }
+        if aggression.abs() > 1.0 {
+            return Err(format!("aggression {aggression}: not in [-1, 1]"));
+        }
+        if aggression != 0.0 && models.ends.iter().flatten().all(Option::is_none) {
+            return Err(format!("{}: aggression without push / fold models ({{k}}_push / _fold.json)", models.dir));
+        }
+        let pmf_fixed = pmf_fixed.map(parse_pmf).transpose()?;
+        let has = models.pmf.iter().any(Option::is_some);
+        if has && models.state.is_none() && pmf_fixed.is_none() {
+            return Err(format!("{}: P / M / F experts without state.json (add it, or pass pmf_fixed)", models.dir));
+        }
+        if !has && pmf_fixed.is_some() {
+            return Err(format!("{}: pmf_fixed without P / M / F experts ({{k}}_P / _M / _F)", models.dir));
+        }
+        Ok(Self { cfg, models, pmf_fixed, aggression, call_tendency, riichi_tendency })
+    }
+}
+
+/// Mixture weights from `"P"`, `"M"` or `"F"` (one-hot) or three non-negative numbers `"p,m,f"` (brackets
+/// allowed; normalized to sum 1).
+pub fn parse_pmf(s: &str) -> Result<[f64; 3], String> {
+    let t = s.trim();
+    if let Some(i) = ["P", "M", "F"].iter().position(|x| t.eq_ignore_ascii_case(x)) {
+        let mut p = [0.0; 3];
+        p[i] = 1.0;
+        return Ok(p);
+    }
+    let bad = || format!("pmf_fixed {s:?}: P, M, F or three non-negative numbers p,m,f");
+    let v: Vec<f64> = t
+        .trim_start_matches(['[', '(']).trim_end_matches([']', ')'])
+        .split(',')
+        .map(|x| x.trim().parse::<f64>().map_err(|_| bad()))
+        .collect::<Result<_, _>>()?;
+    let z: f64 = v.iter().sum();
+    if v.len() != 3 || v.iter().any(|&x| !(x >= 0.0) || !x.is_finite()) || !(z > 0.0) {
+        return Err(bad());
+    }
+    Ok([v[0] / z, v[1] / z, v[2] / z])
 }
 
 /// The tile type and red flag a discard-like option id names.
@@ -368,6 +742,27 @@ fn danger_row(kind: &str, id: u16, x: &[[[f64; super::fold_model::N_FEATURES]; 3
     out
 }
 
+/// The state model's P / M / F probabilities on the seat's decision, as the mixture reads them; `None` for a
+/// set without `state.json` or a decision that is not an own-turn discard out of riichi (for checks against
+/// suzume-train's `sp` model).
+pub fn state_probs(
+    obs: &riichienv_core::observation::Observation,
+    kyoku_events: &[Value],
+    a1: &A1Config,
+    memo: &mut SeatMemo,
+) -> Result<Option<[f64; 3]>, String> {
+    let Some(st) = &a1.models.state else { return Ok(None) };
+    let view = view_of(obs, kyoku_events, &a1.cfg, false)?;
+    if view.in_riichi || !view.legal.iter().any(|a| a.action_type == ActionType::Discard) {
+        return Ok(None);
+    }
+    let ctx = Ctx::with_memo(&view, &a1.cfg, std::mem::take(memo));
+    let x = state_inputs(&ctx, a1.models, kyoku_events);
+    *memo = ctx.into_memo();
+    let rv = river_view(&view, kyoku_events)?;
+    Ok(x?.map(|x| probs_of(st, &x, &rv)))
+}
+
 /// One A1 decision on the seat's observation, the kyoku's events and the seat's kyoku memo.
 pub fn decide(
     obs: &riichienv_core::observation::Observation,
@@ -397,45 +792,41 @@ pub fn decide(
     let opp = view.riichi_threats().next().is_some();
     // This decision's universal options, rows (with the danger columns) and its model's choice.
     let uni = (|| {
-        let u = ctx.universal(true);
-        if u.options.is_empty() {
-            return Ok(None);
-        }
-        let Some(kind) = kind_of(&ctx) else { return Ok(None) };
-        let mut rv = view.clone();
-        rv.apply_river(&river_from_mjai(kyoku_events)?);
-        // The shanten columns read the hand only, so the decision's own candidates serve.
-        let mut shanten_after = [None; 34];
-        for c in ctx.discard_cands() {
-            shanten_after[usize::from(c.tile_type)] = Some(c.shanten);
-        }
-        let inp = FoldInputs { shanten_after, hand_mlp: [0.0; 34] };
-        let x: [_; 3] = std::array::from_fn(|k| {
-            features(ctx.models.tables(), &rv, (usize::from(rv.seat) + k + 1) % 4, &inp)
-        });
-        let diff = score_diffs(&view);
-        let rows: Vec<[f64; N_ROW]> = u
-            .options
-            .iter()
-            .zip(&u.rows)
-            .map(|(&(k, id), r)| {
-                let mut row = [0.0; N_ROW];
-                row[..N_U].copy_from_slice(r);
-                row[N_U..].copy_from_slice(&danger_row(k, id, &x, &diff));
-                row
-            })
-            .collect();
-        let model = match kind {
-            0 if u.context.shanten_ref >= 3 => &md.discard3,
-            0 if u.context.shanten_ref == 1 && md.discard1.is_some() => md.discard1.as_ref().unwrap(),
-            0 if u.context.shanten_ref == 2 && md.discard2.is_some() => md.discard2.as_ref().unwrap(),
-            0 => &md.discard12,
-            1 => &md.riichi,
-            2 => &md.tenpai,
-            _ => &md.call,
+        let rv = river_view(&view, kyoku_events)?;
+        let Some(r) = decision_rows(&ctx, md, &rv) else { return Ok(None) };
+        let ex = r.pk.and_then(|k| md.pmf[k].as_deref());
+        let best = match ex {
+            Some(ex) if a1.pmf_fixed.is_some() || md.state.is_some() => {
+                let sc = expert_scores(ex, &r.rows, &r.u.state.0, opp, &view);
+                let p = match (a1.pmf_fixed, &md.state) {
+                    (Some(p), _) => Some(p),
+                    (None, Some(st)) => inputs_on(&ctx, &rv, Some((&r, &sc))).map(|x| probs_of(st, &x, &rv)),
+                    (None, None) => None,
+                };
+                match p {
+                    Some(p) => mixture_best(&sc, &p),
+                    None => r.model.best(&r.rows, &r.u.state.0, opp, &view),
+                }
+            }
+            _ => {
+                let riichi: Vec<bool> = r.u.options.iter().map(|(k, _)| *k == "riichi").collect();
+                let calls = |k: &str| matches!(k, "chi" | "pon" | "daiminkan");
+                let bias: Vec<f64> = r
+                    .u
+                    .options
+                    .iter()
+                    .map(|(k, _)| match () {
+                        _ if r.kind == 3 && calls(k) => a1.call_tendency,
+                        _ if *k == "riichi" => a1.riichi_tendency,
+                        _ => 0.0,
+                    })
+                    .collect();
+                r.model.best_styled(r.ends, a1.aggression, &r.rows, &r.u.state.0, opp, &view,
+                                    riichi.contains(&true).then_some(&riichi[..]),
+                                    (a1.call_tendency != 0.0 || a1.riichi_tendency != 0.0).then_some(&bias[..]))
+            }
         };
-        let best = model.best(&rows, &u.state.0, opp, &view);
-        Ok::<_, String>(Some((u, best)))
+        Ok::<_, String>(Some((r.u, best)))
     })();
     let out = (|| {
         let uni = uni?;
@@ -460,7 +851,7 @@ pub fn decide(
                         row
                     })
                     .collect();
-                let best = md.kan.best(&rows, &k.state.0, opp, &view);
+                let best = md.kan.best_styled(md.end_models(5), a1.aggression, &rows, &k.state.0, opp, &view, None, None);
                 if best > 0 {
                     let (kind, id) = k.options[best];
                     if let Some(a) = option_action(&legal, kind, id) {
@@ -504,13 +895,144 @@ mod tests {
     fn every_builtin_set_parses_with_its_features_set() {
         for b in &BUILTIN {
             let c = A1Config::builtin(b.name).expect("a built-in set");
-            assert_eq!(c.models.discard1.is_some(), !b.name.ends_with("-d12"), "{}", b.name);
-            assert_eq!(c.models.discard2.is_some(), c.models.discard1.is_some(), "{}", b.name);
+            assert!(c.models.discard1.is_some() && c.models.discard2.is_some(), "{}", b.name);
+            assert!(c.models.discard12.is_none(), "{}", b.name);
             assert!(!c.cfg.pf && !c.cfg.fold);
             assert!(c.cfg.check_models().is_ok());
             assert!(super::super::params::set_models(c.cfg.models).tables.is_some());
         }
         assert_eq!(BUILTIN[0].name, "suzume");
         assert!(A1Config::builtin("legacy-suzume-mlp3").is_none());
+    }
+
+    #[test]
+    fn builtin_suzume_has_the_endpoint_models() {
+        let c = A1Config::builtin("suzume").unwrap();
+        assert_eq!((c.aggression, c.call_tendency, c.riichi_tendency), (0.0, 0.0, 0.0));
+        for (i, k) in STYLE_KINDS.iter().enumerate() {
+            assert!(c.models.ends[i].iter().all(Option::is_some), "{k}");
+        }
+        assert!(A1Config::new(c.cfg, c.models, None, -1.0, 0.0, 0.0).is_ok());
+        let r = A1Config::builtin("suzume-rla225").unwrap();
+        assert!(A1Config::new(r.cfg, r.models, None, 0.5, 0.0, 0.0).is_err());
+    }
+
+    #[test]
+    fn the_tile_inputs_are_the_experts_scores_minus_their_best() {
+        let a_ev = u_names().iter().position(|x| x == "A_ev").unwrap();
+        let a_win = u_names().iter().position(|x| x == "A_win").unwrap();
+        // a riichi decision: dama 3, riichi 3, break 4 (the red five 34 too), and a non-discard option
+        let options = [("dama", 3u16), ("riichi", 3), ("break", 4), ("discard", 34), ("pass", 82)];
+        let mut rows = vec![[0.0; N_ROW]; options.len()];
+        for (i, r) in rows.iter_mut().enumerate() {
+            r[a_ev] = 10.0 + i as f64;
+            r[a_win] = 0.1 * i as f64;
+        }
+        let p = vec![1.0, 2.5, 0.5, 0.7, 9.0];
+        let f = vec![-1.0, -3.0, 0.2, 0.1, 9.0];
+        let sc = [p.clone(), vec![0.0; 5], f.clone()];
+        let x = pmf_tile(&options, &rows, &sc);
+        // type 3: P best is the riichi option (2.5, the decision's best), F's best over its options -1.0
+        assert_eq!(x[3][..4], [0.0, -1.0 - 0.2, 11.0, 0.1]);
+        assert_eq!(x[3][4], 0.0);
+        // type 4: P max(0.5, 0.7) - 2.5, A_* of the red-five discard (row 3); F max(0.2, 0.1) - 0.2
+        assert_eq!(x[4][0], 0.7 - 2.5);
+        assert_eq!(x[4][1], 0.0);
+        assert_eq!(x[4][2..4], [13.0, 0.1 * 3.0]);
+        assert_eq!(x[5], [0.0; N_PMF_TILE]);
+    }
+
+    #[test]
+    fn a_state_model_reads_expert_inputs_by_name() {
+        let text = |inputs: &[&str], sit: &[&str]| {
+            let n = inputs.len() + sit.len();
+            serde_json::json!({
+                "inputs": inputs, "mean": vec![0.0; inputs.len()], "std": vec![1.0; inputs.len()],
+                "sit_inputs": sit, "sit_mean": vec![0.0; sit.len()], "sit_std": vec![1.0; sit.len()],
+                "hidden": 2, "layers": 1, "W1": vec![vec![0.0; n]; 2], "b1": [0.0, 0.0], "Wh": [], "bh": [],
+                "W2": vec![vec![0.0; 4]; 3], "b2": [0.0, 0.0, 0.0],
+            })
+            .to_string()
+        };
+        let sit: Vec<&str> = super::super::pf::SIT_NAMES.iter().copied().chain(["pmf:top_p2:p", "pmf:has3"]).collect();
+        let st = parse_state(&text(&["patterns_log", "pmf:f_diff"], &sit)).unwrap();
+        assert_eq!(st.cols, [0, N_FEATURES + 1]);
+        assert_eq!(st.summary_cols, [3, 23]);
+        assert_eq!(st.n_sit, 23);
+        assert!(parse_state(&text(&["patterns_log", "pmf:nope"], &sit)).is_err());
+        assert!(parse_state(&text(&["patterns_log"], &["pmf:has2"])).is_err());
+        let old = parse_state(&text(&["patterns_log"], &super::super::pf::SIT_NAMES)).unwrap();
+        assert!(old.summary_cols.is_empty() && old.n_sit == 21);
+    }
+
+    #[test]
+    fn pmf_weights_parse() {
+        assert_eq!(parse_pmf("P").unwrap(), [1.0, 0.0, 0.0]);
+        assert_eq!(parse_pmf(" f ").unwrap(), [0.0, 0.0, 1.0]);
+        assert_eq!(parse_pmf("[1, 2, 1]").unwrap(), [0.25, 0.5, 0.25]);
+        for bad in ["", "X", "1,2", "1,-1,1", "0,0,0", "a,b,c", "1,nan,1"] {
+            assert!(parse_pmf(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn pmf_experts_need_all_three_files() {
+        let b = &BUILTIN[0];
+        // The base models without the built-in endpoint models.
+        let base = |n: &str| {
+            let ends = n.ends_with("_push") || n.ends_with("_fold");
+            b.files.iter().find(|(f, _)| *f == n && !ends).map(|(_, t)| t.to_string())
+        };
+        let with = |extra: &'static [&'static str]| {
+            move |n: &str| -> Result<Option<String>, String> {
+                if extra.contains(&n) {
+                    return Ok(base("discard3"));
+                }
+                Ok(base(n))
+            }
+        };
+        let full = A1Models::from_reader("t", with(&["discard3_P", "discard3_M", "discard3_F"])).unwrap();
+        assert!(full.pmf[3].is_some() && full.pmf[..3].iter().all(Option::is_none) && full.state.is_none());
+        assert!(A1Models::from_reader("t", with(&["discard3_P", "discard3_M"])).is_err());
+        assert!(A1Models::from_reader("t", with(&[])).unwrap().pmf.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn discard12_is_needed_only_without_the_split() {
+        let b = &BUILTIN[0];
+        let base = |n: &str| b.files.iter().find(|(f, _)| *f == n).map(|(_, t)| t.to_string());
+        assert!(A1Models::from_reader("t", |n: &str| Ok(base(n))).unwrap().discard12.is_none());
+        let no_d2 = |n: &str| Ok(if n == "discard2" { None } else { base(n) });
+        assert!(A1Models::from_reader("t", no_d2).is_err());
+        let d12 = |n: &str| Ok(base(match n { "discard2" => "x", "discard12" => "discard1", _ => n }));
+        assert!(A1Models::from_reader("t", d12).unwrap().discard12.is_some());
+    }
+
+    #[test]
+    fn the_style_options_are_checked() {
+        let b = &BUILTIN[0];
+        // The base models without the built-in endpoint models.
+        let base = |n: &str| {
+            let ends = n.ends_with("_push") || n.ends_with("_fold");
+            b.files.iter().find(|(f, _)| *f == n && !ends).map(|(_, t)| t.to_string())
+        };
+        let plain = A1Models::from_reader("t", |n: &str| Ok(base(n))).unwrap();
+        assert!(plain.ends.iter().flatten().all(Option::is_none));
+        let md: &'static A1Models = Box::leak(Box::new(plain));
+        let cfg = A1Config::builtin("suzume").unwrap().cfg;
+        assert!(A1Config::new(cfg, md, None, 0.0, 0.0, 0.0).is_ok());
+        assert!(A1Config::new(cfg, md, None, 0.25, 0.0, 0.0).is_err()); // no endpoint models
+        assert!(A1Config::new(cfg, md, None, f64::NAN, 0.0, 0.0).is_err());
+        assert!(A1Config::new(cfg, md, None, 0.0, 1.0, 0.0).is_ok());
+        assert!(A1Config::new(cfg, md, None, 0.0, 0.0, f64::INFINITY).is_err());
+        // discard3 itself as both endpoints of discard3 only.
+        let ends = A1Models::from_reader("t", |n: &str| {
+            Ok(base(if n == "discard3_fold" || n == "discard3_push" { "discard3" } else { n }))
+        })
+        .unwrap();
+        assert!(ends.ends[3].iter().all(Option::is_some) && ends.ends[..3].iter().flatten().all(Option::is_none));
+        let md: &'static A1Models = Box::leak(Box::new(ends));
+        assert!(A1Config::new(cfg, md, None, -0.5, 0.0, 0.0).is_ok());
+        assert!(A1Config::new(cfg, md, None, 1.5, 0.0, 0.0).is_err());
     }
 }

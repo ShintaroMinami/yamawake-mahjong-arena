@@ -49,9 +49,10 @@ pub type SeatFeatures = [(usize, [[f64; N_FEATURES]; 34])];
 
 impl StateMlp {
     /// The P / M / F probabilities from the features against each other seat,
-    /// pooled over the `legal` discard types, and the decision-level inputs
-    /// `extra` (the situation inputs, `n_sit` values).
-    pub fn probs(&self, feats: &SeatFeatures, legal: &[usize], extra: &[f64]) -> [f64; 3] {
+    /// pooled over the `legal` discard types, the experts' per-tile inputs
+    /// `tile` (`PMF_TILE`, read by a model with such inputs; zeros else) and the
+    /// decision-level inputs `extra` (`sit_inputs`, `n_sit` values).
+    pub fn probs(&self, feats: &SeatFeatures, legal: &[usize], tile: &[[f64; N_PMF_TILE]; 34], extra: &[f64]) -> [f64; 3] {
         let cols = &self.cols;
         let (n_in, net) = (self.inputs.len(), &self.net);
         let h = net.out_width();
@@ -63,7 +64,11 @@ impl StateMlp {
         let mut n = 0.0;
         for (_, f) in feats {
             for &t in legal {
-                let x: Vec<f64> = cols.iter().enumerate().map(|(j, &c)| (f[t][c] - self.mean[j]) / self.std[j]).collect();
+                let x: Vec<f64> = cols
+                    .iter()
+                    .enumerate()
+                    .map(|(j, &c)| (if c < N_FEATURES { f[t][c] } else { tile[t][c - N_FEATURES] } - self.mean[j]) / self.std[j])
+                    .collect();
                 let z = net.pre_from(&base, &x, 0);
                 for (k, z) in net.activate(z).into_iter().enumerate() {
                     sum[k] += z;
@@ -79,14 +84,85 @@ impl StateMlp {
         softmax(logits)
     }
 
-    /// The situation inputs of a decision (`situation`, standardized; none
-    /// for a model without them).
-    pub fn sit_inputs(&self, v: &MjView) -> Vec<f64> {
+    /// The decision-level inputs of a decision, standardized (none for a
+    /// model without `sit_inputs`): the situation (`situation`), then the
+    /// experts' summary columns the model reads (`summary`, `PMF_SUMMARY`
+    /// order; ignored by a model without them).
+    pub fn sit_inputs(&self, v: &MjView, summary: &[f64; N_PMF_SUMMARY]) -> Vec<f64> {
         if self.n_sit == 0 {
             return Vec::new();
         }
-        situation(v).iter().enumerate().map(|(j, x)| (x - self.sit_mean[j]) / self.sit_std[j]).collect()
+        let raw = situation(v);
+        let x = raw.iter().copied().chain(self.summary_cols.iter().map(|&c| summary[c]));
+        x.enumerate().map(|(j, x)| (x - self.sit_mean[j]) / self.sit_std[j]).collect()
     }
+
+}
+
+/// The per-row state inputs from the P / M / F experts of the decision's kind (`a1::pmf_tile`; 2026-10-23), after
+/// the fold features (`fold_model::FEATURES`) in a state model's `inputs`: the P expert's score of the tile type
+/// minus the decision's best, the F expert's the same, the DP's `A_ev` / `A_win` of discarding it, then (v3) the
+/// M expert's diff and more universal columns of discarding it (`A_tenpai`, `A_in_dp`, `A_ukeire`, `A_ukeire2`,
+/// `R_ev_pct`, `A_dora`, `A_no_yaku`, `A_ron_points`, `O_riichi`); the universal values are those of the type's
+/// option the P expert scores highest. Definitions: suzume-train docs/state_predictor_features_v2.md.
+pub const PMF_TILE: [&str; N_PMF_TILE] = [
+    "pmf:p_diff", "pmf:f_diff", "pmf:a_ev", "pmf:a_win", "pmf:m_diff", "pmf:a_tenpai", "pmf:a_in_dp", "pmf:a_ukeire",
+    "pmf:a_ukeire2", "pmf:r_ev_pct", "pmf:a_dora", "pmf:a_no_yaku", "pmf:a_ron_points", "pmf:o_riichi",
+];
+pub const N_PMF_TILE: usize = 14;
+/// The universal columns of `PMF_TILE` from `pmf:a_tenpai` on (after `pmf:m_diff`), by name.
+pub const PMF_TILE_UNIVERSAL: [&str; 9] =
+    ["A_tenpai", "A_in_dp", "A_ukeire", "A_ukeire2", "R_ev_pct", "A_dora", "A_no_yaku", "A_ron_points", "O_riichi"];
+
+/// The decision-level summary of the experts (2026-10-23), after `SIT_NAMES` in a state model's `sit_inputs`:
+/// the top three legal types by the P expert (`top_p<i>`: its F diff, `A_ev`, `A_win`, and from the second on its
+/// P diff), the top three by the F expert (`top_f<i>`, the same with P and F swapped), and whether a second /
+/// third legal type exists (`has2`, `has3`; a missing slot's values are 0). Ties go to the lower type. Then (v3)
+/// the decision's own columns (`dec:*`, `a1::pmf_decision`): wall progress, turn, the reference shanten, riichi
+/// legal, a tenpai decision, other seats in riichi, legal types, a closed hand, dealer, leading.
+pub const PMF_SUMMARY: [&str; N_PMF_SUMMARY] = [
+    "pmf:top_p1:f", "pmf:top_p1:ev", "pmf:top_p1:win",
+    "pmf:top_p2:p", "pmf:top_p2:f", "pmf:top_p2:ev", "pmf:top_p2:win",
+    "pmf:top_p3:p", "pmf:top_p3:f", "pmf:top_p3:ev", "pmf:top_p3:win",
+    "pmf:top_f1:p", "pmf:top_f1:ev", "pmf:top_f1:win",
+    "pmf:top_f2:f", "pmf:top_f2:p", "pmf:top_f2:ev", "pmf:top_f2:win",
+    "pmf:top_f3:f", "pmf:top_f3:p", "pmf:top_f3:ev", "pmf:top_f3:win",
+    "pmf:has2", "pmf:has3",
+    "dec:progress", "dec:turn", "dec:shanten_ref", "dec:riichi_legal", "dec:tenpai", "dec:n_opp_riichi",
+    "dec:n_legal", "dec:menzen", "dec:oya", "dec:top",
+];
+pub const N_PMF_SUMMARY: usize = 34;
+/// The expert summary's part of `PMF_SUMMARY` (`pmf_summary`); `dec:*` follow.
+pub const N_PMF_TOP: usize = 24;
+
+/// Every per-row input a state model may read: `fold_model::FEATURES`, then `PMF_TILE`.
+pub fn state_input_names() -> &'static [&'static str] {
+    static N: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    N.get_or_init(|| super::fold_model::FEATURES.iter().chain(PMF_TILE.iter()).copied().collect())
+}
+
+/// The summary of the per-tile expert inputs `tile` over the `legal` types (the first `N_PMF_TOP` of
+/// `PMF_SUMMARY`; the `dec:*` columns left 0).
+pub fn pmf_summary(tile: &[[f64; N_PMF_TILE]; 34], legal: &[usize]) -> [f64; N_PMF_SUMMARY] {
+    let mut out = [0.0; N_PMF_SUMMARY];
+    // (by, other): P first, then F; each slot: [other, ev, win] for the top one, [by, other, ev, win] after.
+    for (half, (by, other)) in [(0usize, 1usize), (1, 0)].into_iter().enumerate() {
+        let mut order = legal.to_vec();
+        order.sort_by(|&a, &b| tile[b][by].total_cmp(&tile[a][by]).then(a.cmp(&b)));
+        let base = half * 11;
+        for (i, &t) in order.iter().take(3).enumerate() {
+            let v = tile[t];
+            if i == 0 {
+                out[base..base + 3].copy_from_slice(&[v[other], v[2], v[3]]);
+            } else {
+                let o = base + 3 + (i - 1) * 4;
+                out[o..o + 4].copy_from_slice(&[v[by], v[other], v[2], v[3]]);
+            }
+        }
+    }
+    out[22] = f64::from(u8::from(legal.len() >= 2));
+    out[23] = f64::from(u8::from(legal.len() >= 3));
+    out
 }
 
 fn softmax<const N: usize>(z: [f64; N]) -> [f64; N] {
@@ -140,7 +216,7 @@ pub fn situation(v: &MjView) -> [f64; 21] {
 /// The most likely state under the state model `md` of an own-turn discard
 /// decision in view `v` (P on a tie, then M).
 pub fn predict(md: &StateMlp, v: &MjView, feats: &SeatFeatures, legal: &[usize]) -> PfState {
-    let w = md.probs(feats, legal, &md.sit_inputs(v));
+    let w = md.probs(feats, legal, &[[0.0; N_PMF_TILE]; 34], &md.sit_inputs(v, &[0.0; N_PMF_SUMMARY]));
     if w[0] >= w[1] && w[0] >= w[2] {
         PfState::Push
     } else if w[1] >= w[2] {
@@ -148,5 +224,38 @@ pub fn predict(md: &StateMlp, v: &MjView, feats: &SeatFeatures, legal: &[usize])
     } else {
         PfState::Fold
     }
+
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_summary_ranks_by_p_then_by_f_and_pads_missing_slots() {
+        let mut tile = [[0.0; N_PMF_TILE]; 34];
+        tile[3][..4].copy_from_slice(&[0.0, -2.0, 1.5, 0.3]);
+        tile[7][..4].copy_from_slice(&[-1.0, 0.0, 0.5, 0.1]);
+        let s = pmf_summary(&tile, &[3, 7]);
+        // top_p1 = 3 (f, ev, win), top_p2 = 7 (p, f, ev, win), top_p3 missing
+        assert_eq!(s[..3], [-2.0, 1.5, 0.3]);
+        assert_eq!(s[3..7], [-1.0, 0.0, 0.5, 0.1]);
+        assert_eq!(s[7..11], [0.0; 4]);
+        // top_f1 = 7 (p, ev, win), top_f2 = 3 (f, p, ev, win)
+        assert_eq!(s[11..14], [-1.0, 0.5, 0.1]);
+        assert_eq!(s[14..18], [-2.0, 0.0, 1.5, 0.3]);
+        assert_eq!(s[18..22], [0.0; 4]);
+        assert_eq!(s[22..24], [1.0, 0.0]);
+        assert_eq!(s[24..], [0.0; N_PMF_SUMMARY - N_PMF_TOP]);
+        // ties go to the lower type
+        let mut t2 = [[0.0; N_PMF_TILE]; 34];
+        t2[9][..4].copy_from_slice(&[0.0, 0.0, 9.0, 0.0]);
+        t2[2][..4].copy_from_slice(&[0.0, 0.0, 2.0, 0.0]);
+        t2[5][..4].copy_from_slice(&[-1.0, -1.0, 5.0, 0.0]);
+        let s = pmf_summary(&t2, &[2, 5, 9]);
+        assert_eq!((s[1], s[5], s[9]), (2.0, 9.0, 5.0));
+        assert_eq!(s[22..24], [1.0, 1.0]);
+        assert_eq!(PMF_SUMMARY.len(), N_PMF_SUMMARY);
+        assert_eq!(state_input_names().len(), N_FEATURES + N_PMF_TILE);
+    }
+}

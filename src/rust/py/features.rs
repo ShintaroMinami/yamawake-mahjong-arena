@@ -29,6 +29,8 @@ use super::{observation_with_wall, suzume_config_from};
 #[pyclass(module = "yamawake._core")]
 pub struct SuzumeFeatures {
     cfg: SuzumeConfig,
+    /// The A1 set of `state_inputs` (config key `"a1"`: an A1 model directory with P / M / F experts).
+    a1: Option<&'static crate::suzume::a1::A1Models>,
     /// Each seat's memo and the `start_kyoku` line it belongs to.
     memos: [(SeatMemo, Option<String>); 4],
 }
@@ -95,7 +97,39 @@ fn universal_dict<'py>(py: Python<'py>, u: &Universal, view: &MjView) -> PyResul
 impl SuzumeFeatures {
     #[new]
     fn new(config: &Bound<'_, PyDict>) -> PyResult<Self> {
-        Ok(Self { cfg: suzume_config_from(config)?, memos: Default::default() })
+        let rest = config.copy()?;
+        let a1: Option<String> = rest.get_item("a1")?.map(|v| v.extract()).transpose()?;
+        rest.del_item("a1").ok();
+        let a1 = a1.map(|d| crate::suzume::a1::A1Models::load(&d).map_err(PyValueError::new_err)).transpose()?;
+        Ok(Self { cfg: suzume_config_from(&rest)?, a1, memos: Default::default() })
+    }
+
+    /// The P / M / F state model's inputs on an own-turn discard decision (`a1::state_inputs`, the code path of
+    /// play; the config needs `"a1"`, the A1 set whose experts are read): as `fold_features` ("names", "seats",
+    /// "features" [seat][tile type][feature], "legal", "sit"), plus "pmf_tile_names" (`pf::PMF_TILE`), "pmf_tile"
+    /// [tile type][4], "pmf_summary_names" (`pf::PMF_SUMMARY`), "pmf_summary" and "experts" (whether the
+    /// decision's kind has experts; else the pmf values are zeros). None without a legal discard.
+    fn state_inputs<'py>(&mut self, py: Python<'py>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(md) = self.a1 else { return Err(PyValueError::new_err("state_inputs needs the config key \"a1\"")) };
+        let events: Vec<serde_json::Value> = kyoku_events
+            .iter()
+            .map(|l| serde_json::from_str(l).map_err(|e| PyValueError::new_err(format!("bad event: {e}"))))
+            .collect::<Result<_, _>>()?;
+        let p = self.prepare(&obs_b64, &kyoku_events, false).map_err(PyValueError::new_err)?;
+        let r = self.with_ctx(&p, |ctx| crate::suzume::a1::state_inputs(ctx, md, &events)).map_err(PyValueError::new_err)?;
+        let Some(x) = r else { return Ok(None) };
+        let out = PyDict::new_bound(py);
+        out.set_item("names", FEATURES.to_vec())?;
+        out.set_item("seats", vec![1, 2, 3])?;
+        out.set_item("features", x.feats.map(|(_, f)| f.iter().map(|r| r.to_vec()).collect::<Vec<_>>()).to_vec())?;
+        out.set_item("legal", x.legal)?;
+        out.set_item("sit", x.sit.to_vec())?;
+        out.set_item("pmf_tile_names", crate::suzume::pf::PMF_TILE.to_vec())?;
+        out.set_item("pmf_tile", x.tile.iter().map(|r| r.to_vec()).collect::<Vec<_>>())?;
+        out.set_item("pmf_summary_names", crate::suzume::pf::PMF_SUMMARY.to_vec())?;
+        out.set_item("pmf_summary", x.summary.to_vec())?;
+        out.set_item("experts", x.experts)?;
+        Ok(Some(out))
     }
 
     /// The decision's universal rows (`universal::universal`; `change`
