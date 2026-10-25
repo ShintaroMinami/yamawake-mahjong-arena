@@ -52,7 +52,8 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                game_mode: int = HANCHAN, flight: int = 256, want_logs: bool = False,
                progress: Callable[[int, int, int], None] | None = None,
                traces: list | None = None, timing: list | None = None,
-               on_logs: Callable[[list[list[str]]], None] | None = None
+               on_logs: Callable[[list[list[str]]], None] | None = None,
+               a1_options: list | None = None
                ) -> tuple[list[list[int]], list[list[str]]]:
     """Play every game to the end.
 
@@ -85,6 +86,9 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
         on_logs: Optional `on_logs(flight_logs)`, called with each flight's
             mjai logs as the flight ends (whether or not `want_logs` keeps
             them), so a caller can reduce them without holding every log.
+        a1_options: If a list, one entry per game is appended to it: per seat,
+            the A1 bot's [riichi legal, riichi taken, call legal, call taken]
+            counts over decisions, then over kyoku (zeros for the other seats).
 
     Returns:
         `(scores, logs)`: final points per game (4 each), and the logs (empty
@@ -141,6 +145,8 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                 logs.extend(flight_logs)
         if traces is not None:
             traces.extend(loop.suzume_trace(g) for g in range(hi - lo))
+        if a1_options is not None:
+            a1_options.extend(loop.a1_options())
     return scores, logs
 
 

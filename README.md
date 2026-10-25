@@ -105,20 +105,20 @@ Python からの利用は以下のように行います。
 | パラメータ | 調節するもの | 値 |
 |---|---|---|
 | `aggression` | 押し引き | -1 〜 1。正で押し寄り（放銃率・和了率が上がる）、負で降り寄り |
-| `call_tendency` | 副露の度合い | 実数。正で鳴きやすく、負で鳴きにくくなる |
-| `riichi_tendency` | 立直の度合い | 実数。正で立直しやすく、負でダマに寄る |
+| `call_shift` | 副露の度合い | -1 〜 1。正で鳴きやすく、負で鳴きにくくなる |
+| `riichi_shift` | 立直の度合い | -1 〜 1。正で立直しやすく、負でダマに寄る |
 
 プレイヤーの指定に `:名前=値` で付けます。
 ``` bash
     uv run yamawake-arena --mode 2v2 --players suzume:aggression=0.5 suzume
-    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_tendency=1:riichi_tendency=-1 suzume
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_shift=0.5:riichi_shift=-0.5 suzume
 ```
 ``` python
     from yamawake import SuzumeAgent
-    agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+    agent = SuzumeAgent({"aggression": 0.5, "call_shift": 0.5})
 ```
 - `aggression` は、`suzume` の方策に、押しのモデルか降りのモデルの方策を混ぜます。この 2 つのモデルは、他家の立直などの脅威がある局面で教師（Mortal-S42）が押したとき・降りたときの方策を学習したものです。1 で押しのモデル、-1 で降りのモデルの打ち方になります。
-- `call_tendency` は副露（チー・ポン・大明槓）の、`riichi_tendency` は立直の選択肢のスコアに足す値で、鳴く（立直する）オッズがそれぞれ e^値 倍になります。
+- `call_shift` は副露（チー・ポン・大明槓）の、`riichi_shift` は立直の選択肢のスコアを動かします。鳴ける（立直できる）判断で鳴く（立直する）オッズが、±1 で `call_shift` はおよそ e^1.5 倍（1/e^1.5 倍）、`riichi_shift` はおよそ e³ 倍（1/e³ 倍）になります。
 - 調節の目的は打ち方の違う相手を作ることで、強くすることではありません。0 から離すほど、`suzume` との対戦成績は少しずつ下がります。
 - 3 つのパラメータを持つのは `suzume` だけです（`suzume-rla225` にはありません）。詳しくは [`docs/suzume.md`](docs/suzume.md#打ち方の調節) を参照してください。
 

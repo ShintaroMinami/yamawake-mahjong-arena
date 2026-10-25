@@ -32,6 +32,9 @@ from yamawake.walls import FRESH, blob_for_wall, fresh_wall_ids, standard_walls
 
 ROTATIONS = 4          # seat shifts per wall; a 2v2 needs only two (`_rotations`)
 START_SCORE = 25_000   # every seat's score at the start of a game
+# `MatchResult.play`, A1 seats only: riichi / call legal and taken, over decisions, then over kyoku.
+A1_OPTION_KEYS = ("riichi_legal", "riichi_taken", "call_legal", "call_taken",
+                  "riichi_legal_kyoku", "riichi_taken_kyoku", "call_legal_kyoku", "call_taken_kyoku")
 # The standard evaluation walls (`walls.standard_walls()`, 5,000 of them). A run
 # takes the FIRST `walls`, so a 1,000-wall run is a prefix of a 5,000-wall one and
 # the two compare directly; everything routine is measured there, so two results
@@ -65,7 +68,7 @@ class MatchResult:
     rule: Any = field(default=DEFAULT_RULE, repr=False)   # settles `sides`/`paired`
     # Single-kyoku matches only: {"win", "deal_in"}, (games, 4) bool by SEAT.
     kyoku: dict | None = field(default=None, repr=False)
-    # With `play_stats`: `playstats.play_counts`, (games, 4) by SEAT.
+    # With `play_stats`: `playstats.play_counts` and `A1_OPTION_KEYS`, (games, 4) by SEAT.
     play: dict | None = field(default=None, repr=False)
     # Per agent (`protocol["slot_agent"]` index), then the arena: [decisions, seconds].
     timing: list | None = None
@@ -92,6 +95,10 @@ class MatchResult:
         payment of a kyoku dealt in (honba in, all a double ron paid, the
         seat's own stick not counted), as in `handstats`;
         `adj_eff` is `win * avg_win - deal_in * avg_deal`, points per kyoku.
+        For an A1 suzume, `riichi_take` / `call_take` are the shares of its
+        decisions with riichi / a call legal in which it took one, and
+        `riichi_take_kyoku` / `call_take_kyoku` the shares of its kyoku with
+        the option legal at least once in which it took it at least once.
         Each comes with its standard error over walls (`*_se`).
 
         Raises:
@@ -117,6 +124,12 @@ class MatchResult:
                                 "avg_deal": ("deal_pts", "deal_in")}.items():
                 row[key], row[f"{key}_se"] = ratio(c[y], c[x])
             row["adj_eff"], row["adj_eff_se"] = ratio(c["win_pts"] - c["deal_pts"], c["kyoku"])
+            for key, (y, x) in {"riichi_take": ("riichi_taken", "riichi_legal"),
+                                "call_take": ("call_taken", "call_legal"),
+                                "riichi_take_kyoku": ("riichi_taken_kyoku", "riichi_legal_kyoku"),
+                                "call_take_kyoku": ("call_taken_kyoku", "call_legal_kyoku")}.items():
+                if c[x].sum() > 0:
+                    row[key], row[f"{key}_se"] = ratio(c[y], c[x])
             out.append(row)
         return out
 
@@ -444,12 +457,14 @@ def run_match(players: list, walls: int | None = None,
     has_suzume = any(getattr(a, "lane", None) == LANE_SUZUME for a in agents)
     traces: list | None = [] if record_logs is not None and has_suzume else None
     counts: list[dict] = []         # play_counts per flight, so no log is held for them
+    options: list | None = [] if play_stats else None   # A1 riichi / call options per game and seat
     scores, logs = play_games(seeds, maps, agents, wall_blobs=game_blobs,
                               split_wall=split_wall, game_mode=game_mode,
                               flight=flight,
                               want_logs=record_logs is not None or single_kyoku,
                               progress=progress, traces=traces, timing=timing,
-                              on_logs=(lambda ls: counts.append(play_counts(ls))) if play_stats else None)
+                              on_logs=(lambda ls: counts.append(play_counts(ls))) if play_stats else None,
+                              a1_options=options)
     seconds, cpu_seconds = time.time() - t0, time.process_time() - c0
 
     scores = np.array(scores, dtype=np.int64)                 # (games, 4) by SEAT
@@ -478,7 +493,8 @@ def run_match(players: list, walls: int | None = None,
     result = MatchResult(slots, len(scores), protocol,
                          [s.describe() for s in players], scores, seat_of_slot,
                          seconds, rule, kyoku,
-                         {k: np.concatenate([c[k] for c in counts]) for k in counts[0]}
+                         {**{k: np.concatenate([c[k] for c in counts]) for k in counts[0]},
+                          **dict(zip(A1_OPTION_KEYS, np.array(options, dtype=np.int64).transpose(2, 0, 1)))}
                          if play_stats else None, timing, cpu_seconds)
     if record_logs is not None:
         _write_logs(Path(record_logs), logs, seat_of_slot, players, base, traces)

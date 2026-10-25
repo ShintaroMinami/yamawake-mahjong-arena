@@ -167,7 +167,7 @@ impl Model {
     }
 
     /// The index of the best row under the play-style options (`A1Config`): `bias` (one per row, when given; the
-    /// `call_tendency` / `riichi_tendency` offsets) is added to this model's scores `s` first; then, for
+    /// `call_offset` / `riichi_offset`) is added to this model's scores `s` first; then, for
     /// `aggression` w != 0, the argmax of `(1 - |w|) s + |w| s_end`, `s_end` the scores of the endpoint model of w's
     /// sign (`ends`: fold for w < 0, push for w > 0; `A1Models::ends`). The softmax normalizers cancel in the argmax,
     /// so this mixes the log policies, and w = +-1 plays the endpoint itself. Without that endpoint, or w = 0: the
@@ -595,13 +595,28 @@ pub struct A1Config {
     /// the push endpoint, < 0 toward the fold endpoint, applied to the kinds with endpoint models (`{k}_fold.json` /
     /// `{k}_push.json`); 0 plays the set's own models as they are.
     pub aggression: f64,
-    /// How readily it calls (2026-10-24, named `call_bias` at first): added to the score of every chi / pon / daiminkan option of a call decision, so
-    /// the odds of calling against passing are multiplied by `exp(call_tendency)`; 0 plays as before.
-    pub call_tendency: f64,
-    /// How readily it declares riichi (2026-10-24, named `riichi_bias` at first): added to the score of every riichi option of a riichi-legal decision, so the
-    /// odds of declaring against not declaring are multiplied by `exp(riichi_tendency)` (the riichi lock of
-    /// `Model::best_styled` then keeps that choice); 0 plays as before.
-    pub riichi_tendency: f64,
+    /// How readily it calls, in [-1, 1] (2026-10-24, named `call_bias` at first; scaled 2026-10-25): `call_offset`
+    /// (`STYLE_SCALES`) is added to the score of every chi / pon / daiminkan option of a call decision; +-1 moves the
+    /// log odds of calling, over the decisions with a call legal, by about +-1.5. 0 plays as before.
+    pub call_shift: f64,
+    /// How readily it declares riichi, in [-1, 1] (2026-10-24, named `riichi_bias` at first; scaled 2026-10-25):
+    /// `riichi_offset` is added to the score of every riichi option of a riichi-legal decision (the riichi lock of
+    /// `Model::best_styled` then keeps that choice); +-1 moves the log odds of declaring, over the riichi-legal
+    /// decisions, by about +-3. 0 plays as before.
+    pub riichi_shift: f64,
+    /// The score offsets of `call_shift` / `riichi_shift` (`style_offset`).
+    pub call_offset: f64,
+    pub riichi_offset: f64,
+}
+
+/// Per shift (call, riichi): the score offset per unit below and above 0 (2026-10-25, from a sweep of the raw
+/// offset vs the default suzume on standard walls 0-1999: the offsets that moved the log odds of taking the option,
+/// over the decisions with it legal, by -1.5 / +1.5 for calls and -3 / +3 for riichi, interpolated).
+pub const STYLE_SCALES: [(f64, f64); 2] = [(2.5, 3.4), (4.5, 3.5)];
+
+/// The score offset of a style shift `v` in [-1, 1] with `scales` (below, above 0).
+pub fn style_offset(v: f64, (below, above): (f64, f64)) -> f64 {
+    v * if v < 0.0 { below } else { above }
 }
 
 impl A1Config {
@@ -610,19 +625,22 @@ impl A1Config {
     pub fn builtin(name: &str) -> Option<Self> {
         let models = A1Models::builtin(name)?;
         let cfg = SuzumeConfig { pf: false, fold: false, models: super::params::features_set(), ..SuzumeConfig::default() };
-        Some(Self { cfg, models, pmf_fixed: None, aggression: 0.0, call_tendency: 0.0, riichi_tendency: 0.0 })
+        Some(Self { cfg, models, pmf_fixed: None, aggression: 0.0, call_shift: 0.0, riichi_shift: 0.0, call_offset: 0.0,
+                    riichi_offset: 0.0 })
     }
 
     /// The bot of a directory set's `models` on the features-set config `cfg`, the mixture weights fixed by
     /// `pmf_fixed` (`parse_pmf`) when given. A set with P / M / F experts needs `state.json` or `pmf_fixed`;
     /// `pmf_fixed` needs experts. A nonzero `aggression` needs at least one endpoint model.
     pub fn new(cfg: SuzumeConfig, models: &'static A1Models, pmf_fixed: Option<&str>, aggression: f64,
-               call_tendency: f64, riichi_tendency: f64) -> Result<Self, String> {
-        if ![aggression, call_tendency, riichi_tendency].iter().all(|x| x.is_finite()) {
-            return Err(format!("aggression {aggression} / call_tendency {call_tendency} / riichi_tendency {riichi_tendency}: not finite"));
+               call_shift: f64, riichi_shift: f64) -> Result<Self, String> {
+        if ![aggression, call_shift, riichi_shift].iter().all(|x| x.is_finite()) {
+            return Err(format!("aggression {aggression} / call_shift {call_shift} / riichi_shift {riichi_shift}: not finite"));
         }
-        if aggression.abs() > 1.0 {
-            return Err(format!("aggression {aggression}: not in [-1, 1]"));
+        for (name, x) in [("aggression", aggression), ("call_shift", call_shift), ("riichi_shift", riichi_shift)] {
+            if x.abs() > 1.0 {
+                return Err(format!("{name} {x}: not in [-1, 1]"));
+            }
         }
         if aggression != 0.0 && models.ends.iter().flatten().all(Option::is_none) {
             return Err(format!("{}: aggression without push / fold models ({{k}}_push / _fold.json)", models.dir));
@@ -635,7 +653,8 @@ impl A1Config {
         if !has && pmf_fixed.is_some() {
             return Err(format!("{}: pmf_fixed without P / M / F experts ({{k}}_P / _M / _F)", models.dir));
         }
-        Ok(Self { cfg, models, pmf_fixed, aggression, call_tendency, riichi_tendency })
+        let (call_offset, riichi_offset) = (style_offset(call_shift, STYLE_SCALES[0]), style_offset(riichi_shift, STYLE_SCALES[1]));
+        Ok(Self { cfg, models, pmf_fixed, aggression, call_shift, riichi_shift, call_offset, riichi_offset })
     }
 }
 
@@ -816,14 +835,14 @@ pub fn decide(
                     .options
                     .iter()
                     .map(|(k, _)| match () {
-                        _ if r.kind == 3 && calls(k) => a1.call_tendency,
-                        _ if *k == "riichi" => a1.riichi_tendency,
+                        _ if r.kind == 3 && calls(k) => a1.call_offset,
+                        _ if *k == "riichi" => a1.riichi_offset,
                         _ => 0.0,
                     })
                     .collect();
                 r.model.best_styled(r.ends, a1.aggression, &r.rows, &r.u.state.0, opp, &view,
                                     riichi.contains(&true).then_some(&riichi[..]),
-                                    (a1.call_tendency != 0.0 || a1.riichi_tendency != 0.0).then_some(&bias[..]))
+                                    (a1.call_offset != 0.0 || a1.riichi_offset != 0.0).then_some(&bias[..]))
             }
         };
         Ok::<_, String>(Some((r.u, best)))
@@ -908,13 +927,16 @@ mod tests {
     #[test]
     fn builtin_suzume_has_the_endpoint_models() {
         let c = A1Config::builtin("suzume").unwrap();
-        assert_eq!((c.aggression, c.call_tendency, c.riichi_tendency), (0.0, 0.0, 0.0));
+        assert_eq!((c.aggression, c.call_shift, c.riichi_shift), (0.0, 0.0, 0.0));
         for (i, k) in STYLE_KINDS.iter().enumerate() {
             assert!(c.models.ends[i].iter().all(Option::is_some), "{k}");
         }
         assert!(A1Config::new(c.cfg, c.models, None, -1.0, 0.0, 0.0).is_ok());
         let r = A1Config::builtin("suzume-rla225").unwrap();
         assert!(A1Config::new(r.cfg, r.models, None, 0.5, 0.0, 0.0).is_err());
+        assert!(A1Config::new(c.cfg, c.models, None, 0.0, 1.5, 0.0).is_err());
+        let s = A1Config::new(c.cfg, c.models, None, 0.0, -1.0, 0.5).unwrap();
+        assert_eq!((s.call_offset, s.riichi_offset), (-2.5, 1.75));
     }
 
     #[test]

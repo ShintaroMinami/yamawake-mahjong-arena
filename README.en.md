@@ -136,23 +136,24 @@ All three default to 0 (no change); at 0, `suzume` plays as before.
 | Parameter | Controls | Value |
 |---|---|---|
 | `aggression` | push / fold | -1 to 1; positive pushes more (more deal-ins and wins), negative folds more |
-| `call_tendency` | how often it calls | any number; positive calls more, negative less |
-| `riichi_tendency` | how often it declares riichi | any number; positive declares more, negative stays dama more |
+| `call_shift` | how often it calls | -1 to 1; positive calls more, negative less |
+| `riichi_shift` | how often it declares riichi | -1 to 1; positive declares more, negative stays dama more |
 
 Append them to the player spec as `:name=value`:
 ``` bash
     uv run yamawake-arena --mode 2v2 --players suzume:aggression=0.5 suzume
-    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_tendency=1:riichi_tendency=-1 suzume
+    uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:call_shift=0.5:riichi_shift=-0.5 suzume
 ```
 ``` python
     from yamawake import SuzumeAgent
-    agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+    agent = SuzumeAgent({"aggression": 0.5, "call_shift": 0.5})
 ```
 - `aggression` mixes suzume's policy with one of two models fitted on the teacher's (Mortal-S42) pushing or folding
   policy in positions with a threat, such as an opponent's riichi. 1 plays like the push model, -1 like the fold
   model.
-- `call_tendency` is added to the score of every call (chi, pon, open kan) and `riichi_tendency` to that of riichi, which
-  multiplies the odds of calling (declaring) by e^value.
+- `call_shift` moves the score of every call (chi, pon, open kan) and `riichi_shift` that of riichi. Over the
+  decisions where it may call (declare), +-1 multiplies the odds of calling by about e^1.5 (1/e^1.5) and of declaring
+  by about e^3 (1/e^3).
 - The aim is opponents with different styles, not a stronger bot. The further from 0, the somewhat worse
   the results against `suzume`.
 - Only `suzume` has these parameters (`suzume-rla225` does not). See [`docs/suzume.md`](docs/suzume.md#打ち方の調節).

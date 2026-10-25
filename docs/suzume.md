@@ -38,18 +38,18 @@ agent = SuzumeAgent(models="suzume-rla225")    # 別の教師で学習した組
 | パラメータ | 調節するもの | 値 | 仕組み |
 |---|---|---|---|
 | `aggression` | 押し引き | -1 〜 1 | 脅威のある局面で、押しのモデルと降りのモデルの方策を補間する |
-| `call_tendency` | 副露の度合い | 実数 | 副露（チー・ポン・大明槓）の選択肢のスコアに足す |
-| `riichi_tendency` | 立直の度合い | 実数 | 立直の選択肢のスコアに足す |
+| `call_shift` | 副露の度合い | -1 〜 1 | 副露（チー・ポン・大明槓）の選択肢のスコアを動かす |
+| `riichi_shift` | 立直の度合い | -1 〜 1 | 立直の選択肢のスコアを動かす |
 
 ``` bash
-uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:riichi_tendency=1 suzume
+uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:riichi_shift=0.5 suzume
 ```
 ``` python
-agent = SuzumeAgent({"aggression": 0.5, "call_tendency": 1.0})
+agent = SuzumeAgent({"aggression": 0.5, "call_shift": 0.5})
 ```
 
 - `aggression`：判断の種類（打牌 4 種、副露、槓）ごとに、押しのモデルと降りのモデルの 2 つの小さな MLP を学習させてあります（[`params/suzume/suzume/`](../params/suzume/suzume/) の `*_push.json` / `*_fold.json`）。教師の方策のうち、他家の立直や副露などの脅威がある局面の判断だけを、教師が押したときの方策（押しのモデル）、または最も強い脅威に降りたときの方策（降りのモデル）に置き換えて学習したものです。正の値では `suzume` の対数方策に押しのモデルの対数方策を、負の値では降りのモデルの対数方策を、|値| の割合で混ぜます（`(1 - |値|) log π + |値| log π_端点`）。1 で押しのモデル、-1 で降りのモデルの打ち方になります。立直するかダマにするかは `suzume` 自身の選択のままで、`aggression` はその中で打牌を選びます。
-- `call_tendency` / `riichi_tendency`：その選択肢のスコアに値を足すので、鳴く（立直する）オッズが e^値 倍になります。
+- `call_shift` / `riichi_shift`：その選択肢のスコアに、値に倍率を掛けたものを足します。倍率は正負で分けてあり、`call_shift` は負で 2.5・正で 3.4、`riichi_shift` は負で 4.5・正で 3.5 です。鳴ける（立直できる）判断で鳴く（立直する）オッズが、±1 で `call_shift` はおよそ e^1.5 倍（1/e^1.5 倍）、`riichi_shift` はおよそ e³ 倍（1/e³ 倍）になるように、既定の `suzume` との対局（標準牌山 0〜1999）で決めました。
 - 3 つは組み合わせて使えます。持つのは `suzume` だけです（`suzume-rla225` で指定するとエラーになります）。
 
 ## 2. 判断の仕組み

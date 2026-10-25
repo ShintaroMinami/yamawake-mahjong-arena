@@ -131,9 +131,9 @@ SUZUME_SETS = tuple(a1_model_sets())
 LEGACY_SETS = tuple(suzume_model_sets())
 MODEL_SETS = (*SUZUME_SETS, *LEGACY_SETS)
 #: The play-style options of an A1 set (2026-10-24): `aggression` (push / fold, -1 .. 1; needs the set's endpoint
-#: models, which only `suzume` has) and the `call_tendency` / `riichi_tendency` score offsets
-#: (`src/rust/suzume/a1.rs`, `A1Config`).
-STYLE_OPTIONS = ("aggression", "call_tendency", "riichi_tendency")
+#: models, which only `suzume` has) and `call_shift` / `riichi_shift` (-1 .. 1; scaled score offsets,
+#: `src/rust/suzume/a1.rs`, `A1Config`).
+STYLE_OPTIONS = ("aggression", "call_shift", "riichi_shift")
 
 
 class SuzumeAgent:

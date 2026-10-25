@@ -91,8 +91,8 @@ def test_seat_spec_and_options():
         with pytest.raises(ValueError):
             build_agent(f"{name}:call=0")
         assert build_agent(name, call="0").config == {"a1": name}
-    k = build_agent("suzume:aggression=-0.5:riichi_tendency=1.25", call_tendency="0.5")
-    assert k.config == {"a1": "suzume", "aggression": "-0.5", "riichi_tendency": "1.25", "call_tendency": "0.5"}
+    k = build_agent("suzume:aggression=-0.5:riichi_shift=1.25", call_shift="0.5")
+    assert k.config == {"a1": "suzume", "aggression": "-0.5", "riichi_shift": "1.25", "call_shift": "0.5"}
 
 
 def test_rule_list(capsys):

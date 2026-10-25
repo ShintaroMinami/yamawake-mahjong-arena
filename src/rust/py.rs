@@ -235,6 +235,13 @@ impl SelfPlayLoop {
         Ok(slot.suzume_trace.iter().map(|&(i, seat, rule)| (i, seat, crate::suzume::decider_name(rule))).collect())
     }
 
+    /// Per game and seat: the A1 bot's [riichi legal, riichi taken, call legal,
+    /// call taken] counts over decisions, then over kyoku (`GameSlot::a1_options`);
+    /// zeros for the other seats.
+    fn a1_options(&self) -> Vec<[[u32; 8]; 4]> {
+        self.inner.slots.iter().map(|s| s.a1_options).collect()
+    }
+
     /// Per game and seat: the in-loop bot's (decisions, seconds); zeros for
     /// the seats decided outside the loop.
     fn bot_times(&self) -> Vec<Vec<(u64, f64)>> {
@@ -287,7 +294,7 @@ fn rulebot_config_from(overrides: &Bound<'_, PyDict>) -> PyResult<crate::rulebot
 /// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`), or {"a1": <A1 model
 /// directory>, optional "pmf_fixed": the P / M / F mixture weights ("P", "M", "F" or "p,m,f"; `a1::parse_pmf`),
 /// the rest: the suzume config of its features set}; both take optional "aggression": push / fold (a number in [-1, 1];
-/// `A1Config::aggression`) and "call_tendency" / "riichi_tendency" (numbers; `A1Config`).
+/// `A1Config::aggression`) and "call_shift" / "riichi_shift" (numbers in [-1, 1]; `A1Config`).
 fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1Config> {
     use pyo3::exceptions::{PyKeyError, PyValueError};
     let rest = config.copy()?;
@@ -301,27 +308,27 @@ fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1C
         None => 0.0,
     };
     rest.del_item("aggression").ok();
-    let call_tendency: f64 = match rest.get_item("call_tendency")? {
-        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("call_tendency {v}: not a number")))?,
+    let call_shift: f64 = match rest.get_item("call_shift")? {
+        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("call_shift {v}: not a number")))?,
         None => 0.0,
     };
-    rest.del_item("call_tendency").ok();
-    let riichi_tendency: f64 = match rest.get_item("riichi_tendency")? {
-        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("riichi_tendency {v}: not a number")))?,
+    rest.del_item("call_shift").ok();
+    let riichi_shift: f64 = match rest.get_item("riichi_shift")? {
+        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("riichi_shift {v}: not a number")))?,
         None => 0.0,
     };
-    rest.del_item("riichi_tendency").ok();
+    rest.del_item("riichi_shift").ok();
     if let Some(c) = crate::suzume::a1::A1Config::builtin(&a1) {
         if !rest.is_empty() {
-            return Err(PyValueError::new_err(format!("{a1} takes only aggression / call_tendency / riichi_tendency")));
+            return Err(PyValueError::new_err(format!("{a1} takes only aggression / call_shift / riichi_shift")));
         }
-        return crate::suzume::a1::A1Config::new(c.cfg, c.models, None, delta, call_tendency, riichi_tendency)
+        return crate::suzume::a1::A1Config::new(c.cfg, c.models, None, delta, call_shift, riichi_shift)
             .map_err(PyValueError::new_err);
     }
     let pmf: Option<String> = rest.get_item("pmf_fixed")?.map(|v| v.str().map(|s| s.to_string())).transpose()?;
     rest.del_item("pmf_fixed").ok();
     let models = crate::suzume::a1::A1Models::load(&a1).map_err(PyValueError::new_err)?;
-    crate::suzume::a1::A1Config::new(suzume_config_from(&rest)?, models, pmf.as_deref(), delta, call_tendency, riichi_tendency)
+    crate::suzume::a1::A1Config::new(suzume_config_from(&rest)?, models, pmf.as_deref(), delta, call_shift, riichi_shift)
         .map_err(PyValueError::new_err)
 }
 

@@ -47,6 +47,14 @@ pub struct GameSlot {
     /// decision, seat, deciding rule id). The decision's own event, if it
     /// makes one, is the first one by that seat from that log index on.
     pub suzume_trace: Vec<(u32, u8, u8)>,
+    /// Per seat, the A1 bot's riichi / call (chi / pon / daiminkan) options:
+    /// [riichi legal, riichi taken, call legal, call taken] over decisions,
+    /// then the same four over kyoku (a kyoku counts once if the option was
+    /// legal in any decision, and as taken if it was taken in any).
+    pub a1_options: [[u32; 8]; 4],
+    /// Per seat, this kyoku's [riichi legal, riichi taken, call legal, call
+    /// taken] seen so far (cleared at each start_kyoku).
+    a1_kyoku_seen: [[bool; 4]; 4],
     /// Per seat: what a suzume bot keeps across its decisions within
     /// the kyoku (cleared at each start_kyoku; untouched for other seats).
     suzume_memo: [SeatMemo; 4],
@@ -85,6 +93,8 @@ impl GameSlot {
             kyoku_events: Vec::new(),
             auto_actions: HashMap::new(),
             suzume_trace: Vec::new(),
+            a1_options: [[0; 8]; 4],
+            a1_kyoku_seen: [[false; 4]; 4],
             suzume_memo: Default::default(),
             bot_decisions: [0; 4],
             bot_nanos: [0; 4],
@@ -108,6 +118,7 @@ impl GameSlot {
             if t == "start_kyoku" {
                 self.kyoku_events.clear();
                 self.suzume_memo.iter_mut().for_each(SeatMemo::clear);
+                self.a1_kyoku_seen = [[false; 4]; 4];
             }
             self.kyoku_events.push(event);
             self.event_cursor += 1;
@@ -165,7 +176,20 @@ impl GameSlot {
     /// Decide one A1 bot in-loop (`suzume::a1::decide` with the seat's kyoku memo).
     pub fn a1_action(&mut self, seat: u8, a1: &crate::suzume::a1::A1Config) -> Result<Action, String> {
         let obs = self.state.get_observation(seat);
-        crate::suzume::a1::decide(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])
+        let action = crate::suzume::a1::decide(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])?;
+        let is_call = |t: ActionType| matches!(t, ActionType::Chi | ActionType::Pon | ActionType::Daiminkan);
+        let legal = obs.legal_actions_method();
+        let riichi_legal = legal.iter().any(|a| a.action_type == ActionType::Riichi);
+        let call_legal = legal.iter().any(|a| is_call(a.action_type));
+        let hit = [riichi_legal, riichi_legal && action.action_type == ActionType::Riichi,
+                   call_legal, call_legal && is_call(action.action_type)];
+        let (n, seen) = (&mut self.a1_options[usize::from(seat)], &mut self.a1_kyoku_seen[usize::from(seat)]);
+        for i in 0..4 {
+            n[i] += u32::from(hit[i]);
+            n[4 + i] += u32::from(hit[i] && !seen[i]);
+            seen[i] |= hit[i];
+        }
+        Ok(action)
     }
 }
 
