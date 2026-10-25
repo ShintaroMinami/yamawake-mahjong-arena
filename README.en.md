@@ -31,7 +31,7 @@ only from the players' choices.
   [`docs/rulebot.md`](docs/rulebot.md)).
 - **suzume**: a distilled model of a reinforcement-learned mahjong AI
   (Mortal-S42); a light bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
-  - **New: play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
+  - **Play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
     can field opponents with different play styles (see [Play-style control](#play-style-control-of-suzume)).
 
 On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
