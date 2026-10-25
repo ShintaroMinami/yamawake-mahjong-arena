@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "yamawake"
-version = "0.9.0"
+version = "0.10.0"
 description = "Duplicate riichi mahjong arena: split fixed walls cancel the luck of the draw"
 readme = "README.en.md"
 requires-python = ">=3.11"
