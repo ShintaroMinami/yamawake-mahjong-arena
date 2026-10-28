@@ -118,6 +118,12 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--wall-base", default=None,
                     help="'fresh' for new walls, or a recorded base to replay; "
                          "default is the standard set")
+    ap.add_argument("--wall-seed", type=int, default=None,
+                    help="play seeded walls: walls --wall-start .. of this seed "
+                         "(0 <= seed < 2**32); excludes --wall-base")
+    ap.add_argument("--wall-start", type=int, default=0,
+                    help="first wall index of --wall-seed; pass the walls played so far "
+                         "to add new ones")
     ap.add_argument("--flight", type=int, default=256)
     ap.add_argument("--record-logs", default=None, help="write the games as a corpus")
     ap.add_argument("--out", default=None, help="append the result to this jsonl")
@@ -129,6 +135,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--single-kyoku", action="store_true",
                     help="every game is East 1 only (honba 0, 25,000 each) and ends "
                          "with it; reports the kyoku delta and win / deal-in rates")
+    ap.add_argument("--no-rotate", action="store_true",
+                    help="play each wall once instead of through every seat rotation "
+                         "(the seating cycles over the walls); games are independent")
     args = ap.parse_args(argv)
 
     if args.mode:
@@ -149,11 +158,17 @@ def main(argv: list[str] | None = None) -> None:
     progress = _Progress(per_game=60 if args.single_kyoku else 566,
                          py_players=sum(1 for a in players
                                         if getattr(a, "lane", None) not in IN_LOOP_LANES))
+    if args.wall_seed is not None and args.wall_base is not None:
+        raise SystemExit("pass --wall-base or --wall-seed, not both")
+    if args.wall_start and args.wall_seed is None:
+        raise SystemExit("--wall-start needs --wall-seed")
     result = run_match(players, walls=args.walls, wall_base=args.wall_base,
+                       wall_seed=args.wall_seed, wall_start=args.wall_start,
                        flight=args.flight, record_logs=args.record_logs,
                        out=args.out,
                        save_scores=args.save_scores, progress=progress,
-                       single_kyoku=args.single_kyoku, play_stats=not args.no_stats)
+                       single_kyoku=args.single_kyoku, play_stats=not args.no_stats,
+                       rotate=not args.no_rotate)
     progress.close()
     print(report(result), flush=True)
 

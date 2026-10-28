@@ -32,3 +32,20 @@ def test_the_loop_rejects_a_malformed_wall_table():
     bad[3] = bad[2]                                  # a tile twice
     with pytest.raises(ValueError, match="permutation"):
         SelfPlayLoop([1], 2, wall_tables=[bytes(bad)])
+
+
+def test_seeded_walls_are_per_seed_and_index_and_apart_from_ids():
+    from yamawake.walls import seeded_matrix
+    a = seeded_matrix(7, 0)
+    assert a.shape == (KYOKU, HONBA, TILES) and (a == seeded_matrix(7, 0)).all()
+    assert all(sorted(a[k, h]) == list(range(TILES)) for k in range(KYOKU) for h in range(HONBA))
+    others = [seeded_matrix(7, 1), seeded_matrix(8, 0), seeded_matrix(0, 7), generate_matrix(7),
+              generate_matrix((7 << 32) | 0)]
+    assert all((a != o).mean() > 0.9 for o in others)
+
+
+@pytest.mark.parametrize("seed, index", [(-1, 0), (2 ** 32, 0), (0, -1), (0, 2 ** 32)])
+def test_seeded_walls_reject_values_outside_32_bits(seed, index):
+    from yamawake.walls import seeded_matrix
+    with pytest.raises(ValueError, match=r"\[0, 2\*\*32\)"):
+        seeded_matrix(seed, index)

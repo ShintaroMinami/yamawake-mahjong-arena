@@ -28,7 +28,8 @@ from yamawake.agents import LANE_SUZUME
 from yamawake.driver import HANCHAN, SINGLE_KYOKU, play_games
 from yamawake.playstats import play_counts, ratio
 from yamawake.rules import DEFAULT_RULE, rule_label
-from yamawake.walls import FRESH, blob_for_wall, fresh_wall_ids, standard_walls
+from yamawake.walls import (FRESH, blob_for_wall, fresh_wall_ids, matrix_blob, seeded_matrix,
+                             standard_walls)
 
 ROTATIONS = 4          # seat shifts per wall; a 2v2 needs only two (`_rotations`)
 START_SCORE = 25_000   # every seat's score at the start of a game
@@ -364,7 +365,8 @@ def _pt_of(scores: np.ndarray, rule) -> np.ndarray:
 
 def run_match(players: list, walls: int | None = None,
               wall_base: int | str | None = None,
-              split_wall: bool = True, game_mode: int = HANCHAN,
+              wall_seed: int | None = None, wall_start: int = 0,
+              split_wall: bool = True, rotate: bool = True, game_mode: int = HANCHAN,
               rule=None, flight: int = 256,
               record_logs: str | Path | None = None,
               out: str | Path | None = None,
@@ -380,7 +382,19 @@ def run_match(players: list, walls: int | None = None,
         wall_base: Which walls. The standard set by default
             (`walls.standard_walls()`), a recorded base to replay one, or
             `FRESH` to draw a new set.
+        wall_seed: Play seeded walls instead (`walls.seeded_matrix`): walls
+            `wall_start` .. `wall_start + walls - 1` of this seed. A later run
+            with `wall_start` = the walls played so far adds new walls of the
+            same seed. Excludes `wall_base`; the protocol then records
+            `wall_seed` and `wall_start` in place of `wall_base`.
+        wall_start: First wall index of `wall_seed` (0 by default).
         split_wall: Per-seat fixed draw queues.
+        rotate: Play every wall through all its rotations (the duplicate
+            protocol). False plays each wall once, at rotation `w % n` for
+            wall `w` (n = the rotations it would get), so the games are
+            independent and the seating still cycles evenly over the walls;
+            the protocol then records `rotations` 1, `rotate` False and that
+            `seat_cycle` n, and standard errors are over games.
         game_mode: 2 hanchan, 1 east-only, 0 a single kyoku (`single_kyoku`).
         rule: Uma/oka rule (`rules.UmaRule`; anything with `final_pt`),
             `rules.DEFAULT_RULE` by default.
@@ -431,7 +445,16 @@ def run_match(players: list, walls: int | None = None,
 
     std = standard_walls()
     walls = walls or std["default_walls"]
-    if wall_base is None:
+    if wall_seed is not None:
+        if wall_base is not None:
+            raise ValueError("pass wall_base or wall_seed, not both")
+        idx = range(wall_start, wall_start + walls)
+        blobs = [matrix_blob(seeded_matrix(wall_seed, i)) for i in idx]
+        game_seed = [(wall_seed << 32) | i for i in idx]        # the core's u64 game seed
+        base, walls_at = None, {"wall_seed": wall_seed, "wall_start": wall_start}
+    elif wall_start:
+        raise ValueError("wall_start needs wall_seed")
+    elif wall_base is None:
         base = std["wall_base"]
         if walls > std["walls"]:
             raise ValueError(f"the standard set holds {std['walls']} walls; "
@@ -440,13 +463,17 @@ def run_match(players: list, walls: int | None = None,
         base, _ = fresh_wall_ids(1)
     else:
         base = int(wall_base)
-    blobs = [blob_for_wall(base + w) for w in range(walls)]
+    if wall_seed is None:
+        blobs = [blob_for_wall(base + w) for w in range(walls)]
+        game_seed = [base + w for w in range(walls)]
+        walls_at = {"wall_base": base}
 
-    rotations = _rotations(slot_agent)
+    cycle = _rotations(slot_agent)
+    rotations = cycle if rotate else 1
     seeds, maps, game_blobs, seat_of_slot = [], [], [], []
     for w in range(walls):
-        for r in range(rotations):
-            seeds.append(base + w)
+        for r in (range(cycle) if rotate else [w % cycle]):
+            seeds.append(game_seed[w])
             # Rotation r seats slot j at seat (j + r) % 4.
             seat_of_slot.append([(j + r) % 4 for j in range(4)])
             maps.append(tuple(slot_agent[(s - r) % 4] for s in range(4)))
@@ -483,9 +510,11 @@ def run_match(players: list, walls: int | None = None,
                                 float(rank.mean()), se, float(pt.mean()), se_pt))
 
     protocol = {"walls": walls, "rotations": rotations,
-                "slot_agent": list(slot_agent), "wall_base": base,
+                "slot_agent": list(slot_agent), **walls_at,
                 "split_wall": split_wall, "game_mode": game_mode,
                 "rule": rule_label(rule)}
+    if not rotate:
+        protocol.update(rotate=False, seat_cycle=cycle)
     kyoku = None
     if single_kyoku:
         protocol["single_kyoku"] = True
@@ -497,7 +526,8 @@ def run_match(players: list, walls: int | None = None,
                           **dict(zip(A1_OPTION_KEYS, np.array(options, dtype=np.int64).transpose(2, 0, 1)))}
                          if play_stats else None, timing, cpu_seconds)
     if record_logs is not None:
-        _write_logs(Path(record_logs), logs, seat_of_slot, players, base, traces)
+        _write_logs(Path(record_logs), logs, seat_of_slot, players,
+                    base if wall_seed is None else f"s{wall_seed}-{wall_start}", traces)
     if save_scores is not None:
         Path(save_scores).parent.mkdir(parents=True, exist_ok=True)
         np.savez(save_scores, scores=scores, seat_of_slot=seat_of_slot,
@@ -545,7 +575,7 @@ def _kyoku_outcomes(logs: list[list[str]]) -> dict[str, np.ndarray]:
 
 
 def _write_logs(out_dir: Path, logs: list[list[str]], seat_of_slot: np.ndarray,
-                players: list, wall_base: int, traces: list | None = None) -> None:
+                players: list, wall_base: int | str, traces: list | None = None) -> None:
     """Write the games as gzipped mjai, with the players' names in `start_game`."""
     out_dir.mkdir(parents=True, exist_ok=True)
     names = [s.describe().get("name", f"slot{j}") for j, s in enumerate(players)]

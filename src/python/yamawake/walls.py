@@ -15,6 +15,11 @@ from one recorded base id), so two results differ by their players only;
 handles (record them, e.g. a run's base id, to regenerate a run's
 walls); adjacent ids share nothing (SeedSequence-hashed streams).
 
+Seeded walls (`seeded_matrix`) are a second, separate family: wall `index`
+of seed `seed` (both 32-bit), for studies that give every cell its own
+seed and add walls later by continuing the index -- two seeds never share
+a wall, however many walls each plays, and no seeded wall is an id wall.
+
 Blob format consumed by ``yamawake._core.SelfPlayLoop(wall_tables=...)``:
 concatenated 138-byte records ``(kyoku_ordinal, honba, 136 tiles)``,
 each tile list a permutation of 0..135. Coordinates beyond the matrix
@@ -33,6 +38,8 @@ KYOKU = 16   # E1..E4, S1..S4, W1..W4, N1..N4
 HONBA = 12
 TILES = 136
 _SEED_NS = 0x52454C4A  # "RELJ": keeps matrix streams away from other rngs
+_SEEDED_NS = 0x53454544  # "SEED": the seeded family, apart from the id family
+SEEDED_MAX = 2 ** 32    # seeds and indices are below this
 #: Ask `run_match` for a never-used wall set instead of the standard one.
 FRESH = "fresh"
 
@@ -54,7 +61,27 @@ def generate_matrix(wall_id: int, kyoku: int = KYOKU,
     Returns:
         Array of independent 136-tile permutations.
     """
-    rng = np.random.Generator(np.random.PCG64([_SEED_NS, wall_id]))
+    return _draw(np.random.Generator(np.random.PCG64([_SEED_NS, wall_id])), kyoku, honba)
+
+
+def seeded_matrix(seed: int, index: int, kyoku: int = KYOKU,
+                  honba: int = HONBA) -> np.ndarray:
+    """Wall `index` (0, 1, 2, ...) of seed `seed`, shape (kyoku, honba, 136).
+
+    Deterministic in (seed, index) alone (PCG64 seeded by both, in a stream
+    family of its own). Both must lie in [0, 2**32): each is then one
+    entropy word, so distinct pairs never alias.
+
+    Example: the first 500 walls of a cell with seed 7 are indices 0..499;
+    adding 500 later plays indices 500..999 of the same seed.
+    """
+    for name, v in (("seed", seed), ("index", index)):
+        if not 0 <= v < SEEDED_MAX:
+            raise ValueError(f"wall {name} must be in [0, 2**32), got {v}")
+    return _draw(np.random.Generator(np.random.PCG64([_SEEDED_NS, seed, index])), kyoku, honba)
+
+
+def _draw(rng: np.random.Generator, kyoku: int, honba: int) -> np.ndarray:
     mat = np.empty((kyoku, honba, TILES), dtype=np.uint8)
     for m in range(kyoku):
         for n in range(honba):

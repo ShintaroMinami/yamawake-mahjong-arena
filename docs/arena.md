@@ -28,8 +28,10 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--mode 1v3\|2v2` | 2 人を `[A, B, B, B]` か `[A, B, A, B]` に並べる |
 | `--walls N` | 牌山の数（既定は標準牌山の先頭 1,000） |
 | `--wall-base fresh\|Integer` | `fresh` で新しい牌山を引く。値を渡すとその牌山を再現する |
+| `--wall-seed S` / `--wall-start K` | シード S の牌山の K 番目から `--walls` 個を打つ（S、K は 0 以上 2³² 未満、既定 K = 0）。牌山を足すときは K に打った数を渡す。シードが違えば牌山は重ならない。`--wall-base` とは併用できない |
 | `--opt KEY=VALUE` | プレイヤーに渡すオプション（rulebot の設定など） |
 | `--single-kyoku` | 全対局を東 1 局だけにする（下記） |
+| `--no-rotate` | 牌山を席で回さず、1 つの牌山で 1 半荘だけ打つ（下記） |
 | `--out FILE` | 結果の集計を jsonl に追記する |
 | `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
 | `--record-logs DIR` | 全対局の牌譜を mjai 形式（gzip）で書き出す |
@@ -47,6 +49,8 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 ポイントは 25,000 点持ち 30,000 点返し、順位点 +90 / +45 / 0 / −135、オカ 20 の精算です（`rules.DEFAULT_RULE`）。
 
 `--single-kyoku` では、全員 25,000 点、本場 0 で、半荘の東 1 局と同じ牌山を打ち、その 1 局で終えます。点数状況の影響なしに手組みを比べるためのもので、局の収支と和了率・放銃率を出します。
+
+`--no-rotate`（`run_match(rotate=False)`）では、牌山ごとに 1 半荘だけ打ちます。席は牌山の番号で順に回し（牌山 w では w % 4 回目の回転、2v2 では w % 2 回目）、どの半荘も別の牌山なので互いに独立です。席の回転による分散低減の効果を測るときなど、比較の基準に使います。標準誤差は半荘単位になります。
 
 ## 3. Python
 

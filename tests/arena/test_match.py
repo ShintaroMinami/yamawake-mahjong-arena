@@ -10,6 +10,7 @@ import pytest
 from yamawake import (FRESH, SuzumeAgent, RulebotAgent, TsumogiriAgent, lineup, play_games,
                        run_match, standard_walls)
 from yamawake.rules import DEFAULT_RULE, UmaRule, rank_of
+from yamawake.report import report
 from yamawake.walls import blob_for_wall
 
 
@@ -211,3 +212,44 @@ def test_the_rust_and_python_tsumogiri_play_the_same_games():
         rust = run_match(seating(TsumogiriAgent()), walls=4)
         py = run_match(seating(PythonTsumogiriAgent()), walls=4)
         assert (rust.scores == py.scores).all()
+
+
+def test_rotate_false_plays_each_wall_once_and_cycles_the_seating():
+    """Without rotation every wall is one game, at rotation w % 4 (w % 2 in a 2v2)."""
+    rb, tg = RulebotAgent(), TsumogiriAgent()
+    r = run_match([tg, rb, rb, rb], walls=6, flight=6, rotate=False)
+    assert r.games == 6
+    assert r.protocol["rotations"] == 1 and r.protocol["rotate"] is False and r.protocol["seat_cycle"] == 4
+    assert r.seat_of_slot[:, 0].tolist() == [0, 1, 2, 3, 0, 1]
+    full = run_match([tg, rb, rb, rb], walls=6, flight=24)
+    assert "rotate" not in full.protocol
+    # The game on wall w is the full protocol's rotation w % 4 on that wall, bit for bit.
+    assert np.array_equal(r.scores, full.scores[[4 * w + w % 4 for w in range(6)]])
+    assert r.slots[0].se_pt > 0 and sum(s.avg_rank for s in r.slots) == pytest.approx(10.0)
+    two = run_match(lineup(tg, rb, mode="2v2"), walls=4, flight=4, rotate=False)
+    assert two.protocol["seat_cycle"] == 2 and two.seat_of_slot[:, 0].tolist() == [0, 1, 0, 1]
+    assert two.table().startswith("Standings") and two.paired()["walls"] == 4
+
+
+def test_a_seeded_run_continues_with_wall_start(tmp_path):
+    """Walls 0..2 of a seed in one run equal walls 0..1 plus a later run of wall 2."""
+    players = lineup(TsumogiriAgent(), RulebotAgent())
+    full = run_match(players, walls=3, wall_seed=11, flight=12, record_logs=tmp_path / "logs")
+    assert "wall_seed 11, from wall 0" in report(full)
+    head = run_match(players, walls=2, wall_seed=11, flight=12)
+    tail = run_match(players, walls=1, wall_seed=11, wall_start=2, flight=12)
+    assert (np.concatenate([head.scores, tail.scores]) == full.scores).all()
+    assert full.protocol["wall_seed"] == 11 and full.protocol["wall_start"] == 0
+    assert "wall_base" not in full.protocol and tail.protocol["wall_start"] == 2
+    other = run_match(players, walls=3, wall_seed=12, flight=12)
+    std = run_match(players, walls=3, flight=12)
+    assert not (other.scores == full.scores).all() and not (std.scores == full.scores).all()
+    assert sorted(p.name for p in (tmp_path / "logs").glob("*.json.gz"))[0] == "arena-s11-0-000000.json.gz"
+
+
+def test_wall_seed_excludes_wall_base_and_wall_start_needs_a_seed():
+    players = lineup(TsumogiriAgent(), RulebotAgent())
+    with pytest.raises(ValueError, match="not both"):
+        run_match(players, walls=1, wall_seed=1, wall_base=5)
+    with pytest.raises(ValueError, match="needs wall_seed"):
+        run_match(players, walls=1, wall_start=3)
