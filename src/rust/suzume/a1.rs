@@ -166,35 +166,39 @@ impl Model {
         argmax(&self.scores(rows, state, opp, v))
     }
 
-    /// The index of the best row under the play-style options (`A1Config`): `bias` (one per row, when given; the
-    /// `call_offset` / `riichi_offset`) is added to this model's scores `s` first; then, for
-    /// `aggression` w != 0, the argmax of `(1 - |w|) s + |w| s_end`, `s_end` the scores of the endpoint model of w's
-    /// sign (`ends`: fold for w < 0, push for w > 0; `A1Models::ends`). The softmax normalizers cancel in the argmax,
-    /// so this mixes the log policies, and w = +-1 plays the endpoint itself. Without that endpoint, or w = 0: the
-    /// argmax of `s`. `riichi` (the rows that declare riichi, when the decision has any): riichi or not stays this
-    /// model's own choice and the mix picks only within that group (2026-10-23).
+    /// The index of the best row under the play-style options (`A1Config`): with `bias` (one per row, when given;
+    /// the `call_offset` / `riichi_offset`) and, for `aggression` w != 0, `s_end` the scores of the endpoint model of
+    /// w's sign (`ends`: fold for w < 0, push for w > 0; `A1Models::ends`), the argmax of
+    /// `(1 - |w|) s + |w| s_end + bias`, `s` this model's scores. The softmax normalizers cancel in the argmax, so
+    /// this mixes the log policies, w = +-1 plays the endpoint itself, and the bias moves the choice by the same
+    /// amount at every w (2026-10-28; it was added to `s` before the mix, so it shrank by 1 - |w| and vanished at
+    /// +-1). Without that endpoint, or w = 0: the argmax of `s + bias`. `riichi` (the rows that declare riichi, when
+    /// the decision has any): riichi or not stays this model's own choice (from `s + bias`) and the mix picks only
+    /// within that group (2026-10-23).
     #[allow(clippy::too_many_arguments)]
     fn best_styled(&self, ends: [Option<&Model>; 2], aggression: f64, rows: &[[f64; N_ROW]], state: &str, opp: bool,
                    v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
-        let mut s = self.scores(rows, state, opp, v);
-        if let Some(b) = bias {
-            for (x, y) in s.iter_mut().zip(b) {
-                *x += y;
-            }
-        }
-        let own = argmax(&s);
-        let Some(end) = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0) else { return own };
-        let w = aggression.abs();
-        let group = riichi.map(|r| r[own]);
-        let mut best = (own, f64::NEG_INFINITY);
-        for (i, (y, x)) in end.scores(rows, state, opp, v).iter().zip(&s).enumerate() {
-            let t = (1.0 - w) * x + w * y;
-            if group.is_none_or(|g| riichi.unwrap()[i] == g) && t > best.1 {
-                best = (i, t);
-            }
-        }
-        best.0
+        let s = self.scores(rows, state, opp, v);
+        let end = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0).map(|m| m.scores(rows, state, opp, v));
+        styled_choice(&s, end.as_deref(), aggression.abs(), riichi, bias)
     }
+}
+
+/// `Model::best_styled` on given scores: `s` the model's, `end` the endpoint's (none: w is not used), `w` = |aggression|.
+fn styled_choice(s: &[f64], end: Option<&[f64]>, w: f64, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
+    let b = |i: usize| bias.map_or(0.0, |b| b[i]);
+    let biased: Vec<f64> = s.iter().enumerate().map(|(i, x)| x + b(i)).collect();
+    let own = argmax(&biased);
+    let Some(end) = end else { return own };
+    let group = riichi.map(|r| r[own]);
+    let mut best = (own, f64::NEG_INFINITY);
+    for (i, (y, x)) in end.iter().zip(s).enumerate() {
+        let t = (1.0 - w) * x + w * y + b(i);
+        if group.is_none_or(|g| riichi.unwrap()[i] == g) && t > best.1 {
+            best = (i, t);
+        }
+    }
+    best.0
 }
 
 /// The index of the highest value (the first on a tie; 0 when none beats -inf).
@@ -985,6 +989,25 @@ mod tests {
         assert!(parse_state(&text(&["patterns_log"], &["pmf:has2"])).is_err());
         let old = parse_state(&text(&["patterns_log"], &super::super::pf::SIT_NAMES)).unwrap();
         assert!(old.summary_cols.is_empty() && old.n_sit == 21);
+    }
+
+    #[test]
+    fn the_style_bias_moves_the_choice_at_every_aggression() {
+        // options: pass, call. The model prefers pass by 1, the endpoint by 4; a call bias of 2 is added after the mix.
+        let (s, end, bias) = ([1.0, 0.0], [4.0, 0.0], [0.0, 2.0]);
+        assert_eq!(styled_choice(&s, None, 0.0, None, Some(&bias)), 1);
+        assert_eq!(styled_choice(&s, Some(&end), 0.5, None, None), 0);
+        // w = 0.5: mixed pass 2.5, call 0 + 2; w = 0.25: pass 1.75, call 2 (the bias is not scaled by 1 - w)
+        assert_eq!(styled_choice(&s, Some(&end), 0.5, None, Some(&bias)), 0);
+        assert_eq!(styled_choice(&s, Some(&end), 0.25, None, Some(&bias)), 1);
+        // w = 1 plays the endpoint plus the bias: pass 4 vs call 2, then a bias of 5 calls
+        assert_eq!(styled_choice(&s, Some(&end), 1.0, None, Some(&bias)), 0);
+        assert_eq!(styled_choice(&s, Some(&end), 1.0, None, Some(&[0.0, 5.0])), 1);
+        // riichi: the group comes from s + bias; the mix picks within it
+        let riichi = [false, true, true];
+        let (s, end) = ([0.0, 0.5, 0.4], [9.0, 0.0, 1.0]);
+        assert_eq!(styled_choice(&s, Some(&end), 1.0, Some(&riichi), None), 2);
+        assert_eq!(styled_choice(&s, Some(&end), 1.0, Some(&riichi), Some(&[0.0, -1.0, -1.0])), 0);
     }
 
     #[test]
