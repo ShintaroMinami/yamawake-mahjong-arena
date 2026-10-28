@@ -49,3 +49,13 @@ def test_seeded_walls_reject_values_outside_32_bits(seed, index):
     from yamawake.walls import seeded_matrix
     with pytest.raises(ValueError, match=r"\[0, 2\*\*32\)"):
         seeded_matrix(seed, index)
+
+
+def test_neighbouring_seeds_do_not_share_shifted_walls():
+    """Seed and index are hashed together, not added: (S, w + 1) is not (S + 1, w)."""
+    import hashlib
+    from yamawake.walls import seeded_matrix
+    assert (seeded_matrix(2026102800, 1) != seeded_matrix(2026102801, 0)).mean() > 0.9
+    keys = [(s, w) for s in range(2026102800, 2026102806) for w in range(6)]
+    digests = {hashlib.sha256(seeded_matrix(s, w).tobytes()).hexdigest() for s, w in keys}
+    assert len(digests) == len(keys)
