@@ -156,11 +156,12 @@ impl BotView {
         let mut riichi_stage = [false; 4];
         let mut in_riichi = [false; 4];
 
-        for event in kyoku_events {
-            let t = event
-                .get("type")
-                .and_then(Value::as_str)
-                .ok_or("event without type")?;
+        for (i, event) in kyoku_events.iter().enumerate() {
+            // The arena only stores events whose type it has read, so a miss
+            // here means the stored event changed; name it for the report.
+            let t = event.get("type").and_then(Value::as_str).ok_or_else(|| {
+                format!("event without type: kyoku event {i} of {}: {event}", kyoku_events.len())
+            })?;
             match t {
                 "dahai" => {
                     let actor = event["actor"].as_u64().ok_or("dahai actor")? as usize;

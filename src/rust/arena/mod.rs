@@ -153,7 +153,9 @@ impl GameSlot {
     /// observation and the kyoku's events).
     pub fn rulebot_action(&mut self, seat: u8, cfg: &RulebotConfig) -> Result<Action, String> {
         let obs = self.state.get_observation(seat);
-        crate::rulebot::decide::decide(&obs, &self.kyoku_events, cfg, false).map(|(a, _)| a)
+        crate::rulebot::decide::decide(&obs, &self.kyoku_events, cfg, false)
+            .map(|(a, _)| a)
+            .map_err(|e| format!("rulebot seat {seat} at mjai line {}: {e}", self.state.mjai_log.len()))
     }
 
     /// Decide one tsumogiri bot in-loop (`tsumogiri`).

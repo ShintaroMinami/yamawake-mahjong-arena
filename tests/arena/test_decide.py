@@ -54,3 +54,14 @@ def test_decide_replays_the_in_loop_rulebot():
     ref = SelfPlayLoop(seeds, 2, [[(s, "rulebot", rb.config) for s in range(4)]], split_wall=False)
     assert ref.collect() is None
     assert loop.scores() == ref.scores()
+
+
+def test_rulebot_names_an_event_without_type():
+    """A kyoku event with no type stops the rulebot with the event in the message."""
+    loop = SelfPlayLoop([7], 0, [[]], split_wall=False)
+    b64 = loop.collect()["obs"][0]
+    tr = SeatTracker()
+    tr.feed(rv.Observation.deserialize_from_base64(b64).new_events())
+    events = tr.events[:1] + ['{"actor": 0}'] + tr.events[1:]
+    with pytest.raises(ValueError, match=r'event without type: kyoku event 1 of \d+: \{"actor":0\}'):
+        decide("rulebot", b64, events)
