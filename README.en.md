@@ -136,8 +136,8 @@ All three default to 0 (no change); at 0, `suzume` plays as before.
 | Parameter | Controls | Value |
 |---|---|---|
 | `aggression` | push / fold | -1 to 1; positive pushes more (more deal-ins and wins), negative folds more |
-| `call_shift` | how often it calls | -1 to 1; positive calls more, negative less |
-| `riichi_shift` | how often it declares riichi | -1 to 1; positive declares more, negative stays dama more |
+| `call_shift` | how often it calls | standard -1 to 1 (values beyond are allowed); positive calls more, negative less |
+| `riichi_shift` | how often it declares riichi | standard -1 to 1 (values beyond are allowed); positive declares more, negative stays dama more |
 
 Append them to the player spec as `:name=value`:
 ``` bash

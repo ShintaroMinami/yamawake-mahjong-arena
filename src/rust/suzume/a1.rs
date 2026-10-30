@@ -602,11 +602,11 @@ pub struct A1Config {
     /// the push endpoint, < 0 toward the fold endpoint, applied to the kinds with endpoint models (`{k}_fold.json` /
     /// `{k}_push.json`); 0 plays the set's own models as they are.
     pub aggression: f64,
-    /// How readily it calls, in [-1, 1] (2026-10-24, named `call_bias` at first; scaled 2026-10-25): `call_offset`
+    /// How readily it calls, standard range [-1, 1], any finite value allowed (2026-10-24, named `call_bias` at first; scaled 2026-10-25): `call_offset`
     /// (`STYLE_SCALES`) is added to the score of every chi / pon / daiminkan option of a call decision; +-1 moves the
     /// log odds of calling, over the decisions with a call legal, by about +-1.5. 0 plays as before.
     pub call_shift: f64,
-    /// How readily it declares riichi, in [-1, 1] (2026-10-24, named `riichi_bias` at first; scaled 2026-10-25):
+    /// How readily it declares riichi, standard range [-1, 1], any finite value allowed (2026-10-24, named `riichi_bias` at first; scaled 2026-10-25):
     /// `riichi_offset` is added to the score of every riichi option of a riichi-legal decision (the riichi lock of
     /// `Model::best_styled` then keeps that choice); +-1 moves the log odds of declaring, over the riichi-legal
     /// decisions, by about +-3. 0 plays as before.
@@ -621,7 +621,7 @@ pub struct A1Config {
 /// over the decisions with it legal, by -1.5 / +1.5 for calls and -3 / +3 for riichi, interpolated).
 pub const STYLE_SCALES: [(f64, f64); 2] = [(2.5, 3.4), (4.5, 3.5)];
 
-/// The score offset of a style shift `v` in [-1, 1] with `scales` (below, above 0).
+/// The score offset of a style shift `v` (standard range [-1, 1], linear beyond) with `scales` (below, above 0).
 pub fn style_offset(v: f64, (below, above): (f64, f64)) -> f64 {
     v * if v < 0.0 { below } else { above }
 }
@@ -644,10 +644,10 @@ impl A1Config {
         if ![aggression, call_shift, riichi_shift].iter().all(|x| x.is_finite()) {
             return Err(format!("aggression {aggression} / call_shift {call_shift} / riichi_shift {riichi_shift}: not finite"));
         }
-        for (name, x) in [("aggression", aggression), ("call_shift", call_shift), ("riichi_shift", riichi_shift)] {
-            if x.abs() > 1.0 {
-                return Err(format!("{name} {x}: not in [-1, 1]"));
-            }
+        // aggression mixes with an endpoint, so it stops at the endpoint; the shifts only add to scores, so they may go
+        // past +-1 (2026-10-30, for calibrated styles outside the standard range)
+        if aggression.abs() > 1.0 {
+            return Err(format!("aggression {aggression}: not in [-1, 1]"));
         }
         if aggression != 0.0 && models.ends.iter().flatten().all(Option::is_none) {
             return Err(format!("{}: aggression without push / fold models ({{k}}_push / _fold.json)", models.dir));
@@ -941,7 +941,7 @@ mod tests {
         assert!(A1Config::new(c.cfg, c.models, None, -1.0, 0.0, 0.0).is_ok());
         let r = A1Config::builtin("suzume-rla225").unwrap();
         assert!(A1Config::new(r.cfg, r.models, None, 0.5, 0.0, 0.0).is_err());
-        assert!(A1Config::new(c.cfg, c.models, None, 0.0, 1.5, 0.0).is_err());
+        assert!(A1Config::new(c.cfg, c.models, None, 0.0, 1.5, -1.2).is_ok());
         let s = A1Config::new(c.cfg, c.models, None, 0.0, -1.0, 0.5).unwrap();
         assert_eq!((s.call_offset, s.riichi_offset), (-2.5, 1.75));
     }

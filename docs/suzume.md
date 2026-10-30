@@ -38,8 +38,8 @@ agent = SuzumeAgent(models="suzume-rla225")    # 別の教師で学習した組
 | パラメータ | 調節するもの | 値 | 仕組み |
 |---|---|---|---|
 | `aggression` | 押し引き | -1 〜 1 | 脅威のある局面で、押しのモデルと降りのモデルの方策を補間する |
-| `call_shift` | 副露の度合い | -1 〜 1 | 副露（チー・ポン・大明槓）の選択肢のスコアを動かす |
-| `riichi_shift` | 立直の度合い | -1 〜 1 | 立直の選択肢のスコアを動かす |
+| `call_shift` | 副露の度合い | 標準は -1 〜 1（外側も可） | 副露（チー・ポン・大明槓）の選択肢のスコアを動かす |
+| `riichi_shift` | 立直の度合い | 標準は -1 〜 1（外側も可） | 立直の選択肢のスコアを動かす |
 
 ``` bash
 uv run yamawake-arena --mode 2v2 --players suzume:aggression=-0.5:riichi_shift=0.5 suzume
