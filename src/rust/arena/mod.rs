@@ -47,7 +47,8 @@ pub struct GameSlot {
     /// decision, seat, deciding rule id). The decision's own event, if it
     /// makes one, is the first one by that seat from that log index on.
     pub suzume_trace: Vec<(u32, u8, u8)>,
-    /// Per seat, the A1 bot's riichi / call (chi / pon / daiminkan) options:
+    /// Per seat, the riichi / call (chi / pon / daiminkan) options of whatever plays it (A1 at first; every agent,
+    /// in-loop or external, since 2026-10-30):
     /// [riichi legal, riichi taken, call legal, call taken] over decisions,
     /// then the same four over kyoku (a kyoku counts once if the option was
     /// legal in any decision, and as taken if it was taken in any).
@@ -153,14 +154,19 @@ impl GameSlot {
     /// observation and the kyoku's events).
     pub fn rulebot_action(&mut self, seat: u8, cfg: &RulebotConfig) -> Result<Action, String> {
         let obs = self.state.get_observation(seat);
-        crate::rulebot::decide::decide(&obs, &self.kyoku_events, cfg, false)
+        let action = crate::rulebot::decide::decide(&obs, &self.kyoku_events, cfg, false)
             .map(|(a, _)| a)
-            .map_err(|e| format!("rulebot seat {seat} at mjai line {}: {e}", self.state.mjai_log.len()))
+            .map_err(|e| format!("rulebot seat {seat} at mjai line {}: {e}", self.state.mjai_log.len()))?;
+        self.count_options(seat, &obs.legal_actions_method(), &action);
+        Ok(action)
     }
 
     /// Decide one tsumogiri bot in-loop (`tsumogiri`).
     pub fn tsumogiri_action(&mut self, seat: u8) -> Result<Action, String> {
-        tsumogiri(&self.state.get_observation(seat))
+        let obs = self.state.get_observation(seat);
+        let action = tsumogiri(&obs)?;
+        self.count_options(seat, &obs.legal_actions_method(), &action);
+        Ok(action)
     }
 
     /// Decide one suzume bot in-loop (`suzume::decide_observation` with the seat's
@@ -170,6 +176,7 @@ impl GameSlot {
         let memo = &mut self.suzume_memo[usize::from(seat)];
         let (action, rule) = crate::suzume::decide_observation(&obs, &self.kyoku_events, cfg, memo)?;
         self.suzume_trace.push((self.state.mjai_log.len() as u32, seat, rule));
+        self.count_options(seat, &obs.legal_actions_method(), &action);
         Ok(action)
     }
 }
@@ -179,8 +186,13 @@ impl GameSlot {
     pub fn a1_action(&mut self, seat: u8, a1: &crate::suzume::a1::A1Config) -> Result<Action, String> {
         let obs = self.state.get_observation(seat);
         let action = crate::suzume::a1::decide(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])?;
+        self.count_options(seat, &obs.legal_actions_method(), &action);
+        Ok(action)
+    }
+
+    /// Count one decision's riichi / call options into `a1_options` (decisions and kyoku).
+    pub fn count_options(&mut self, seat: u8, legal: &[Action], action: &Action) {
         let is_call = |t: ActionType| matches!(t, ActionType::Chi | ActionType::Pon | ActionType::Daiminkan);
-        let legal = obs.legal_actions_method();
         let riichi_legal = legal.iter().any(|a| a.action_type == ActionType::Riichi);
         let call_legal = legal.iter().any(|a| is_call(a.action_type));
         let hit = [riichi_legal, riichi_legal && action.action_type == ActionType::Riichi,
@@ -191,7 +203,6 @@ impl GameSlot {
             n[4 + i] += u32::from(hit[i] && !seen[i]);
             seen[i] |= hit[i];
         }
-        Ok(action)
     }
 }
 
@@ -372,6 +383,7 @@ impl LockstepLoop {
             ));
         }
         let mut per_game: HashMap<usize, HashMap<u8, Action>> = HashMap::new();
+        let slots = &mut self.slots;
         for (p, (action_type, tile, consume_tiles)) in self.pending.iter().zip(actions) {
             let mut want = consume_tiles.clone();
             want.sort_unstable();
@@ -391,6 +403,7 @@ impl LockstepLoop {
                         p.game, p.seat
                     )
                 })?;
+            slots[p.game].count_options(p.seat, &p.legal, &action);
             per_game.entry(p.game).or_default().insert(p.seat, action);
         }
         self.pending.clear();

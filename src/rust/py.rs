@@ -235,9 +235,9 @@ impl SelfPlayLoop {
         Ok(slot.suzume_trace.iter().map(|&(i, seat, rule)| (i, seat, crate::suzume::decider_name(rule))).collect())
     }
 
-    /// Per game and seat: the A1 bot's [riichi legal, riichi taken, call legal,
-    /// call taken] counts over decisions, then over kyoku (`GameSlot::a1_options`);
-    /// zeros for the other seats.
+    /// Per game and seat: the [riichi legal, riichi taken, call legal, call taken]
+    /// counts of whatever plays it (in-loop or external), over decisions, then over
+    /// kyoku (`GameSlot::a1_options`).
     fn a1_options(&self) -> Vec<[[u32; 8]; 4]> {
         self.inner.slots.iter().map(|s| s.a1_options).collect()
     }

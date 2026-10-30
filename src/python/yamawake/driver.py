@@ -87,8 +87,8 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
             mjai logs as the flight ends (whether or not `want_logs` keeps
             them), so a caller can reduce them without holding every log.
         a1_options: If a list, one entry per game is appended to it: per seat,
-            the A1 bot's [riichi legal, riichi taken, call legal, call taken]
-            counts over decisions, then over kyoku (zeros for the other seats).
+            the [riichi legal, riichi taken, call legal, call taken] counts of
+            whatever plays it, over decisions, then over kyoku.
 
     Returns:
         `(scores, logs)`: final points per game (4 each), and the logs (empty
