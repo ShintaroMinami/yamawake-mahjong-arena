@@ -571,6 +571,9 @@ macro_rules! a1_files {
 /// (2026-10-24: the discard12 counterparts `-d12` and the sets' unused discard12 models dropped).
 /// `suzume` also has the push / fold endpoint models of `aggression` (`A1Models::ends`, 2026-10-24: discard0 3x48,
 /// discard1 / discard2 3x88, discard3 3x64, call 3x40, kan 3x16).
+/// The fold endpoints were refitted on knob_v4 labels (2026-10-29, the default since 2026-10-30): the threat is
+/// injected only into opponents that could have declared riichi (closed, >= 1000 points, a discard, not the discarder
+/// of a call), half the mean over single injections and half over pairs (before: every non-riichi opponent at once).
 pub static BUILTIN: [Builtin; 2] = [
     Builtin {
         name: "suzume",
