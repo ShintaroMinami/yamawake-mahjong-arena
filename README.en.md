@@ -130,6 +130,34 @@ From Python:
 
 ## Play-style control of suzume
 
+### By style coordinates
+
+`suzume`'s style can be given in three coordinates measured against the spread of human players.
+
+| Coordinate | Meaning | Value |
+|---|---|---|
+| `call_rate` | per-kyoku call rate: kyoku with a call / kyoku where a call (chi, pon, open kan) was possible | 0 to 1; default `suzume` about 0.294 |
+| `riichi_rate` | per-kyoku riichi rate: kyoku with riichi / kyoku where riichi was possible | 0 to 1; default `suzume` about 0.659 |
+| `push_z` | pushing against an opponent's riichi (push z) | 0 = default `suzume`, 1 = one standard deviation of Tenhou Houou players; positive pushes more, negative folds more |
+
+``` bash
+    # the median of Houou players (500+ games, 1,233 players)
+    uv run yamawake-arena --mode 1v3 --players suzume:call_rate=0.364:riichi_rate=0.670:push_z=-0.78 suzume
+```
+``` python
+    from yamawake import SuzumeAgent
+    agent = SuzumeAgent({"call_rate": 0.45, "push_z": 1.0})
+```
+- A coordinate left out stays at default `suzume`'s value.
+- The coordinates are converted into the three parameters below when the agent is built (calibration,
+  `yamawake.style.calibrate`). The conversion was fitted on 729 settings played against three default `suzume`
+  (2,000 hanchan each); against other opponents the style played drifts somewhat.
+- An unreachable target (such as an extreme push z) warns and plays the nearest style. A target that needs a
+  parameter outside the fitted -1 to 1 warns that it is an extrapolation.
+- Coordinates and parameters cannot be mixed. Only `suzume` takes the coordinates.
+
+### By parameters
+
 `suzume` has three parameters that set its play style.
 All three default to 0 (no change); at 0, `suzume` plays as before.
 

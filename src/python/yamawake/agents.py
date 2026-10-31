@@ -24,7 +24,8 @@ An observation agent may also carry the two context hooks of `context.py`:
 
 Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
 same moves through the observation lane), `rulebot`, `rulebot:kobalab`,
-`suzume` (the default set) and `suzume-rla225` (`SUZUME_SETS`, no options),
+`suzume[:KEY=VALUE...]` (the default set; `STYLE_OPTIONS` or `STYLE_TARGETS`) and
+`suzume-rla225[:KEY=VALUE...]` (`SUZUME_SETS`; `STYLE_OPTIONS`),
 the legacy sets `legacy-suzume-mlp3[:KEY=VALUE[:KEY=VALUE...]]` (e.g.
 `legacy-suzume-mlp3:call=0`; also `legacy-suzume-mlp3-flat`, `legacy-suzume-mlp3-avoid4`,
 `legacy-suzume-mlp1`, `legacy-suzume-mlp1-flat`, `LEGACY_SETS`), plus
@@ -43,6 +44,7 @@ import riichienv as rv
 
 from yamawake._core import a1_model_sets, suzume_model_sets
 from yamawake.context import Decision
+from yamawake.style import STYLE_TARGETS
 
 LANE_OBSERVATION = "observation"
 LANE_RULEBOT = "rulebot"
@@ -134,6 +136,11 @@ MODEL_SETS = (*SUZUME_SETS, *LEGACY_SETS)
 #: models, which only `suzume` has) and `call_shift` / `riichi_shift` (-1 .. 1; scaled score offsets,
 #: `src/rust/suzume/a1.rs`, `A1Config`).
 STYLE_OPTIONS = ("aggression", "call_shift", "riichi_shift")
+#: The style coordinates `suzume` also takes in their place (2026-10-31, `yamawake.style`): call_rate, riichi_rate,
+#: push_z (`STYLE_TARGETS`); calibrated into `STYLE_OPTIONS` when the agent is built, a coordinate left out at
+#: default suzume's value.
+#: The set the style coordinates are calibrated for.
+STYLE_TARGET_SET = "suzume"
 
 
 class SuzumeAgent:
@@ -156,20 +163,52 @@ class SuzumeAgent:
         if "models" in (config or {}):
             raise ValueError("the model set is picked by the player name, not an option")
         self.name = name
+        self.style = None
         if models in SUZUME_SETS:
-            bad = [k for k in config or {} if k not in STYLE_OPTIONS]
+            config = dict(config or {})
+            allowed = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ())
+            bad = [k for k in config if k not in allowed]
             if bad:
-                raise ValueError(f"{models} takes only {', '.join(STYLE_OPTIONS)} (got {', '.join(bad)}); the legacy sets "
+                raise ValueError(f"{models} takes only {', '.join(allowed)} (got {', '.join(bad)}); the legacy sets "
                                  "take the suzume options")
-            self.lane, self.config = LANE_A1, {"a1": models, **(config or {})}
+            if any(k in config for k in STYLE_TARGETS):
+                config = self._calibrate(config)
+            self.lane, self.config = LANE_A1, {"a1": models, **config}
             return
         self.lane = LANE_SUZUME
         self.config = {**(config or {}), "models": models}
         suzume_config(self.config)
 
+    def _calibrate(self, config: dict) -> dict:
+        """The style coordinates in `config` -> `STYLE_OPTIONS` (`yamawake.style.calibrate`); warns when the
+        target is out of reach or needs options past the fitted grid."""
+        import warnings
+        from yamawake.style import calibrate, default_style
+        if any(k in config for k in STYLE_OPTIONS):
+            raise ValueError(f"give either the style coordinates ({', '.join(STYLE_TARGETS)}) or the options "
+                             f"({', '.join(STYLE_OPTIONS)}), not both")
+        try:
+            target = {**default_style(), **{k: float(v) for k, v in config.items()}}
+        except ValueError:
+            raise ValueError(f"style coordinates must be numbers, got {config}") from None
+        res = calibrate(*(target[k] for k in STYLE_TARGETS))
+        self.style = {"target": target, **res}
+        if not res["reached"]:
+            got = ", ".join(f"{k} {res['predicted'][k]:.3f}" for k in STYLE_TARGETS)
+            warnings.warn(f"style target {', '.join(f'{k} {target[k]:.3f}' for k in STYLE_TARGETS)} is out of reach; "
+                          f"playing the nearest ({got})", stacklevel=3)
+        elif res["extrapolated"]:
+            warnings.warn(f"style target needs options past the calibrated -1 .. 1 ({res['options']}); "
+                          "the style it plays is an extrapolation", stacklevel=3)
+        return res["options"]
+
     def describe(self) -> dict:
-        """`{"kind": "suzume", "name": <name>, "config": <options>}`."""
-        return {"kind": "suzume", "name": self.name, "config": dict(self.config)}
+        """`{"kind": "suzume", "name": <name>, "config": <options>}`, plus `style` (target, options,
+        predicted style, reached) when built from style coordinates."""
+        out = {"kind": "suzume", "name": self.name, "config": dict(self.config)}
+        if self.style:
+            out["style"] = self.style
+        return out
 
 
 # --- the player-spec registry -----------------------------------------------
@@ -285,7 +324,8 @@ def _suzume(spec: str, **options) -> SuzumeAgent:
     (the spec's own pairs win)."""
     from yamawake.suzume import KNOBS
     models, *pairs = spec.split(":")
-    config = {k: v for k, v in options.items() if k in (STYLE_OPTIONS if models in SUZUME_SETS else KNOBS)}
+    keys = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) if models in SUZUME_SETS else KNOBS
+    config = {k: v for k, v in options.items() if k in keys}
     for pair in pairs:
         k, sep, v = pair.partition("=")
         if not sep:
