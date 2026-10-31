@@ -34,11 +34,11 @@ only from the players' choices.
   - **Play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
     can field opponents with different play styles (see [Play-style control](#play-style-control-of-suzume)).
 
-On one CPU (an AMD EPYC 7702, measured at up to 2.18 GHz) it runs at about
-515 hanchan/min with four rulebots and
-about 170 hanchan/min with four suzume bots.
-For reference, a Mac (Apple M4 Pro) does about 1,200 (rulebot) and 400
-(suzume) hanchan/min on one thread, and about 10,000 and 3,700 hanchan/min on
+On one CPU (an AMD EPYC 7702, measured with its clock capped at 2.0 GHz) it runs at about
+445 hanchan/min with four rulebots and
+about 160 hanchan/min with four suzume bots.
+For reference, a Mac (Apple M4 Pro) does about 1,100 (rulebot) and 380
+(suzume) hanchan/min on one thread, and about 10,800 and 3,700 hanchan/min on
 all its threads (14 cores).
 A Python player pays about 55 µs per decision (on the same EPYC CPU) to pass
 the observation back and forth, about twice the arena's own time per decision
