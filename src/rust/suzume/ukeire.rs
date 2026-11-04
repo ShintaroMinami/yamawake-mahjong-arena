@@ -4,12 +4,13 @@
 //! counts are fixed for one decision (a discard moves a tile from the hand
 //! to the river, and both are seen). Which draws improve a hand and which
 //! discards keep its shanten depend on the hand alone, so they are kept per
-//! thread across decisions (`shanten::facts`); shanten itself is not (see
+//! thread across decisions (`shanten::facts_packed`); shanten itself is not (see
 //! `UkeireTables::shanten`).
 
 use riichienv_core::shanten::calc_shanten_from_counts;
 
-use crate::eval::shanten::{Facts, HandShanten, facts, keeping};
+use crate::eval::hash::pack;
+use crate::eval::shanten::{Facts, HandShanten, facts_packed, keeping_packed};
 
 /// The terminal and honor tile types (kokushi).
 const ORPHANS: [usize; 13] = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
@@ -50,14 +51,47 @@ fn probe_mask(hand: &[u8; 34], base: i8) -> u64 {
 
 /// Hand metrics for one decision (fixed unseen counts); the improving
 /// draws of a hand, which do not depend on the unseen counts, are kept per
-/// thread (`shanten::facts`).
+/// thread (`shanten::facts_packed`).
 pub struct UkeireTables {
     unseen: [u8; 34],
+    /// The bits of the unseen counts (0..=4), one mask per bit, so the unseen
+    /// copies in a tile mask are three population counts.
+    planes: [u64; 3],
+}
+
+/// One copy of tile type `t` in a `hash::pack` key.
+fn pack_bit(t: usize) -> u128 {
+    1u128 << (99 - 3 * t)
+}
+
+/// The improving draws of a 3n+1 hand, kept per thread (`key`: its `pack`).
+fn improving_draws(key: u128, hand: &[u8; 34]) -> u64 {
+    facts_packed(Facts::Improving, key, hand, |hand| {
+        let hs = HandShanten::new(hand);
+        let base = hs.shanten();
+        (base, hs.lowering_draws(probe_mask(hand, base)))
+    })
+    .1
 }
 
 impl UkeireTables {
     pub fn new(unseen: [u8; 34]) -> Self {
-        Self { unseen }
+        let mut planes = [0u64; 3];
+        for (t, &c) in unseen.iter().enumerate() {
+            for (b, p) in planes.iter_mut().enumerate() {
+                *p |= u64::from(c >> b & 1) << t;
+            }
+        }
+        Self { unseen, planes }
+    }
+
+    /// The unseen copies of the tile types in `mask`, and those of them that
+    /// have any.
+    #[inline]
+    fn unseen_in(&self, mask: u64) -> (u32, u64) {
+        let [p1, p2, p4] = self.planes;
+        let count = (mask & p1).count_ones() + 2 * (mask & p2).count_ones() + 4 * (mask & p4).count_ones();
+        (count, mask & (p1 | p2 | p4))
     }
 
     /// Shanten of a closed hand (a 3n+2 hand reads as its best discard,
@@ -72,31 +106,7 @@ impl UkeireTables {
     /// Ukeire of a 3n+1 hand: the unseen copies of every tile type whose
     /// draw lowers the shanten, and those tile types as a bit mask.
     pub fn ukeire(&mut self, hand: &[u8; 34]) -> (u32, u64) {
-        let (_, improving) = facts(Facts::Improving, hand, |hand| {
-            let hs = HandShanten::new(hand);
-            let base = hs.shanten();
-            let mut probe = probe_mask(hand, base);
-            let mut mask = 0u64;
-            while probe != 0 {
-                let t = probe.trailing_zeros() as usize;
-                probe &= probe - 1;
-                if hand[t] < 4 && hs.plus(t) < base {
-                    mask |= 1 << t;
-                }
-            }
-            (base, mask)
-        });
-        let (mut count, mut mask) = (0u32, 0u64);
-        let mut m = improving;
-        while m != 0 {
-            let t = m.trailing_zeros() as usize;
-            m &= m - 1;
-            if self.unseen[t] > 0 {
-                count += u32::from(self.unseen[t]);
-                mask |= 1 << t;
-            }
-        }
-        (count, mask)
+        self.unseen_in(improving_draws(pack(hand), hand))
     }
 
     /// Two-step ukeire of a 3n+1 hand at shanten `s13`, with its one-step
@@ -111,24 +121,24 @@ impl UkeireTables {
         }
         let mut total = 0u64;
         let mut h = *hand;
+        let k13 = pack(hand);
         while adv != 0 {
             let t = adv.trailing_zeros() as usize;
             adv &= adv - 1;
             h[t] += 1;
-            // The discards that keep the lowered shanten s13 - 1 (that of `h`).
-            let (_, keep) = keeping(&h);
+            let k14 = k13 + pack_bit(t);
+            // The discards that keep the lowered shanten s13 - 1 (that of `h`);
+            // discarding the drawn tile again gives the hand back.
+            let (_, keep) = keeping_packed(k14, &h);
+            let mut ds = keep & !(1u64 << t);
             let mut best = 0u32;
-            for d in 0..34 {
-                // Discarding the drawn tile again gives the hand back.
-                if h[d] == 0 || d == t {
-                    continue;
-                }
+            while ds != 0 {
+                let d = ds.trailing_zeros() as usize;
+                ds &= ds - 1;
                 h[d] -= 1;
-                if keep >> d & 1 == 1 {
-                    let (u, m) = self.ukeire(&h);
-                    best = best.max(u - (m >> t & 1) as u32);
-                }
+                let (u, m) = self.unseen_in(improving_draws(k14 - pack_bit(d), &h));
                 h[d] += 1;
+                best = best.max(u - (m >> t & 1) as u32);
             }
             h[t] -= 1;
             total += u64::from(self.unseen[t]) * u64::from(best);

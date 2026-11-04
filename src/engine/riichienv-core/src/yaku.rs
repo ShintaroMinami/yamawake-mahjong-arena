@@ -184,6 +184,8 @@ pub struct YakuResult {
     pub han: u8,
     pub fu: u8,
     pub yaku_ids: Vec<u32>,
+    /// yamawake patch: `calculate_yaku` leaves this empty (nothing reads it,
+    /// and each name was an allocation).
     pub yaku_names: Vec<String>,
     pub yakuman_count: u8,
 }
@@ -240,14 +242,10 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
                 best_res.han = 26;
                 best_res.yakuman_count = 2;
                 best_res.yaku_ids.push(ID_KOKUSHI_13);
-                best_res
-                    .yaku_names
-                    .push("Kokushi Musou 13-wait".to_string());
             } else {
                 best_res.han = 13;
                 best_res.yakuman_count = 1;
                 best_res.yaku_ids.push(ID_KOKUSHI);
-                best_res.yaku_names.push("Kokushi Musou".to_string());
             }
             return best_res;
         }
@@ -255,26 +253,21 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             best_res.han = 2;
             best_res.fu = 25;
             best_res.yaku_ids.push(ID_CHITOITSU);
-            best_res.yaku_names.push("Chiitoitsu".to_string());
 
             if is_tanyao(hand, melds) {
                 best_res.han += 1;
                 best_res.yaku_ids.push(12);
-                best_res.yaku_names.push("Tanyao".to_string());
             }
             if is_chinitsu(hand, melds) {
                 best_res.han += 6;
                 best_res.yaku_ids.push(29);
-                best_res.yaku_names.push("Chinitsu".to_string());
             } else if is_honitsu(hand, melds) {
                 best_res.han += 3;
                 best_res.yaku_ids.push(27);
-                best_res.yaku_names.push("Honitsu".to_string());
             }
             if is_honroutou(hand, melds) {
                 best_res.han += 2;
                 best_res.yaku_ids.push(24);
-                best_res.yaku_names.push("Honroutou".to_string());
             }
 
             apply_yakuman(
@@ -338,14 +331,12 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             if is_tanyao(hand, melds) {
                 res.han += 1;
                 res.yaku_ids.push(ID_TANYAO); // Corrected to 12
-                res.yaku_names.push("Tanyao".to_string());
             }
 
             // Pinfu check
             if check_pinfu(div, melds, ctx, wg_idx, win_tile) {
                 res.han += 1;
                 res.yaku_ids.push(ID_PINFU);
-                res.yaku_names.push("Pinfu".to_string());
                 res.fu = if ctx.is_tsumo { 20 } else { 30 };
             } else {
                 res.fu = calculate_fu_with_waiting(div, melds, ctx, wg_idx, win_tile);
@@ -381,7 +372,6 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
                         }
                     };
                     res.yaku_ids.push(id);
-                    res.yaku_names.push("Yakuhai".to_string());
                 }
             }
 
@@ -417,7 +407,6 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
                 if dragon_koutsu_count == 2 && dragon_pair_count == 1 {
                     res.han += 2;
                     res.yaku_ids.push(ID_SHOSANGEN);
-                    res.yaku_names.push("Shousangen".to_string());
                 }
             }
 
@@ -434,7 +423,6 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             if koutsu_total == 4 {
                 res.han += 2;
                 res.yaku_ids.push(ID_TOITOI);
-                res.yaku_names.push("Toitoi".to_string());
             }
 
             // San Ankou
@@ -456,7 +444,6 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             if closed_koutsu_count == 3 {
                 res.han += 2;
                 res.yaku_ids.push(ID_SANANKOU);
-                res.yaku_names.push("San Ankou".to_string());
             }
 
             // San Kantsu
@@ -471,7 +458,6 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             if kantsu_count == 3 {
                 res.han += 2;
                 res.yaku_ids.push(ID_SANKANTSU);
-                res.yaku_names.push("San Kantsu".to_string());
             }
 
             // Iipeiko / Ryanpeikou (Closed only)
@@ -496,11 +482,9 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
                 if identical_pairs == 2 {
                     res.han += 3;
                     res.yaku_ids.push(ID_RYANPEIKO);
-                    res.yaku_names.push("Ryanpeikou".to_string());
                 } else if identical_pairs == 1 {
                     res.han += 1;
                     res.yaku_ids.push(ID_IPEIKO);
-                    res.yaku_names.push("Iipeiko".to_string());
                 }
             }
 
@@ -508,43 +492,35 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             if check_ittsu(div, melds) {
                 res.han += if ctx.is_menzen { 2 } else { 1 };
                 res.yaku_ids.push(ID_ITTSU);
-                res.yaku_names.push("Ittsu".to_string());
             }
             if is_sanshoku_doujun(div, melds) {
                 res.han += if ctx.is_menzen { 2 } else { 1 };
                 res.yaku_ids.push(ID_SANSHOKU);
-                res.yaku_names.push("Sanshoku Doujun".to_string());
             }
             if is_sanshoku_doukou(div, melds) {
                 res.han += 2;
                 res.yaku_ids.push(ID_SANSHOKU_DOKO);
-                res.yaku_names.push("Sanshoku Doukou".to_string());
             }
 
             // Honitsu / Chinitsu
             if is_chinitsu(hand, melds) {
                 res.han += if ctx.is_menzen { 6 } else { 5 };
                 res.yaku_ids.push(ID_CHINITSU);
-                res.yaku_names.push("Chinitsu".to_string());
             } else if is_honitsu(hand, melds) {
                 res.han += if ctx.is_menzen { 3 } else { 2 };
                 res.yaku_ids.push(ID_HONITSU);
-                res.yaku_names.push("Honitsu".to_string());
             }
 
             // Chantai / Junchan / Honroutou
             if is_honroutou(hand, melds) {
                 res.han += 2;
                 res.yaku_ids.push(ID_HONROUTO);
-                res.yaku_names.push("Honroutou".to_string());
             } else if is_junchan(div, melds) {
                 res.han += if ctx.is_menzen { 3 } else { 2 };
                 res.yaku_ids.push(ID_JUNCHAN);
-                res.yaku_names.push("Junchan".to_string());
             } else if is_chantai(div, melds) {
                 res.han += if ctx.is_menzen { 2 } else { 1 };
                 res.yaku_ids.push(ID_CHANTA);
-                res.yaku_names.push("Chantai".to_string());
             }
 
             // Static Yaku and Dora are handled by apply_static_yaku (already called at start of loop)
@@ -910,21 +886,18 @@ fn apply_yakuman(
     if is_tsuu_iisou(hand, melds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_TSUISO);
-        res.yaku_names.push("Tsuu iisou".to_string());
     }
 
     // Chinroutou (All Terminals)
     if is_chinroutou(hand, melds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_CHINROUTO);
-        res.yaku_names.push("Chinroutou".to_string());
     }
 
     // Ryuu iisou (All Green)
     if is_ryuu_iisou(hand, melds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_RYUISOU);
-        res.yaku_names.push("Ryuu iisou".to_string());
     }
 
     // Su Kantsu (Four Kans)
@@ -940,7 +913,6 @@ fn apply_yakuman(
     {
         yakuman_count += 1;
         res.yaku_ids.push(ID_SUKANTSU);
-        res.yaku_names.push("Su Kantsu".to_string());
     }
 
     // Chuuren Poutou
@@ -951,11 +923,9 @@ fn apply_yakuman(
             if is_9_wait {
                 yakuman_count += 2;
                 res.yaku_ids.push(ID_JUNSEI_CHUUREN);
-                res.yaku_names.push("Chuuren Poutou 9-wait".to_string());
             } else {
                 yakuman_count += 1;
                 res.yaku_ids.push(ID_CHUUREN);
-                res.yaku_names.push("Chuuren Poutou".to_string());
             }
         }
     }
@@ -966,11 +936,9 @@ fn apply_yakuman(
             // Oya (East)
             yakuman_count += 1;
             res.yaku_ids.push(ID_TENHO);
-            res.yaku_names.push("Tenhou".to_string());
         } else {
             yakuman_count += 1;
             res.yaku_ids.push(ID_CHIHO);
-            res.yaku_names.push("Chiihou".to_string());
         }
     }
 
@@ -994,11 +962,9 @@ fn apply_yakuman(
         if wg_idx.is_none() {
             yakuman_count += 2;
             res.yaku_ids.push(ID_SUANKO_TANKI); // Su Ankou Tanki
-            res.yaku_names.push("Su Ankou Tanki".to_string());
         } else {
             yakuman_count += 1;
             res.yaku_ids.push(ID_SUANKO);
-            res.yaku_names.push("Su Ankou".to_string());
         }
     }
 
@@ -1019,7 +985,6 @@ fn apply_yakuman(
     if haku_koutsu && hatsu_koutsu && chun_koutsu {
         yakuman_count += 1;
         res.yaku_ids.push(ID_DAISANGEN);
-        res.yaku_names.push("Daisangen".to_string());
     }
 
     // Winds
@@ -1041,11 +1006,9 @@ fn apply_yakuman(
     if wind_koutsu_count == 4 {
         yakuman_count += 2; // Double Yakuman
         res.yaku_ids.push(ID_DAISUUSHI);
-        res.yaku_names.push("Daisushii".to_string());
     } else if wind_koutsu_count == 3 && wind_pair_count == 1 {
         yakuman_count += 1;
         res.yaku_ids.push(ID_SHOUSUUSHI);
-        res.yaku_names.push("Shousushii".to_string());
     }
 
     if yakuman_count > 0 {

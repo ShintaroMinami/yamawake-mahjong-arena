@@ -38,13 +38,15 @@
 //! of passing a yakuless ron.
 
 
+#[cfg(test)]
 use riichienv_core::shanten::calc_shanten_from_counts;
 use crate::eval::feat::tiles::aka_slot;
 use crate::eval::hash::FastMap;
 use crate::eval::score::{EvalCache, Scorer};
-use crate::eval::shanten::{Facts, HandShanten, facts_packed, keeping};
+use crate::eval::shanten::{Facts, HandShanten, facts_packed, keeping, keeping_packed};
 
 /// Shanten via riichienv-core's 34-count entry (no 136 conversion).
+#[cfg(test)]
 fn shanten(counts: &Counts) -> i32 {
     let n: u8 = counts.iter().sum();
     calc_shanten_from_counts(counts, n / 3) as i32
@@ -106,6 +108,9 @@ pub struct Input {
     pub ron: Option<RonModel>,
 }
 
+/// One root option. `Solver::run_cached` fills the curves with their first
+/// entry only and leaves out what only `Solver::run` keeps (the ron parts,
+/// the two ron flags, the per-tile terms).
 pub struct Candidate {
     pub tile_type: i32, // -1 = no discard
     pub discard_is_aka: bool,
@@ -149,9 +154,6 @@ struct Node {
     tenpai: Curve,
     win: Curve,
     ev: Curve,
-    /// The ron part of `win`/`ev` (all 0 without a ron model).
-    ron_win: Curve,
-    ron_ev: Curve,
     /// Ron (probability, value) when the node is entered at `horizon`, after
     /// the last own draw: only the tail discards are left.
     tail: (f64, f64),
@@ -165,8 +167,6 @@ struct Best {
     tenpai: Curve,
     win: Curve,
     ev: Curve,
-    ron_win: Curve,
-    ron_ev: Curve,
     tail: (f64, f64),
     /// The tile types any of its shanten-keeping discards accepts (bit `t`).
     accept: u64,
@@ -209,8 +209,23 @@ pub struct Solver<'a> {
     bests: Vec<Best>,
     draw_cache: FastMap<(u128, u128), usize>,
     disc_cache: FastMap<(u128, u128), usize>,
-    /// Furiten per tenpai hand against `RonModel::furiten`.
-    furiten_cache: FastMap<u128, bool>,
+    /// `RonModel::furiten` as a mask (bit `t`).
+    furiten_mask: u64,
+    /// Everything `Candidate` can hold: all of the root's curves and the ron
+    /// parts (`node_ron`, `best_ron`). Off (`run_cached`), a candidate holds
+    /// the curves' first entry only, and each node computes only the turn
+    /// indices that reach it: a node `d` draws below the root is read from
+    /// index `d` on (a draw lowers the shanten by exactly one, so `d` is
+    /// `root_shanten - shanten`), and a root at index 0 alone.
+    full: bool,
+    root_shanten: i32,
+    /// The ron part of each node's and each best's `win` / `ev` (`full`).
+    node_ron: Vec<[Curve; 2]>,
+    best_ron: Vec<[Curve; 2]>,
+    /// The no-ron table `surv[j * horizon + i]` of the tenpai node at hand
+    /// (`ron_terms`), and its branches' scores; kept to reuse their memory.
+    surv: Vec<f64>,
+    scores: Vec<(Option<[f64; 4]>, Option<[f64; 4]>)>,
 }
 
 /// A solver's tables, kept per thread between solves so their memory is
@@ -222,6 +237,8 @@ struct Tables {
     bests: Vec<Best>,
     draw_cache: FastMap<(u128, u128), usize>,
     disc_cache: FastMap<(u128, u128), usize>,
+    surv: Vec<f64>,
+    scores: Vec<(Option<[f64; 4]>, Option<[f64; 4]>)>,
 }
 
 thread_local! {
@@ -235,6 +252,8 @@ impl Drop for Solver<'_> {
             bests: std::mem::take(&mut self.bests),
             draw_cache: std::mem::take(&mut self.draw_cache),
             disc_cache: std::mem::take(&mut self.disc_cache),
+            surv: std::mem::take(&mut self.surv),
+            scores: std::mem::take(&mut self.scores),
         };
         t.nodes.clear();
         t.bests.clear();
@@ -282,9 +301,16 @@ fn argmax_by(opts: &[(i32, usize)], nodes: &[Node], value: impl Fn(&Node) -> f64
 /// The shanten of a 3n+1 hand and the improving tile types still unseen
 /// (bit `t`; `improving`, kept per thread). `key`: the hand's `pack` key.
 fn effective(key: u128, hand: &Counts, unseen: &Counts) -> (i32, u64) {
-    let (base, mask) = facts_packed(Facts::DpImproving, key >> 3, hand, improving);
-    let unseen_mask = (0..34).filter(|&t| unseen[t] > 0).fold(0u64, |m, t| m | 1 << t);
-    (i32::from(base), mask & unseen_mask)
+    let (base, mut mask) = facts_packed(Facts::DpImproving, key >> 3, hand, improving);
+    let mut left = mask;
+    while left != 0 {
+        let t = left.trailing_zeros() as usize;
+        left &= left - 1;
+        if unseen[t] == 0 {
+            mask &= !(1u64 << t);
+        }
+    }
+    (i32::from(base), mask)
 }
 
 /// The set bits of `mask`, ascending.
@@ -307,19 +333,19 @@ fn improving(hand: &Counts) -> (i8, u64) {
     // when kokushi is the binding minimum.
     const ORPHANS: [usize; 13] =
         [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
-    let mut probe = [false; 34];
+    let mut probe = 0u64;
     for t in 0..34 {
         if hand[t] == 0 {
             continue;
         }
         if t >= 27 {
-            probe[t] = true;
+            probe |= 1 << t;
         } else {
             let r = t % 9;
             let lo = t - r.min(2);
             let hi = t + (8 - r).min(2);
             for x in lo..=hi {
-                probe[x] = true;
+                probe |= 1 << x;
             }
         }
     }
@@ -335,19 +361,12 @@ fn improving(hand: &Counts) -> (i8, u64) {
         }
     }
     let kokushi_sh = 13 - n_orphan_types - if has_pair { 1 } else { 0 };
-    let base = i32::from(base);
-    if kokushi_sh <= base {
+    if kokushi_sh <= i32::from(base) {
         for &t in ORPHANS.iter() {
-            probe[t] = true;
+            probe |= 1 << t;
         }
     }
-    let mut mask = 0u64;
-    for t in 0..34 {
-        if probe[t] && hand[t] < 4 && i32::from(hs.plus(t)) < base {
-            mask |= 1 << t;
-        }
-    }
-    (base as i8, mask)
+    (base, hs.lowering_draws(probe))
 }
 
 impl<'a> Solver<'a> {
@@ -359,7 +378,8 @@ impl<'a> Solver<'a> {
             unseen0[i] = 4 - inp.seen_counts[i];
             n_unseen += unseen0[i] as u32;
         }
-        let t = TABLES.with_borrow_mut(std::mem::take);
+        let mut t = TABLES.with_borrow_mut(std::mem::take);
+        t.surv.resize(MAX_TURNS * MAX_TURNS, 0.0);
         let scorer = Scorer::new(
             inp.is_menzen && inp.riichi_when_tenpai, inp.player_wind, inp.round_wind,
             inp.dora_indicators.clone(), inp.meld_dora_han,
@@ -376,7 +396,13 @@ impl<'a> Solver<'a> {
             bests: t.bests,
             draw_cache: t.draw_cache,
             disc_cache: t.disc_cache,
-            furiten_cache: FastMap::default(),
+            furiten_mask: inp.ron.as_ref().map_or(0, |r| (0..34).filter(|&t| r.furiten[t]).fold(0, |m, t| m | 1 << t)),
+            full: true,
+            root_shanten: 0,
+            node_ron: Vec::new(),
+            best_ron: Vec::new(),
+            surv: t.surv,
+            scores: t.scores,
         }
     }
 
@@ -389,9 +415,11 @@ impl<'a> Solver<'a> {
     }
 
     /// The candidates of `inp` with `eval` lent to the scorer for the run
-    /// (`with_eval_cache`; exact, the verdicts depend on their keys alone).
+    /// (`with_eval_cache`; exact, the verdicts depend on their keys alone);
+    /// the curves hold their first entry only and no ron parts (`full`).
     pub fn run_cached(inp: &'a Input, eval: &mut EvalCache) -> Vec<Candidate> {
         let mut solver = Self::with_eval_cache(inp, std::mem::take(eval));
+        solver.full = false;
         let out = solver.run();
         *eval = solver.take_eval_cache().expect("attached");
         out
@@ -402,30 +430,14 @@ impl<'a> Solver<'a> {
         self.scorer.detach_cache()
     }
 
-    /// Whether `hand13` completed by tile type `t` is a winning shape.
-    fn completes(hand13: &Counts, t: usize) -> bool {
-        if hand13[t] >= 4 {
-            return false;
-        }
-        let mut h = *hand13;
-        h[t] += 1;
-        shanten(&h) < 0
-    }
-
-    /// Whether the tenpai `hand13` waits on a tile of the own discards.
+    /// Whether the tenpai `hand13` waits on a tile of the own discards: its
+    /// improving draws are the tiles that complete it.
     ///
     /// The root discard itself never is a wait: a 13-tile hand waiting on
     /// the tile it just let go came from a complete 14-tile hand, which the
     /// DP does not value (no discard keeps its shanten).
-    fn is_furiten(&mut self, hand13: &Counts) -> bool {
-        let Some(ron) = self.inp.ron.as_ref() else { return false };
-        let key = pack(hand13, &[false; 3]);
-        if let Some(&f) = self.furiten_cache.get(&key) {
-            return f;
-        }
-        let f = (0..34).any(|t| ron.furiten[t] && Self::completes(hand13, t));
-        self.furiten_cache.insert(key, f);
-        f
+    fn is_furiten(&self, key: u128, hand13: &Counts) -> bool {
+        self.furiten_mask != 0 && facts_packed(Facts::DpImproving, key, hand13, improving).1 & self.furiten_mask != 0
     }
 
     fn not_tsumo(&mut self, r_tot: u32) -> [f64; MAX_TURNS + 1] {
@@ -461,33 +473,33 @@ impl<'a> Solver<'a> {
     }
 
     /// Ron terms of a tenpai node (see the module docs). Adds, per start
-    /// index `i`, the ron probability and value over the remaining steps
-    /// and the tail to `ron_win`/`ron_ev`, sets `tail` (the node entered at
-    /// `horizon`), and returns the no-ron table `surv[i * horizon + j]`
-    /// (no ron in the discards before draws `i..=j`) that weights the tsumo
-    /// at draw `j`. None when no wait can ron (furiten, or no yaku).
-    /// `scores[b]` is branch `b`'s (tsumo, ron) `Scorer::score4_pair`.
+    /// index `i` in `lo..=top`, the ron probability and value over the
+    /// remaining steps and the tail to `ron_win`/`ron_ev`, sets `tail` (the
+    /// node entered at `horizon`), and fills `self.surv`: `surv[j * horizon + i]`
+    /// (no ron in the discards before draws `i..=j`) weights the tsumo at
+    /// draw `j`. False when no wait can ron (furiten, or no yaku).
+    /// `self.scores[b]` is branch `b`'s (tsumo, ron) `Scorer::score4_pair`.
     #[allow(clippy::too_many_arguments)]
     fn ron_terms(
         &mut self,
         hand: &Counts,
-        scores: &[(Option<[f64; 4]>, Option<[f64; 4]>)],
         branches: &[(usize, u32, bool)],
         nt: &[f64],
         inv_nti: &[f64],
+        (lo, top): (usize, usize),
         ron_win: &mut [f64],
         ron_ev: &mut [f64],
         tail: &mut (f64, f64),
-    ) -> Option<Vec<f64>> {
+    ) -> bool {
         let inp = self.inp;
-        let ron = inp.ron.as_ref()?;
-        if self.is_furiten(hand) {
-            return None;
+        let Some(ron) = inp.ron.as_ref() else { return false };
+        if self.is_furiten(crate::eval::hash::pack(hand), hand) {
+            return false;
         }
         // Winning tiles that can ron, and the mean ron value over them.
         let mut r_ron = 0u32;
         let mut value = [0.0f64; 4];
-        for (&(_, c, _), &(_, ron4)) in branches.iter().zip(scores) {
+        for (&(_, c, _), &(_, ron4)) in branches.iter().zip(&self.scores) {
             if let Some(sc) = ron4 {
                 r_ron += c;
                 for x in 0..4 {
@@ -496,7 +508,7 @@ impl<'a> Solver<'a> {
             }
         }
         if r_ron == 0 {
-            return None;
+            return false;
         }
         for x in value.iter_mut() {
             *x /= f64::from(r_ron);
@@ -516,22 +528,39 @@ impl<'a> Solver<'a> {
         let riichi = self.assume_riichi;
         let dr = riichi && inp.double_riichi_possible;
         let extra = |i: usize, k: usize| (usize::from(dr && i == 0) + usize::from(riichi && k == i)).min(3);
-        let mut surv = vec![0.0; h * h];
-        for i in 0..h {
-            // No ron before the discards of step k (and no tsumo, via nt).
-            let mut alive = 1.0;
-            for k in i..=h {
-                let p = nt[k] * inv_nti[i] * alive * (1.0 - pass[k]);
+        // Each accumulator takes its terms in ascending k, as a loop over k
+        // per index would; apart from the first index and k itself (their
+        // situational han), the indices share a value, so that loop vectorizes.
+        let mut alive = [1.0f64; MAX_TURNS];
+        for k in lo..=h {
+            let (n, q, pk) = (nt[k], 1.0 - pass[k], pass[k]);
+            let term = |i: usize, alive: &mut [f64; MAX_TURNS], ron_win: &mut [f64], ron_ev: &mut [f64]| {
+                let p = n * inv_nti[i] * alive[i] * q;
                 ron_win[i] += p;
                 ron_ev[i] += p * value[extra(i, k)];
-                alive *= pass[k];
-                if k < h {
-                    surv[i * h + k] = alive;
+                alive[i] *= pk;
+            };
+            if lo == 0 && k > 0 {
+                term(0, &mut alive, ron_win, ron_ev);
+            }
+            let v = value[0];
+            for i in lo.max(1)..(top + 1).min(k) {
+                let p = n * inv_nti[i] * alive[i] * q;
+                ron_win[i] += p;
+                ron_ev[i] += p * v;
+                alive[i] *= pk;
+            }
+            if k <= top {
+                term(k, &mut alive, ron_win, ron_ev);
+            }
+            if k < h {
+                for i in lo..=k.min(top) {
+                    self.surv[k * h + i] = alive[i];
                 }
             }
         }
         *tail = (1.0 - pass[h], (1.0 - pass[h]) * value[extra(h, h)]);
-        Some(surv)
+        true
     }
 
     /// The node of a 3n+1 hand as an index into `nodes`, plus with
@@ -568,6 +597,14 @@ impl<'a> Solver<'a> {
         let mut per_tile = if collect { vec![0.0f64; 34 * 3 * horizon] } else { Vec::new() };
         let mut per_edge = if collect { vec![0.0f32; 34 * 34] } else { Vec::new() };
         let r_tot: u32 = bits(effective).map(|t| u32::from(unseen[t])).sum();
+        // The turn indices anything reads of this node (`full`).
+        let depth = (self.root_shanten - s).max(0) as usize;
+        let (lo, top) = match (self.full, depth) {
+            (true, _) => (0, horizon.saturating_sub(1)),
+            (false, 0) => (0, 0),
+            (false, d) => (d, horizon.saturating_sub(1)),
+        };
+        let track = self.full && ron_on;
         // horizon == 0 means no draw is left for this seat: every curve is empty,
         // so the branch loop can only do work that lands nowhere -- and it
         // would still recurse into `discard`, which is where the ukeire
@@ -603,58 +640,102 @@ impl<'a> Solver<'a> {
             }
             // With ron, a tenpai node scores each wait's tsumo and ron at
             // once (one ura distribution for both).
-            let scores: Vec<(Option<[f64; 4]>, Option<[f64; 4]>)> = if s == 0 && ron_on {
-                branches
-                    .iter()
-                    .map(|&(t, _, is_aka)| self.scorer.score4_pair(&hand, &akas, t, is_aka, &unseen))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let surv = if s == 0 && ron_on {
-                self.ron_terms(&hand, &scores, branches, &nt, &inv_nti, &mut ron_win, &mut ron_ev, &mut tail)
-            } else {
-                None
-            };
+            let tenpai_ron = s == 0 && ron_on;
+            if tenpai_ron {
+                let mut scores = std::mem::take(&mut self.scores);
+                scores.clear();
+                scores.extend(branches.iter().map(|&(t, _, is_aka)| self.scorer.score4_pair(&hand, &akas, t, is_aka, &unseen)));
+                self.scores = scores;
+            }
+            let surv = tenpai_ron
+                && self.ron_terms(&hand, branches, &nt, &inv_nti, (lo, top), &mut ron_win, &mut ron_ev, &mut tail);
             for (b, &(tile_type, c, is_aka)) in branches.iter().enumerate() {
                 let cf = c as f64;
                 if s == 0 {
                     let sc4 = if ron_on {
-                        scores[b].0
+                        self.scores[b].0
                     } else {
                         self.scorer.score4(&hand, &akas, tile_type, is_aka, &unseen)
                     };
                     let Some(sc4) = sc4 else { continue };
+                    let riichi = self.assume_riichi;
+                    let dr = riichi && self.inp.double_riichi_possible;
+                    let haitei = self.inp.last_draw_is_haitei;
+                    if !collect {
+                        // The draw outside, as below: each accumulator takes
+                        // its terms in ascending j and the indices other than
+                        // the first and j itself (their situational han) share
+                        // a value, so the loop over them vectorizes. A term
+                        // with p == 0 adds +0.0, which changes no sum.
+                        let mut a = [0.0f64; MAX_TURNS];
+                        for i in lo..=top {
+                            a[i] = cf * inv_nti[i];
+                        }
+                        for j in lo..horizon {
+                            let r = jr[j];
+                            let last = usize::from(haitei && j == horizon - 1);
+                            let sv = &self.surv[j * horizon..(j + 1) * horizon];
+                            let mut edge = |i: usize| {
+                                let mut p = a[i] * r;
+                                if surv {
+                                    p *= sv[i];
+                                }
+                                let extra = usize::from(dr && i == 0) + usize::from(riichi && j == i) + last;
+                                win[i] += p;
+                                ev[i] += p * sc4[extra.min(3)];
+                            };
+                            if lo == 0 && j > 0 {
+                                edge(0);
+                            }
+                            if j <= top {
+                                edge(j);
+                            }
+                            let v = sc4[last];
+                            let (from, to) = (lo.max(1), (top + 1).min(j));
+                            if surv {
+                                for i in from..to {
+                                    let p = a[i] * r * sv[i];
+                                    win[i] += p;
+                                    ev[i] += p * v;
+                                }
+                            } else {
+                                for i in from..to {
+                                    let p = a[i] * r;
+                                    win[i] += p;
+                                    ev[i] += p * v;
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     for i in 0..horizon {
                         for j in i..horizon {
                             let mut p = cf * inv_nti[i] * jr[j];
-                            if let Some(sv) = &surv {
+                            if surv {
                                 // Tsumo at draw j needs no ron before it.
-                                p *= sv[i * horizon + j];
+                                p *= self.surv[j * horizon + i];
                             }
                             if p <= 0.0 {
                                 continue;
                             }
                             let mut extra = 0usize;
-                            if self.assume_riichi && self.inp.double_riichi_possible && i == 0 {
+                            if dr && i == 0 {
                                 extra += 1;
                             }
-                            if self.assume_riichi && j == i {
+                            if riichi && j == i {
                                 extra += 1;
                             }
-                            if self.inp.last_draw_is_haitei && j == horizon - 1 {
+                            if haitei && j == horizon - 1 {
                                 extra += 1;
                             }
                             win[i] += p;
                             ev[i] += p * sc4[extra.min(3)];
-                            if collect {
-                                // At shanten 0 the hand is already tenpai, so
-                                // the tenpai plane carries the hand-level 1.0
-                                // rather than a share of it.
-                                per_tile[tile_type * 3 * horizon + i] = 1.0;
-                                per_tile[tile_type * 3 * horizon + horizon + i] += p;
-                                per_tile[tile_type * 3 * horizon + 2 * horizon + i] += p * sc4[extra.min(3)];
-                            }
+                            // At shanten 0 the hand is already tenpai, so
+                            // the tenpai plane carries the hand-level 1.0
+                            // rather than a share of it.
+                            per_tile[tile_type * 3 * horizon + i] = 1.0;
+                            per_tile[tile_type * 3 * horizon + horizon + i] += p;
+                            per_tile[tile_type * 3 * horizon + 2 * horizon + i] += p * sc4[extra.min(3)];
                         }
                     }
                 } else {
@@ -673,6 +754,7 @@ impl<'a> Solver<'a> {
                     let moved = tile_bit(tile_type) + aka_bit(tile_type, is_aka);
                     let ci = self.discard(nh, na, nw, nr, (key.0 + moved, key.1 - moved));
                     let child = &self.bests[ci];
+                    let child_ron = if track { Some(&self.best_ron[ci]) } else { None };
                     let (ct, cw, ce) = (&child.tenpai, &child.win, &child.ev);
                     if collect {
                         for u in bits(child.accept) {
@@ -688,33 +770,34 @@ impl<'a> Solver<'a> {
                         // and >= 0, the sums start at +0.0), which changes
                         // no sum, so the zero child values are skipped.
                         let mut a = [0.0f64; MAX_TURNS];
-                        for i in 0..horizon {
+                        for i in lo..=top {
                             a[i] = cf * inv_nti[i];
                         }
-                        for j in 0..horizon {
+                        for j in lo..horizon {
                             let r = jr[j];
+                            let idx = lo..=j.min(top);
                             if j + 1 < horizon {
                                 let (t1, w1, e1) = (ct[j + 1], cw[j + 1], ce[j + 1]);
                                 if w1 == 0.0 && e1 == 0.0 {
                                     if t1 != 0.0 {
-                                        for i in 0..=j {
+                                        for i in idx.clone() {
                                             tenpai[i] += a[i] * r * t1;
                                         }
                                     }
                                 } else {
-                                    for i in 0..=j {
+                                    for i in idx.clone() {
                                         let p = a[i] * r;
                                         tenpai[i] += p * t1;
                                         win[i] += p * w1;
                                         ev[i] += p * e1;
                                     }
                                 }
-                                if ron_on {
-                                    let (rw, re) = (child.ron_win[j + 1], child.ron_ev[j + 1]);
+                                if let Some([crw, cre]) = child_ron {
+                                    let (rw, re) = (crw[j + 1], cre[j + 1]);
                                     if rw == 0.0 && re == 0.0 {
                                         continue;
                                     }
-                                    for i in 0..=j {
+                                    for i in idx {
                                         let p = a[i] * r;
                                         ron_win[i] += p * rw;
                                         ron_ev[i] += p * re;
@@ -722,14 +805,16 @@ impl<'a> Solver<'a> {
                                 }
                             } else if s == 1 {
                                 let (tw, te) = child.tail;
-                                for i in 0..=j {
+                                for i in idx {
                                     let p = a[i] * r;
                                     tenpai[i] += p;
                                     if ron_on {
                                         win[i] += p * tw;
                                         ev[i] += p * te;
-                                        ron_win[i] += p * tw;
-                                        ron_ev[i] += p * te;
+                                        if track {
+                                            ron_win[i] += p * tw;
+                                            ron_ev[i] += p * te;
+                                        }
                                     }
                                 }
                             }
@@ -746,9 +831,9 @@ impl<'a> Solver<'a> {
                                 tenpai[i] += p * ct[j + 1];
                                 win[i] += p * cw[j + 1];
                                 ev[i] += p * ce[j + 1];
-                                if ron_on {
-                                    ron_win[i] += p * child.ron_win[j + 1];
-                                    ron_ev[i] += p * child.ron_ev[j + 1];
+                                if let Some([crw, cre]) = child_ron {
+                                    ron_win[i] += p * crw[j + 1];
+                                    ron_ev[i] += p * cre[j + 1];
                                 }
                                 if collect {
                                     per_tile[tile_type * 3 * horizon + i] += p * ct[j + 1];
@@ -766,17 +851,19 @@ impl<'a> Solver<'a> {
                                     let (tw, te) = child.tail;
                                     win[i] += p * tw;
                                     ev[i] += p * te;
-                                    ron_win[i] += p * tw;
-                                    ron_ev[i] += p * te;
+                                    if track {
+                                        ron_win[i] += p * tw;
+                                        ron_ev[i] += p * te;
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-            if surv.is_some() {
+            if surv {
                 // A tenpai node's ron terms come from `ron_terms`, not children.
-                for i in 0..horizon {
+                for i in lo..=top.min(horizon - 1) {
                     win[i] += ron_win[i];
                     ev[i] += ron_ev[i];
                 }
@@ -792,7 +879,10 @@ impl<'a> Solver<'a> {
             ron_win[i] = ron_win[i].clamp(0.0, 1.0);
             ron_ev[i] = ron_ev[i].max(0.0);
         }
-        self.nodes.push(Node { tenpai, win, ev, ron_win, ron_ev, tail, shanten: s, effective });
+        if track {
+            self.node_ron.push([ron_win, ron_ev]);
+        }
+        self.nodes.push(Node { tenpai, win, ev, tail, shanten: s, effective });
         let idx = self.nodes.len() - 1;
         if collect {
             return (idx, Some((per_tile, per_edge)));
@@ -822,16 +912,13 @@ impl<'a> Solver<'a> {
         if let Some(&v) = self.disc_cache.get(&key) {
             return v;
         }
-        let (_, keep) = keeping(&hand);
+        let (s14, keep) = keeping_packed(key.0 >> 3, &hand);
         let horizon = self.horizon;
         // options: (priority, node index); at most 14 types + 3 red fives.
         let mut opt_buf = [(0i32, 0usize); 17];
         let mut n_opts = 0;
         let mut accept = 0u64;
-        for d in 0..34 {
-            if hand[d] == 0 {
-                continue;
-            }
+        for d in bits(keep) {
             let variants: &[bool] = if aka_slot(d).is_some_and(|s| akas[s])
             {
                 if hand[d] > 1 {
@@ -849,9 +936,6 @@ impl<'a> Solver<'a> {
                 if discard_aka {
                     na[aka_slot(d).unwrap()] = false;
                 }
-                if keep >> d & 1 == 0 {
-                    continue;
-                }
                 let moved = tile_bit(d) + aka_bit(d, discard_aka);
                 let ni = self.draw(nh, na, unseen, unseen_akas, (key.0 - moved, key.1));
                 accept |= self.nodes[ni].effective;
@@ -862,20 +946,22 @@ impl<'a> Solver<'a> {
         let opts = &opt_buf[..n_opts];
         let nodes = &self.nodes;
         let ron_on = self.inp.ron.is_some();
+        let track = self.full && ron_on;
+        let lo = if self.full { 0 } else { (self.root_shanten - i32::from(s14)).max(0) as usize };
         let mut tenpai = [0.0; MAX_TURNS];
         let mut win = [0.0; MAX_TURNS];
         let mut ev = [0.0; MAX_TURNS];
-        let mut ron_win = [0.0; MAX_TURNS];
-        let mut ron_ev = [0.0; MAX_TURNS];
-        for j in 0..horizon {
+        let mut ron_parts = [[0.0; MAX_TURNS]; 2];
+        for j in lo..horizon {
             if let Some(b) = argmax_by(opts, nodes, |n| n.ev[j]) {
                 let n = &nodes[opts[b].1];
                 tenpai[j] = n.tenpai[j];
                 win[j] = n.win[j];
                 ev[j] = n.ev[j];
-                if ron_on {
-                    ron_win[j] = n.ron_win[j];
-                    ron_ev[j] = n.ron_ev[j];
+                if track {
+                    let r = &self.node_ron[opts[b].1];
+                    ron_parts[0][j] = r[0][j];
+                    ron_parts[1][j] = r[1][j];
                 }
             }
         }
@@ -884,7 +970,10 @@ impl<'a> Solver<'a> {
         } else {
             (0.0, 0.0)
         };
-        self.bests.push(Best { tenpai, win, ev, ron_win, ron_ev, tail, accept });
+        if track {
+            self.best_ron.push(ron_parts);
+        }
+        self.bests.push(Best { tenpai, win, ev, tail, accept });
         let idx = self.bests.len() - 1;
         self.disc_cache.insert(key, idx);
         idx
@@ -905,18 +994,18 @@ impl<'a> Solver<'a> {
         };
         let ron_on = self.inp.ron.is_some();
         let (mut dama_ron_possible, mut furiten) = (false, false);
-        if ron_on && self.nodes[node].shanten == 0 {
+        if ron_on && self.full && self.nodes[node].shanten == 0 {
             for t in bits(self.nodes[node].effective) {
                 if self.scorer.ron_has_yaku_without_riichi(&hand13, &akas13, t) {
                     dama_ron_possible = true;
                     break;
                 }
             }
-            furiten = self.is_furiten(&hand13);
+            furiten = self.is_furiten(crate::eval::hash::pack(&hand13), &hand13);
         }
-        let h = self.horizon;
+        let h = if self.full { self.horizon } else { self.horizon.min(1) };
         let n = &self.nodes[node];
-        let ron_curve = |c: &Curve| if ron_on { c[..h].to_vec() } else { Vec::new() };
+        let ron_curve = |k: usize| if ron_on && self.full { self.node_ron[node][k][..h].to_vec() } else { Vec::new() };
         Candidate {
             tile_type,
             discard_is_aka,
@@ -925,8 +1014,8 @@ impl<'a> Solver<'a> {
             tenpai: n.tenpai[..h].to_vec(),
             win: n.win[..h].to_vec(),
             ev: n.ev[..h].to_vec(),
-            ron_win: ron_curve(&n.ron_win),
-            ron_ev: ron_curve(&n.ron_ev),
+            ron_win: ron_curve(0),
+            ron_ev: ron_curve(1),
             dama_ron_possible,
             furiten,
             per_tile,
@@ -940,17 +1029,19 @@ impl<'a> Solver<'a> {
         if !self.inp.own_turn {
             let (hand, akas) = (self.inp.hand, self.inp.akas_in_hand);
             let key = node_key(&hand, &akas, &self.unseen0, &unseen_akas);
-            let (node, collected) = self.draw_inner(hand, akas, self.unseen0, unseen_akas, true, key);
+            self.root_shanten = effective(key.0, &hand, &self.unseen0).0;
+            let (node, collected) = self.draw_inner(hand, akas, self.unseen0, unseen_akas, self.full, key);
             out.push(self.candidate(-1, false, (hand, akas), node, collected));
             return out;
         }
-        let (_, keep) = keeping(&self.inp.hand);
+        let (root_shanten, keep) = keeping(&self.inp.hand);
+        self.root_shanten = i32::from(root_shanten);
         let collect_all = self.inp.collect_tiles.contains(&-1);
         for d in 0..34 {
             if self.inp.hand[d] == 0 {
                 continue;
             }
-            let collect = collect_all || self.inp.collect_tiles.contains(&(d as i32));
+            let collect = self.full && (collect_all || self.inp.collect_tiles.contains(&(d as i32)));
             let variants: &[bool] = if aka_slot(d).is_some_and(|s| self.inp.akas_in_hand[s])
             {
                 if self.inp.hand[d] > 1 {
@@ -990,6 +1081,69 @@ impl<'a> Solver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The completing tiles of a tenpai hand are its improving draws.
+    #[test]
+    fn improving_draws_of_a_tenpai_hand_complete_it() {
+        let mut checked = 0;
+        for inp in random_inputs(0x7e57, 20_000, 0) {
+            let mut h = inp.hand;
+            let n: u8 = h.iter().sum();
+            if n % 3 == 2 {
+                let Some(d) = (0..34).find(|&d| h[d] > 0) else { continue };
+                h[d] -= 1;
+            }
+            let (s, mask) = improving(&h);
+            if s != 0 {
+                continue;
+            }
+            checked += 1;
+            for t in 0..34 {
+                let completes = h[t] < 4 && {
+                    let mut x = h;
+                    x[t] += 1;
+                    shanten(&x) < 0
+                };
+                assert_eq!(mask >> t & 1 == 1, completes, "{h:?} + {t}");
+            }
+        }
+        assert!(checked > 100, "{checked}");
+        // Chiitoitsu and kokushi waits.
+        let mut h = [0u8; 34];
+        for t in [0, 2, 4, 6, 8, 10] {
+            h[t] = 2;
+        }
+        h[20] = 1;
+        assert_eq!(improving(&h), (0, 1 << 20));
+        let mut k = [0u8; 34];
+        for t in [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33] {
+            k[t] = 1;
+        }
+        assert_eq!(improving(&k).0, 0);
+        assert_eq!(improving(&k).1.count_ones(), 13);
+    }
+
+    /// `run_cached` keeps the first entry of every curve and the effective
+    /// tiles of the full solve, bit for bit, in the same order.
+    #[test]
+    fn the_cached_run_matches_the_full_solve() {
+        for ron_rate in [None, Some(0.5)] {
+            for mut inp in random_inputs(0x51ab, 3000, 3) {
+                inp.ron = ron_rate.map(|rate| RonModel { rate, furiten: [false; 34], tail_discards: 1 });
+                let full = Solver::new(&inp).run();
+                let fast = Solver::run_cached(&inp, &mut EvalCache::default());
+                assert_eq!(full.len(), fast.len());
+                for (a, b) in full.iter().zip(&fast) {
+                    assert_eq!((a.tile_type, a.discard_is_aka), (b.tile_type, b.discard_is_aka));
+                    assert_eq!(a.effective_tiles, b.effective_tiles);
+                    let first = |c: &[f64]| c.first().map(|x| x.to_bits());
+                    assert_eq!(first(&a.ev), first(&b.ev));
+                    assert_eq!(first(&a.win), first(&b.win));
+                    assert_eq!(first(&a.tenpai), first(&b.tenpai));
+                }
+            }
+        }
+    }
 
     /// Tiny deterministic generator (SplitMix64) for reproducible inputs.
     struct Rng(u64);

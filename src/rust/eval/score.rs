@@ -128,6 +128,8 @@ pub struct Scorer {
     /// Ura indicators turned over at a riichi win: one per dora indicator.
     n_indicators: usize,
     melds: Vec<Meld>,
+    /// An evaluator of `melds` alone (`HandEvaluator::verdict`).
+    evaluator: HandEvaluator,
     /// Dora tile type each indicator tile type points to, looked up once per DP run
     /// so the uradora loops index a table instead of re-deriving it.
     next_dora_types: [usize; 34],
@@ -175,6 +177,7 @@ impl Scorer {
     ) -> Self {
         let n_indicators = dora_indicators.len();
         let melds = Self::melds_from_spec(melds_spec);
+        let evaluator = HandEvaluator::new(Vec::new(), melds.clone());
         Scorer {
             cache: None,
             ctx_memo: None,
@@ -186,6 +189,7 @@ impl Scorer {
             meld_dora_han,
             n_indicators,
             melds,
+            evaluator,
             next_dora_types: std::array::from_fn(next_dora_type),
             pts_table: [[[-1.0; 2]; PTS_FU_SLOTS]; 14],
             ron_cache: FastMap::default(),
@@ -277,6 +281,39 @@ impl Scorer {
     /// The evaluator's verdict on `hand13` completed by the winning tile, or
     /// None if the shape does not win or has no yaku.
     fn evaluate(
+        &self,
+        hand13: &Counts,
+        akas: &Akas,
+        win_tile_type: usize,
+        win_is_aka: bool,
+        tsumo: bool,
+        riichi: bool,
+    ) -> Option<Eval> {
+        // The red fives held; four plain copies of a five read as holding it
+        // (the concealed hand is built from 136 ids, the fourth copy being
+        // the red id).
+        let mut held = 0u8;
+        for (slot, &aka) in akas.iter().enumerate() {
+            held += u8::from(aka || hand13[4 + 9 * slot] == 4);
+        }
+        let win_tid = if win_is_aka {
+            AKA_TIDS[aka_slot(win_tile_type).unwrap()]
+        } else {
+            (win_tile_type as u8) * 4 + 2
+        };
+        let cond = Conditions {
+            tsumo,
+            riichi,
+            player_wind: self.player_wind,
+            round_wind: self.round_wind,
+            ..Default::default()
+        };
+        self.evaluator.verdict(hand13, held, win_tid, &self.dora_indicators, &cond)
+    }
+
+    /// `evaluate` through the evaluator's general entry, as a reference.
+    #[cfg(test)]
+    fn evaluate_reference(
         &self,
         hand13: &Counts,
         akas: &Akas,
@@ -380,6 +417,9 @@ impl Scorer {
 
     /// The cached ron verdict.
     fn ron_eval(&mut self, hand13: &Counts, akas: &Akas, win_tile_type: usize, win_is_aka: bool) -> Option<Eval> {
+        if self.cache.is_some() {
+            return self.eval_cached(hand13, akas, win_tile_type, win_is_aka, false, self.assume_riichi);
+        }
         let key = ron_key(hand13, akas, win_tile_type, win_is_aka);
         if let Some(&e) = self.ron_cache.get(&key) {
             return e;
@@ -643,5 +683,72 @@ mod ura_tests {
         for e in 0..6 {
             assert_eq!(d.get(e).copied().unwrap_or(0.0), weight[e]);
         }
+    }
+
+    /// The verdict entry says what the general one says: random hands (most
+    /// of them no win), every winning tile, with and without melds.
+    #[test]
+    fn verdict_matches_the_general_evaluation() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = move |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let (mut wins, mut total) = (0u32, 0u32);
+        for round in 0..30_000 {
+            let melds: Vec<(u8, Vec<u8>, bool, i8)> = match round % 5 {
+                3 => vec![(1, vec![108, 109, 110], true, 1)],
+                4 => vec![(0, vec![0, 4, 8], true, 3), (3, vec![124, 125, 126, 127], false, -1)],
+                _ => vec![],
+            };
+            let n_melds = melds.len();
+            let mut used = [0u8; 34];
+            for (_, ids, _, _) in &melds {
+                for &id in ids {
+                    used[usize::from(id / 4)] += 1;
+                }
+            }
+            let mut h = [0u8; 34];
+            let mut placed = 0;
+            // Close to winning shapes: runs and pairs of one or two suits; then anything.
+            let n = 13 - 3 * n_melds;
+            let base = 9 * next(3);
+            while placed < n {
+                let t = match round % 3 {
+                    0 => base + next(9),
+                    1 => if next(2) == 0 { base + next(9) } else { next(34) },
+                    _ => next(34),
+                };
+                let group = if t < 27 && t % 9 < 7 && n - placed >= 3 && next(2) == 0 { vec![t, t + 1, t + 2] } else { vec![t] };
+                if group.iter().all(|&g| h[g] + used[g] < 4) {
+                    for g in group {
+                        h[g] += 1;
+                        placed += 1;
+                    }
+                }
+            }
+            let mut akas = [false; 3];
+            for (slot, a) in akas.iter_mut().enumerate() {
+                *a = h[4 + 9 * slot] > 0 && next(3) == 0;
+            }
+            let dora: Vec<u8> = (0..1 + next(2)).map(|_| next(34) as u8).collect();
+            let sc = Scorer::new(false, 27 + next(4) as u8, 27 + next(2) as u8, dora, 0, melds);
+            for w in 0..34 {
+                if h[w] + used[w] >= 4 {
+                    continue;
+                }
+                let red = aka_slot(w).is_some_and(|s| !akas[s]) && next(4) == 0;
+                for (tsumo, riichi) in [(true, false), (false, false), (true, true), (false, true)] {
+                    let a = sc.evaluate(&h, &akas, w, red, tsumo, riichi);
+                    let b = sc.evaluate_reference(&h, &akas, w, red, tsumo, riichi);
+                    assert_eq!(a, b, "{h:?} akas {akas:?} win {w} red {red} tsumo {tsumo} riichi {riichi}");
+                    wins += u32::from(a.is_some());
+                    total += 1;
+                }
+            }
+        }
+        assert!(wins > 1000, "{wins} wins of {total}");
     }
 }

@@ -647,6 +647,49 @@ fn is_orphan(t: usize) -> bool {
     t >= 27 || t % 9 == 0 || t % 9 == 8
 }
 
+/// yamawake patch: the forward pass of a suit's perfect hash, the sum of
+/// `table[j][n_j][c_j]` (`n_j`: tiles up to position `j`): the hash, and per
+/// position the sum before it and `n_j`.
+#[inline]
+fn forward_hash<const L: usize>(c: &[u8], table: &[[[u32; 5]; 15]; L], pre: &mut [u32], ns: &mut [u8]) -> usize {
+    let (mut prefix, mut n) = (0u32, 0usize);
+    for i in 0..L {
+        let ci = usize::from(c[i]);
+        pre[i] = prefix;
+        n += ci;
+        ns[i] = n as u8;
+        prefix += table[i][n][ci];
+    }
+    prefix as usize
+}
+
+/// yamawake patch: the perfect hash of suit `c` with one tile of position `i`
+/// added (`UP`) or removed, into `out[i]`, for every position `i` at once
+/// (only those that can change: fewer than 4 / at least 1 held). Such a change
+/// moves `n_j` by one for every `j` from `i` on, so the forward pass and one
+/// backward sum give all of them.
+#[inline]
+fn shifted_hashes<const L: usize, const UP: bool>(c: &[u8], table: &[[[u32; 5]; 15]; L], pre: &[u32], ns: &[u8], out: &mut [usize; L]) {
+    let mut suffix = 0u32;
+    for i in (0..L).rev() {
+        let (ci, ni) = (usize::from(c[i]), usize::from(ns[i]));
+        if UP {
+            if ci < 4 {
+                out[i] = (pre[i] + table[i][ni + 1][ci + 1] + suffix) as usize;
+            }
+            suffix += table[i][ni + 1][ci];
+        } else {
+            if ni == 0 {
+                break;
+            }
+            if ci > 0 {
+                out[i] = (pre[i] + table[i][ni - 1][ci - 1] + suffix) as usize;
+            }
+            suffix += table[i][ni - 1][ci];
+        }
+    }
+}
+
 /// yamawake patch: one hand's suit keys and chiitoitsu / kokushi tallies,
 /// to read the shanten of the hand with one tile added or removed.
 #[derive(Clone)]
@@ -661,6 +704,9 @@ pub struct HandShanten {
     /// Terminal and honor types held, and held twice or more (kokushi).
     orphan_kinds: u8,
     orphan_pairs: u8,
+    /// The suits' `forward_hash` passes (positions 0..9; honors 27..34 from 27).
+    pre: [u32; TILE_MAX],
+    ns: [u8; TILE_MAX],
 }
 
 impl HandShanten {
@@ -675,8 +721,14 @@ impl HandShanten {
                 orphan_pairs += u8::from(c >= 2);
             }
         }
-        let keys = [suit_key(counts, 0), suit_key(counts, 1), suit_key(counts, 2), suit_key(counts, 3)];
-        Self { counts: *counts, keys, n, kinds, pairs, orphan_kinds, orphan_pairs }
+        let (mut pre, mut ns) = ([0u32; TILE_MAX], [0u8; TILE_MAX]);
+        let mut keys = [0u8; 4];
+        for s in 0..3 {
+            let r = s * 9..s * 9 + 9;
+            keys[s] = SHUPAI_KEYS[forward_hash::<9>(&counts[r.clone()], &SHUPAI_TABLE, &mut pre[r.clone()], &mut ns[r.clone()])];
+        }
+        keys[3] = ZIPAI_KEYS[forward_hash::<7>(&counts[27..34], &ZIPAI_TABLE, &mut pre[27..34], &mut ns[27..34])];
+        Self { counts: *counts, keys, n, kinds, pairs, orphan_kinds, orphan_pairs, pre, ns }
     }
 
     /// `calc_shanten_from_counts` from the parts (same as `calc_chitoi` and
@@ -685,6 +737,12 @@ impl HandShanten {
     fn combine(keys: &[u8; 4], n: u8, kinds: u8, pairs: u8, orphan_kinds: u8, orphan_pairs: u8) -> i8 {
         let len_div3 = n / 3;
         let s = normal_from_keys(keys, len_div3 as usize);
+        Self::finish(s, len_div3, kinds, pairs, orphan_kinds, orphan_pairs)
+    }
+
+    /// The hand's shanten from its regular-hand shanten `s`.
+    #[inline]
+    fn finish(s: i8, len_div3: u8, kinds: u8, pairs: u8, orphan_kinds: u8, orphan_pairs: u8) -> i8 {
         if s <= 0 || len_div3 < 4 {
             return s;
         }
@@ -714,6 +772,128 @@ impl HandShanten {
         let old = self.counts[t];
         debug_assert!(old > 0);
         self.changed(t, old - 1, u8::from(old == 1), u8::from(old == 2), false)
+    }
+
+    /// The tile types of `probe` (bit `t`) held fewer than four times whose
+    /// extra copy lowers the shanten: `plus(t) < shanten()`, for all of them
+    /// at once. The hand holds at most 13 tiles.
+    pub fn lowering_draws(&self, probe: u64) -> u64 {
+        let base = self.shanten();
+        let n = self.n + 1;
+        let len = usize::from(n / 3);
+        let k = &self.keys;
+        let j1 = KEYS1[usize::from(k[0]) * 126 + usize::from(k[1])] as usize;
+        let j2 = KEYS2[j1 * 126 + usize::from(k[2])] as usize;
+        let mut mask = 0u64;
+        let mut hashes = [0usize; 9];
+        for s in 0..3 {
+            let off = s * 9;
+            let mut sp = (probe >> off) & 0x1ff;
+            if sp == 0 {
+                continue;
+            }
+            shifted_hashes::<9, true>(&self.counts[off..off + 9], &SHUPAI_TABLE, &self.pre[off..off + 9], &self.ns[off..off + 9], &mut hashes);
+            while sp != 0 {
+                let i = sp.trailing_zeros() as usize;
+                sp &= sp - 1;
+                let t = off + i;
+                let old = self.counts[t];
+                if old >= 4 {
+                    continue;
+                }
+                let new = usize::from(SHUPAI_KEYS[hashes[i]]);
+                let j = match s {
+                    0 => KEYS2[(KEYS1[new * 126 + usize::from(k[1])] as usize) * 126 + usize::from(k[2])] as usize,
+                    1 => KEYS2[(KEYS1[usize::from(k[0]) * 126 + new] as usize) * 126 + usize::from(k[2])] as usize,
+                    _ => KEYS2[j1 * 126 + new] as usize,
+                };
+                let normal = (KEYS3[(j * 55 + usize::from(k[3])) * 5 + len] as i8) - 1;
+                if self.with_tallies(normal, t, old, true) < base {
+                    mask |= 1 << t;
+                }
+            }
+        }
+        let mut sp = (probe >> 27) & 0x7f;
+        if sp != 0 {
+            let mut hashes = [0usize; 7];
+            shifted_hashes::<7, true>(&self.counts[27..34], &ZIPAI_TABLE, &self.pre[27..34], &self.ns[27..34], &mut hashes);
+            while sp != 0 {
+                let i = sp.trailing_zeros() as usize;
+                sp &= sp - 1;
+                let t = 27 + i;
+                let old = self.counts[t];
+                if old >= 4 {
+                    continue;
+                }
+                let normal = (KEYS3[(j2 * 55 + usize::from(ZIPAI_KEYS[hashes[i]])) * 5 + len] as i8) - 1;
+                if self.with_tallies(normal, t, old, true) < base {
+                    mask |= 1 << t;
+                }
+            }
+        }
+        mask
+    }
+
+    /// The held tile types (bit `t`) whose removal keeps the shanten:
+    /// `minus(t) == shanten()`, for all of them at once.
+    pub fn keeping_discards(&self) -> u64 {
+        let base = self.shanten();
+        let n = self.n - 1;
+        let len = usize::from(n / 3);
+        let k = &self.keys;
+        let j1 = KEYS1[usize::from(k[0]) * 126 + usize::from(k[1])] as usize;
+        let j2 = KEYS2[j1 * 126 + usize::from(k[2])] as usize;
+        let mut mask = 0u64;
+        let mut hashes = [0usize; 9];
+        for s in 0..3 {
+            let off = s * 9;
+            shifted_hashes::<9, false>(&self.counts[off..off + 9], &SHUPAI_TABLE, &self.pre[off..off + 9], &self.ns[off..off + 9], &mut hashes);
+            for i in 0..9 {
+                let t = off + i;
+                let old = self.counts[t];
+                if old == 0 {
+                    continue;
+                }
+                let new = usize::from(SHUPAI_KEYS[hashes[i]]);
+                let j = match s {
+                    0 => KEYS2[(KEYS1[new * 126 + usize::from(k[1])] as usize) * 126 + usize::from(k[2])] as usize,
+                    1 => KEYS2[(KEYS1[usize::from(k[0]) * 126 + new] as usize) * 126 + usize::from(k[2])] as usize,
+                    _ => KEYS2[j1 * 126 + new] as usize,
+                };
+                let normal = (KEYS3[(j * 55 + usize::from(k[3])) * 5 + len] as i8) - 1;
+                if self.with_tallies(normal, t, old, false) == base {
+                    mask |= 1 << t;
+                }
+            }
+        }
+        let mut hashes = [0usize; 7];
+        shifted_hashes::<7, false>(&self.counts[27..34], &ZIPAI_TABLE, &self.pre[27..34], &self.ns[27..34], &mut hashes);
+        for i in 0..7 {
+            let t = 27 + i;
+            let old = self.counts[t];
+            if old == 0 {
+                continue;
+            }
+            let normal = (KEYS3[(j2 * 55 + usize::from(ZIPAI_KEYS[hashes[i]])) * 5 + len] as i8) - 1;
+            if self.with_tallies(normal, t, old, false) == base {
+                mask |= 1 << t;
+            }
+        }
+        mask
+    }
+
+    /// The shanten of the hand with one tile of type `t` (held `old` times)
+    /// added (`up`) or removed, from its regular-hand shanten `normal`.
+    #[inline]
+    fn with_tallies(&self, normal: i8, t: usize, old: u8, up: bool) -> i8 {
+        let (dk, dp) = if up { (u8::from(old == 0), u8::from(old == 1)) } else { (u8::from(old == 1), u8::from(old == 2)) };
+        let (dok, dop) = if is_orphan(t) { (dk, dp) } else { (0, 0) };
+        let (n, kinds, pairs, ok, op) = if up {
+            (self.n + 1, self.kinds + dk, self.pairs + dp, self.orphan_kinds + dok, self.orphan_pairs + dop)
+        } else {
+            (self.n - 1, self.kinds - dk, self.pairs - dp, self.orphan_kinds - dok, self.orphan_pairs - dop)
+        };
+        Self::finish(normal, n / 3, kinds, pairs, ok, op)
     }
 
     /// The shanten with `counts[t]` set to `new` (one more or one fewer):

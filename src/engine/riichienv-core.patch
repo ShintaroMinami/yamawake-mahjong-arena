@@ -208,7 +208,7 @@
 +}
 --- a/src/shanten.rs
 +++ b/src/shanten.rs
-@@ -611,7 +611,129 @@
+@@ -611,7 +611,309 @@
      }
  
      max_ukeire
@@ -248,6 +248,49 @@
 +    t >= 27 || t % 9 == 0 || t % 9 == 8
 +}
 +
++/// yamawake patch: the forward pass of a suit's perfect hash, the sum of
++/// `table[j][n_j][c_j]` (`n_j`: tiles up to position `j`): the hash, and per
++/// position the sum before it and `n_j`.
++#[inline]
++fn forward_hash<const L: usize>(c: &[u8], table: &[[[u32; 5]; 15]; L], pre: &mut [u32], ns: &mut [u8]) -> usize {
++    let (mut prefix, mut n) = (0u32, 0usize);
++    for i in 0..L {
++        let ci = usize::from(c[i]);
++        pre[i] = prefix;
++        n += ci;
++        ns[i] = n as u8;
++        prefix += table[i][n][ci];
++    }
++    prefix as usize
++}
++
++/// yamawake patch: the perfect hash of suit `c` with one tile of position `i`
++/// added (`UP`) or removed, into `out[i]`, for every position `i` at once
++/// (only those that can change: fewer than 4 / at least 1 held). Such a change
++/// moves `n_j` by one for every `j` from `i` on, so the forward pass and one
++/// backward sum give all of them.
++#[inline]
++fn shifted_hashes<const L: usize, const UP: bool>(c: &[u8], table: &[[[u32; 5]; 15]; L], pre: &[u32], ns: &[u8], out: &mut [usize; L]) {
++    let mut suffix = 0u32;
++    for i in (0..L).rev() {
++        let (ci, ni) = (usize::from(c[i]), usize::from(ns[i]));
++        if UP {
++            if ci < 4 {
++                out[i] = (pre[i] + table[i][ni + 1][ci + 1] + suffix) as usize;
++            }
++            suffix += table[i][ni + 1][ci];
++        } else {
++            if ni == 0 {
++                break;
++            }
++            if ci > 0 {
++                out[i] = (pre[i] + table[i][ni - 1][ci - 1] + suffix) as usize;
++            }
++            suffix += table[i][ni - 1][ci];
++        }
++    }
++}
++
 +/// yamawake patch: one hand's suit keys and chiitoitsu / kokushi tallies,
 +/// to read the shanten of the hand with one tile added or removed.
 +#[derive(Clone)]
@@ -262,6 +305,9 @@
 +    /// Terminal and honor types held, and held twice or more (kokushi).
 +    orphan_kinds: u8,
 +    orphan_pairs: u8,
++    /// The suits' `forward_hash` passes (positions 0..9; honors 27..34 from 27).
++    pre: [u32; TILE_MAX],
++    ns: [u8; TILE_MAX],
 +}
 +
 +impl HandShanten {
@@ -276,8 +322,14 @@
 +                orphan_pairs += u8::from(c >= 2);
 +            }
 +        }
-+        let keys = [suit_key(counts, 0), suit_key(counts, 1), suit_key(counts, 2), suit_key(counts, 3)];
-+        Self { counts: *counts, keys, n, kinds, pairs, orphan_kinds, orphan_pairs }
++        let (mut pre, mut ns) = ([0u32; TILE_MAX], [0u8; TILE_MAX]);
++        let mut keys = [0u8; 4];
++        for s in 0..3 {
++            let r = s * 9..s * 9 + 9;
++            keys[s] = SHUPAI_KEYS[forward_hash::<9>(&counts[r.clone()], &SHUPAI_TABLE, &mut pre[r.clone()], &mut ns[r.clone()])];
++        }
++        keys[3] = ZIPAI_KEYS[forward_hash::<7>(&counts[27..34], &ZIPAI_TABLE, &mut pre[27..34], &mut ns[27..34])];
++        Self { counts: *counts, keys, n, kinds, pairs, orphan_kinds, orphan_pairs, pre, ns }
 +    }
 +
 +    /// `calc_shanten_from_counts` from the parts (same as `calc_chitoi` and
@@ -286,6 +338,12 @@
 +    fn combine(keys: &[u8; 4], n: u8, kinds: u8, pairs: u8, orphan_kinds: u8, orphan_pairs: u8) -> i8 {
 +        let len_div3 = n / 3;
 +        let s = normal_from_keys(keys, len_div3 as usize);
++        Self::finish(s, len_div3, kinds, pairs, orphan_kinds, orphan_pairs)
++    }
++
++    /// The hand's shanten from its regular-hand shanten `s`.
++    #[inline]
++    fn finish(s: i8, len_div3: u8, kinds: u8, pairs: u8, orphan_kinds: u8, orphan_pairs: u8) -> i8 {
 +        if s <= 0 || len_div3 < 4 {
 +            return s;
 +        }
@@ -315,6 +373,128 @@
 +        let old = self.counts[t];
 +        debug_assert!(old > 0);
 +        self.changed(t, old - 1, u8::from(old == 1), u8::from(old == 2), false)
++    }
++
++    /// The tile types of `probe` (bit `t`) held fewer than four times whose
++    /// extra copy lowers the shanten: `plus(t) < shanten()`, for all of them
++    /// at once. The hand holds at most 13 tiles.
++    pub fn lowering_draws(&self, probe: u64) -> u64 {
++        let base = self.shanten();
++        let n = self.n + 1;
++        let len = usize::from(n / 3);
++        let k = &self.keys;
++        let j1 = KEYS1[usize::from(k[0]) * 126 + usize::from(k[1])] as usize;
++        let j2 = KEYS2[j1 * 126 + usize::from(k[2])] as usize;
++        let mut mask = 0u64;
++        let mut hashes = [0usize; 9];
++        for s in 0..3 {
++            let off = s * 9;
++            let mut sp = (probe >> off) & 0x1ff;
++            if sp == 0 {
++                continue;
++            }
++            shifted_hashes::<9, true>(&self.counts[off..off + 9], &SHUPAI_TABLE, &self.pre[off..off + 9], &self.ns[off..off + 9], &mut hashes);
++            while sp != 0 {
++                let i = sp.trailing_zeros() as usize;
++                sp &= sp - 1;
++                let t = off + i;
++                let old = self.counts[t];
++                if old >= 4 {
++                    continue;
++                }
++                let new = usize::from(SHUPAI_KEYS[hashes[i]]);
++                let j = match s {
++                    0 => KEYS2[(KEYS1[new * 126 + usize::from(k[1])] as usize) * 126 + usize::from(k[2])] as usize,
++                    1 => KEYS2[(KEYS1[usize::from(k[0]) * 126 + new] as usize) * 126 + usize::from(k[2])] as usize,
++                    _ => KEYS2[j1 * 126 + new] as usize,
++                };
++                let normal = (KEYS3[(j * 55 + usize::from(k[3])) * 5 + len] as i8) - 1;
++                if self.with_tallies(normal, t, old, true) < base {
++                    mask |= 1 << t;
++                }
++            }
++        }
++        let mut sp = (probe >> 27) & 0x7f;
++        if sp != 0 {
++            let mut hashes = [0usize; 7];
++            shifted_hashes::<7, true>(&self.counts[27..34], &ZIPAI_TABLE, &self.pre[27..34], &self.ns[27..34], &mut hashes);
++            while sp != 0 {
++                let i = sp.trailing_zeros() as usize;
++                sp &= sp - 1;
++                let t = 27 + i;
++                let old = self.counts[t];
++                if old >= 4 {
++                    continue;
++                }
++                let normal = (KEYS3[(j2 * 55 + usize::from(ZIPAI_KEYS[hashes[i]])) * 5 + len] as i8) - 1;
++                if self.with_tallies(normal, t, old, true) < base {
++                    mask |= 1 << t;
++                }
++            }
++        }
++        mask
++    }
++
++    /// The held tile types (bit `t`) whose removal keeps the shanten:
++    /// `minus(t) == shanten()`, for all of them at once.
++    pub fn keeping_discards(&self) -> u64 {
++        let base = self.shanten();
++        let n = self.n - 1;
++        let len = usize::from(n / 3);
++        let k = &self.keys;
++        let j1 = KEYS1[usize::from(k[0]) * 126 + usize::from(k[1])] as usize;
++        let j2 = KEYS2[j1 * 126 + usize::from(k[2])] as usize;
++        let mut mask = 0u64;
++        let mut hashes = [0usize; 9];
++        for s in 0..3 {
++            let off = s * 9;
++            shifted_hashes::<9, false>(&self.counts[off..off + 9], &SHUPAI_TABLE, &self.pre[off..off + 9], &self.ns[off..off + 9], &mut hashes);
++            for i in 0..9 {
++                let t = off + i;
++                let old = self.counts[t];
++                if old == 0 {
++                    continue;
++                }
++                let new = usize::from(SHUPAI_KEYS[hashes[i]]);
++                let j = match s {
++                    0 => KEYS2[(KEYS1[new * 126 + usize::from(k[1])] as usize) * 126 + usize::from(k[2])] as usize,
++                    1 => KEYS2[(KEYS1[usize::from(k[0]) * 126 + new] as usize) * 126 + usize::from(k[2])] as usize,
++                    _ => KEYS2[j1 * 126 + new] as usize,
++                };
++                let normal = (KEYS3[(j * 55 + usize::from(k[3])) * 5 + len] as i8) - 1;
++                if self.with_tallies(normal, t, old, false) == base {
++                    mask |= 1 << t;
++                }
++            }
++        }
++        let mut hashes = [0usize; 7];
++        shifted_hashes::<7, false>(&self.counts[27..34], &ZIPAI_TABLE, &self.pre[27..34], &self.ns[27..34], &mut hashes);
++        for i in 0..7 {
++            let t = 27 + i;
++            let old = self.counts[t];
++            if old == 0 {
++                continue;
++            }
++            let normal = (KEYS3[(j2 * 55 + usize::from(ZIPAI_KEYS[hashes[i]])) * 5 + len] as i8) - 1;
++            if self.with_tallies(normal, t, old, false) == base {
++                mask |= 1 << t;
++            }
++        }
++        mask
++    }
++
++    /// The shanten of the hand with one tile of type `t` (held `old` times)
++    /// added (`up`) or removed, from its regular-hand shanten `normal`.
++    #[inline]
++    fn with_tallies(&self, normal: i8, t: usize, old: u8, up: bool) -> i8 {
++        let (dk, dp) = if up { (u8::from(old == 0), u8::from(old == 1)) } else { (u8::from(old == 1), u8::from(old == 2)) };
++        let (dok, dop) = if is_orphan(t) { (dk, dp) } else { (0, 0) };
++        let (n, kinds, pairs, ok, op) = if up {
++            (self.n + 1, self.kinds + dk, self.pairs + dp, self.orphan_kinds + dok, self.orphan_pairs + dop)
++        } else {
++            (self.n - 1, self.kinds - dk, self.pairs - dp, self.orphan_kinds - dok, self.orphan_pairs - dop)
++        };
++        Self::finish(normal, n / 3, kinds, pairs, ok, op)
 +    }
 +
 +    /// The shanten with `counts[t]` set to `new` (one more or one fewer):
@@ -363,3 +543,332 @@
          }
      }
  
+--- a/src/hand_evaluator.rs
++++ b/src/hand_evaluator.rs
+@@ -74,6 +74,68 @@
+         }
+     }
+ 
++    /// yamawake patch: what `calc` says of the win (han, fu, yakuman), `None`
++    /// when it does not win, for this evaluator's melds (`self` holds no
++    /// concealed tiles) and the concealed `counts` holding `akas` red fives.
++    /// No allocation of its own: no 136-id hand, no score, no yaku list.
++    pub fn verdict(
++        &self,
++        counts: &[u8; crate::types::TILE_MAX],
++        akas: u8,
++        win_tile: u8,
++        dora_indicators: &[u8],
++        conditions: &Conditions,
++    ) -> Option<(u32, u32, bool)> {
++        let win_tile_34 = win_tile / 4;
++        let mut hand_14 = Hand { counts: *counts };
++        let mut full_hand_14 = self.full_hand.clone();
++        for (f, c) in full_hand_14.counts.iter_mut().zip(counts) {
++            *f += *c;
++        }
++        for meld in &self.melds {
++            if matches!(meld.meld_type, MeldType::Daiminkan | MeldType::Ankan | MeldType::Kakan)
++                && hand_14.counts[meld.tiles[0] as usize] == 4
++            {
++                hand_14.counts[meld.tiles[0] as usize] = 3;
++            }
++        }
++        let current_total: u8 = hand_14.counts.iter().sum::<u8>() + (self.melds.len() as u8 * 3);
++        let mut aka_dora = self.aka_dora_count + akas;
++        if current_total == 13 {
++            hand_14.add(win_tile_34);
++            full_hand_14.add(win_tile_34);
++            if win_tile == 16 || win_tile == 52 || win_tile == 88 {
++                aka_dora += 1;
++            }
++        }
++        let mut dora_count = 0;
++        for &indicator_136 in dora_indicators {
++            dora_count += full_hand_14.counts[get_next_tile(indicator_136 / 4) as usize];
++        }
++        let ctx = yaku::YakuContext {
++            is_tsumo: conditions.tsumo,
++            is_reach: conditions.riichi,
++            is_daburu_reach: conditions.double_riichi,
++            is_ippatsu: conditions.ippatsu,
++            is_haitei: conditions.haitei,
++            is_houtei: conditions.houtei,
++            is_rinshan: conditions.rinshan,
++            is_chankan: conditions.chankan,
++            is_tsumo_first_turn: conditions.tsumo_first_turn,
++            dora_count,
++            aka_dora,
++            ura_dora_count: 0,
++            round_wind: 27 + conditions.round_wind as u8,
++            seat_wind: 27 + conditions.player_wind as u8,
++            is_menzen: self.melds.iter().all(|m| !m.opened),
++        };
++        // A hand that does not win has no division and no yaku: han 0.
++        let res = yaku::calculate_yaku(&hand_14, &self.melds, &ctx, win_tile_34);
++        let has_yaku = res.yaku_ids.iter().any(|&id| id != yaku::ID_DORA && id != yaku::ID_AKADORA && id != yaku::ID_URADORA);
++        let is_win = (has_yaku || res.yakuman_count > 0) && res.han >= 1;
++        (is_win && res.han != 0).then_some((res.han as u32, res.fu as u32, res.yakuman_count > 0))
++    }
++
+     pub fn calc(
+         &self,
+         win_tile: u8,
+@@ -136,7 +198,6 @@
+             is_menzen: self.melds.iter().all(|m| !m.opened),
+         };
+ 
+-        let _divisions = agari::find_divisions(&hand_14);
+         let yaku_res = yaku::calculate_yaku(&hand_14, &self.melds, &ctx, win_tile_34);
+ 
+         let is_oya = conditions.player_wind == Wind::East;
+--- a/src/yaku.rs
++++ b/src/yaku.rs
+@@ -184,6 +184,8 @@
+     pub han: u8,
+     pub fu: u8,
+     pub yaku_ids: Vec<u32>,
++    /// yamawake patch: `calculate_yaku` leaves this empty (nothing reads it,
++    /// and each name was an allocation).
+     pub yaku_names: Vec<String>,
+     pub yakuman_count: u8,
+ }
+@@ -240,14 +242,10 @@
+                 best_res.han = 26;
+                 best_res.yakuman_count = 2;
+                 best_res.yaku_ids.push(ID_KOKUSHI_13);
+-                best_res
+-                    .yaku_names
+-                    .push("Kokushi Musou 13-wait".to_string());
+             } else {
+                 best_res.han = 13;
+                 best_res.yakuman_count = 1;
+                 best_res.yaku_ids.push(ID_KOKUSHI);
+-                best_res.yaku_names.push("Kokushi Musou".to_string());
+             }
+             return best_res;
+         }
+@@ -255,26 +253,21 @@
+             best_res.han = 2;
+             best_res.fu = 25;
+             best_res.yaku_ids.push(ID_CHITOITSU);
+-            best_res.yaku_names.push("Chiitoitsu".to_string());
+ 
+             if is_tanyao(hand, melds) {
+                 best_res.han += 1;
+                 best_res.yaku_ids.push(12);
+-                best_res.yaku_names.push("Tanyao".to_string());
+             }
+             if is_chinitsu(hand, melds) {
+                 best_res.han += 6;
+                 best_res.yaku_ids.push(29);
+-                best_res.yaku_names.push("Chinitsu".to_string());
+             } else if is_honitsu(hand, melds) {
+                 best_res.han += 3;
+                 best_res.yaku_ids.push(27);
+-                best_res.yaku_names.push("Honitsu".to_string());
+             }
+             if is_honroutou(hand, melds) {
+                 best_res.han += 2;
+                 best_res.yaku_ids.push(24);
+-                best_res.yaku_names.push("Honroutou".to_string());
+             }
+ 
+             apply_yakuman(
+@@ -338,14 +331,12 @@
+             if is_tanyao(hand, melds) {
+                 res.han += 1;
+                 res.yaku_ids.push(ID_TANYAO); // Corrected to 12
+-                res.yaku_names.push("Tanyao".to_string());
+             }
+ 
+             // Pinfu check
+             if check_pinfu(div, melds, ctx, wg_idx, win_tile) {
+                 res.han += 1;
+                 res.yaku_ids.push(ID_PINFU);
+-                res.yaku_names.push("Pinfu".to_string());
+                 res.fu = if ctx.is_tsumo { 20 } else { 30 };
+             } else {
+                 res.fu = calculate_fu_with_waiting(div, melds, ctx, wg_idx, win_tile);
+@@ -381,7 +372,6 @@
+                         }
+                     };
+                     res.yaku_ids.push(id);
+-                    res.yaku_names.push("Yakuhai".to_string());
+                 }
+             }
+ 
+@@ -417,7 +407,6 @@
+                 if dragon_koutsu_count == 2 && dragon_pair_count == 1 {
+                     res.han += 2;
+                     res.yaku_ids.push(ID_SHOSANGEN);
+-                    res.yaku_names.push("Shousangen".to_string());
+                 }
+             }
+ 
+@@ -434,7 +423,6 @@
+             if koutsu_total == 4 {
+                 res.han += 2;
+                 res.yaku_ids.push(ID_TOITOI);
+-                res.yaku_names.push("Toitoi".to_string());
+             }
+ 
+             // San Ankou
+@@ -456,7 +444,6 @@
+             if closed_koutsu_count == 3 {
+                 res.han += 2;
+                 res.yaku_ids.push(ID_SANANKOU);
+-                res.yaku_names.push("San Ankou".to_string());
+             }
+ 
+             // San Kantsu
+@@ -471,7 +458,6 @@
+             if kantsu_count == 3 {
+                 res.han += 2;
+                 res.yaku_ids.push(ID_SANKANTSU);
+-                res.yaku_names.push("San Kantsu".to_string());
+             }
+ 
+             // Iipeiko / Ryanpeikou (Closed only)
+@@ -496,11 +482,9 @@
+                 if identical_pairs == 2 {
+                     res.han += 3;
+                     res.yaku_ids.push(ID_RYANPEIKO);
+-                    res.yaku_names.push("Ryanpeikou".to_string());
+                 } else if identical_pairs == 1 {
+                     res.han += 1;
+                     res.yaku_ids.push(ID_IPEIKO);
+-                    res.yaku_names.push("Iipeiko".to_string());
+                 }
+             }
+ 
+@@ -508,43 +492,35 @@
+             if check_ittsu(div, melds) {
+                 res.han += if ctx.is_menzen { 2 } else { 1 };
+                 res.yaku_ids.push(ID_ITTSU);
+-                res.yaku_names.push("Ittsu".to_string());
+             }
+             if is_sanshoku_doujun(div, melds) {
+                 res.han += if ctx.is_menzen { 2 } else { 1 };
+                 res.yaku_ids.push(ID_SANSHOKU);
+-                res.yaku_names.push("Sanshoku Doujun".to_string());
+             }
+             if is_sanshoku_doukou(div, melds) {
+                 res.han += 2;
+                 res.yaku_ids.push(ID_SANSHOKU_DOKO);
+-                res.yaku_names.push("Sanshoku Doukou".to_string());
+             }
+ 
+             // Honitsu / Chinitsu
+             if is_chinitsu(hand, melds) {
+                 res.han += if ctx.is_menzen { 6 } else { 5 };
+                 res.yaku_ids.push(ID_CHINITSU);
+-                res.yaku_names.push("Chinitsu".to_string());
+             } else if is_honitsu(hand, melds) {
+                 res.han += if ctx.is_menzen { 3 } else { 2 };
+                 res.yaku_ids.push(ID_HONITSU);
+-                res.yaku_names.push("Honitsu".to_string());
+             }
+ 
+             // Chantai / Junchan / Honroutou
+             if is_honroutou(hand, melds) {
+                 res.han += 2;
+                 res.yaku_ids.push(ID_HONROUTO);
+-                res.yaku_names.push("Honroutou".to_string());
+             } else if is_junchan(div, melds) {
+                 res.han += if ctx.is_menzen { 3 } else { 2 };
+                 res.yaku_ids.push(ID_JUNCHAN);
+-                res.yaku_names.push("Junchan".to_string());
+             } else if is_chantai(div, melds) {
+                 res.han += if ctx.is_menzen { 2 } else { 1 };
+                 res.yaku_ids.push(ID_CHANTA);
+-                res.yaku_names.push("Chantai".to_string());
+             }
+ 
+             // Static Yaku and Dora are handled by apply_static_yaku (already called at start of loop)
+@@ -910,21 +886,18 @@
+     if is_tsuu_iisou(hand, melds) {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_TSUISO);
+-        res.yaku_names.push("Tsuu iisou".to_string());
+     }
+ 
+     // Chinroutou (All Terminals)
+     if is_chinroutou(hand, melds) {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_CHINROUTO);
+-        res.yaku_names.push("Chinroutou".to_string());
+     }
+ 
+     // Ryuu iisou (All Green)
+     if is_ryuu_iisou(hand, melds) {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_RYUISOU);
+-        res.yaku_names.push("Ryuu iisou".to_string());
+     }
+ 
+     // Su Kantsu (Four Kans)
+@@ -940,7 +913,6 @@
+     {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_SUKANTSU);
+-        res.yaku_names.push("Su Kantsu".to_string());
+     }
+ 
+     // Chuuren Poutou
+@@ -951,11 +923,9 @@
+             if is_9_wait {
+                 yakuman_count += 2;
+                 res.yaku_ids.push(ID_JUNSEI_CHUUREN);
+-                res.yaku_names.push("Chuuren Poutou 9-wait".to_string());
+             } else {
+                 yakuman_count += 1;
+                 res.yaku_ids.push(ID_CHUUREN);
+-                res.yaku_names.push("Chuuren Poutou".to_string());
+             }
+         }
+     }
+@@ -966,11 +936,9 @@
+             // Oya (East)
+             yakuman_count += 1;
+             res.yaku_ids.push(ID_TENHO);
+-            res.yaku_names.push("Tenhou".to_string());
+         } else {
+             yakuman_count += 1;
+             res.yaku_ids.push(ID_CHIHO);
+-            res.yaku_names.push("Chiihou".to_string());
+         }
+     }
+ 
+@@ -994,11 +962,9 @@
+         if wg_idx.is_none() {
+             yakuman_count += 2;
+             res.yaku_ids.push(ID_SUANKO_TANKI); // Su Ankou Tanki
+-            res.yaku_names.push("Su Ankou Tanki".to_string());
+         } else {
+             yakuman_count += 1;
+             res.yaku_ids.push(ID_SUANKO);
+-            res.yaku_names.push("Su Ankou".to_string());
+         }
+     }
+ 
+@@ -1019,7 +985,6 @@
+     if haku_koutsu && hatsu_koutsu && chun_koutsu {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_DAISANGEN);
+-        res.yaku_names.push("Daisangen".to_string());
+     }
+ 
+     // Winds
+@@ -1041,11 +1006,9 @@
+     if wind_koutsu_count == 4 {
+         yakuman_count += 2; // Double Yakuman
+         res.yaku_ids.push(ID_DAISUUSHI);
+-        res.yaku_names.push("Daisushii".to_string());
+     } else if wind_koutsu_count == 3 && wind_pair_count == 1 {
+         yakuman_count += 1;
+         res.yaku_ids.push(ID_SHOUSUUSHI);
+-        res.yaku_names.push("Shousushii".to_string());
+     }
+ 
+     if yakuman_count > 0 {

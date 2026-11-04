@@ -74,6 +74,68 @@ impl HandEvaluator {
         }
     }
 
+    /// yamawake patch: what `calc` says of the win (han, fu, yakuman), `None`
+    /// when it does not win, for this evaluator's melds (`self` holds no
+    /// concealed tiles) and the concealed `counts` holding `akas` red fives.
+    /// No allocation of its own: no 136-id hand, no score, no yaku list.
+    pub fn verdict(
+        &self,
+        counts: &[u8; crate::types::TILE_MAX],
+        akas: u8,
+        win_tile: u8,
+        dora_indicators: &[u8],
+        conditions: &Conditions,
+    ) -> Option<(u32, u32, bool)> {
+        let win_tile_34 = win_tile / 4;
+        let mut hand_14 = Hand { counts: *counts };
+        let mut full_hand_14 = self.full_hand.clone();
+        for (f, c) in full_hand_14.counts.iter_mut().zip(counts) {
+            *f += *c;
+        }
+        for meld in &self.melds {
+            if matches!(meld.meld_type, MeldType::Daiminkan | MeldType::Ankan | MeldType::Kakan)
+                && hand_14.counts[meld.tiles[0] as usize] == 4
+            {
+                hand_14.counts[meld.tiles[0] as usize] = 3;
+            }
+        }
+        let current_total: u8 = hand_14.counts.iter().sum::<u8>() + (self.melds.len() as u8 * 3);
+        let mut aka_dora = self.aka_dora_count + akas;
+        if current_total == 13 {
+            hand_14.add(win_tile_34);
+            full_hand_14.add(win_tile_34);
+            if win_tile == 16 || win_tile == 52 || win_tile == 88 {
+                aka_dora += 1;
+            }
+        }
+        let mut dora_count = 0;
+        for &indicator_136 in dora_indicators {
+            dora_count += full_hand_14.counts[get_next_tile(indicator_136 / 4) as usize];
+        }
+        let ctx = yaku::YakuContext {
+            is_tsumo: conditions.tsumo,
+            is_reach: conditions.riichi,
+            is_daburu_reach: conditions.double_riichi,
+            is_ippatsu: conditions.ippatsu,
+            is_haitei: conditions.haitei,
+            is_houtei: conditions.houtei,
+            is_rinshan: conditions.rinshan,
+            is_chankan: conditions.chankan,
+            is_tsumo_first_turn: conditions.tsumo_first_turn,
+            dora_count,
+            aka_dora,
+            ura_dora_count: 0,
+            round_wind: 27 + conditions.round_wind as u8,
+            seat_wind: 27 + conditions.player_wind as u8,
+            is_menzen: self.melds.iter().all(|m| !m.opened),
+        };
+        // A hand that does not win has no division and no yaku: han 0.
+        let res = yaku::calculate_yaku(&hand_14, &self.melds, &ctx, win_tile_34);
+        let has_yaku = res.yaku_ids.iter().any(|&id| id != yaku::ID_DORA && id != yaku::ID_AKADORA && id != yaku::ID_URADORA);
+        let is_win = (has_yaku || res.yakuman_count > 0) && res.han >= 1;
+        (is_win && res.han != 0).then_some((res.han as u32, res.fu as u32, res.yakuman_count > 0))
+    }
+
     pub fn calc(
         &self,
         win_tile: u8,
@@ -136,7 +198,6 @@ impl HandEvaluator {
             is_menzen: self.melds.iter().all(|m| !m.opened),
         };
 
-        let _divisions = agari::find_divisions(&hand_14);
         let yaku_res = yaku::calculate_yaku(&hand_14, &self.melds, &ctx, win_tile_34);
 
         let is_oya = conditions.player_wind == Wind::East;

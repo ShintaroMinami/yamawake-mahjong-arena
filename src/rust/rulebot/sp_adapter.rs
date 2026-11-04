@@ -49,7 +49,8 @@ fn solve(input: &Input) -> Vec<crate::eval::dp::Candidate> {
 /// One discard and what the DP says it is worth.
 pub struct DiscardValue {
     pub tile: Tile,
-    /// Expected points per extra-han column; `[0]` is the hand as it stands.
+    /// Expected points; `[0]` is the hand as it stands (`Solver::run_cached`
+    /// keeps that entry only).
     pub ev: Vec<f32>,
     win_prob: f32,
     tenpai_prob: f32,

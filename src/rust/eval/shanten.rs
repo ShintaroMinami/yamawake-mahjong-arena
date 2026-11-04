@@ -1,4 +1,4 @@
-//! Shanten with one tile added or removed, and the `facts` cache of hand
+//! Shanten with one tile added or removed, and the `facts_packed` cache of hand
 //! facts (a shanten and a tile mask per hand).
 //!
 //! `HandShanten` lives in the vendored riichienv-core (a yamawake patch to
@@ -11,11 +11,11 @@
 use std::cell::RefCell;
 
 use crate::eval::dp::Counts;
-use crate::eval::hash::{FastMap, pack};
+use crate::eval::hash::pack;
 
 pub use riichienv_core::shanten::HandShanten;
 
-/// The kinds of hand facts `facts` keeps: a shanten and a tile mask, each a
+/// The kinds of hand facts `facts_packed` keeps: a shanten and a tile mask, each a
 /// pure function of the counts alone.
 #[derive(Clone, Copy)]
 pub enum Facts {
@@ -27,45 +27,60 @@ pub enum Facts {
     Improving,
 }
 
-/// Entries per kind before a thread's table starts over.
-const FACTS_CAP: usize = 1 << 18;
+/// Entries per kind of a thread's table (as a power of two). Small on purpose:
+/// most misses are hands never seen before, not hands pushed out (no limit at
+/// all gave the same hit rate), so a bigger table only reads memory further
+/// away (2^12 to 2^14 were the fastest, 2^19 clearly slower; Apple M4 Pro).
+const FACTS_BITS: u32 = 14;
+
+/// A key no hand has (`pack` fills 102 bits).
+const EMPTY: u128 = u128::MAX;
+
+/// One direct-mapped slot: a colliding hand replaces what it finds there, so
+/// the table has a fixed size and is never cleared.
+#[derive(Clone, Copy)]
+struct Slot {
+    key: u128,
+    mask: u64,
+    shanten: i8,
+}
 
 thread_local! {
-    static FACTS: RefCell<[FastMap<u128, (i8, u64)>; 3]> =
-        RefCell::new(Default::default());
+    static FACTS: RefCell<[Box<[Slot]>; 3]> = RefCell::new(std::array::from_fn(|_| {
+        vec![Slot { key: EMPTY, mask: 0, shanten: 0 }; 1 << FACTS_BITS].into_boxed_slice()
+    }));
 }
 
 /// `f(hand)`, kept per thread under `kind` (exact: `f` must depend on the
-/// counts alone; the table starts over past `FACTS_CAP` entries).
-pub fn facts(kind: Facts, hand: &Counts, f: impl FnOnce(&Counts) -> (i8, u64)) -> (i8, u64) {
-    facts_packed(kind, pack(hand), hand, f)
-}
-
-/// `facts` with the hand's counts already packed (`key`: 3 bits per tile
-/// type, tile type 0 highest).
+/// counts alone; a slot holds its whole key). `key`: the hand's `hash::pack`.
+#[inline]
 pub fn facts_packed(kind: Facts, key: u128, hand: &Counts, f: impl FnOnce(&Counts) -> (i8, u64)) -> (i8, u64) {
     let k = kind as usize;
-    if let Some(v) = FACTS.with_borrow(|m| m[k].get(&key).copied()) {
+    let mixed = (key as u64).rotate_left(5) ^ (key >> 64) as u64;
+    let i = (mixed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - FACTS_BITS)) as usize;
+    let hit = FACTS.with_borrow(|m| {
+        let s = &m[k][i];
+        (s.key == key).then_some((s.shanten, s.mask))
+    });
+    if let Some(v) = hit {
         return v;
     }
     let v = f(hand);
-    FACTS.with_borrow_mut(|m| {
-        if m[k].len() >= FACTS_CAP {
-            m[k].clear();
-        }
-        m[k].insert(key, v);
-    });
+    FACTS.with_borrow_mut(|m| m[k][i] = Slot { key, mask: v.1, shanten: v.0 });
     v
 }
 
 /// The shanten of a 3n+2 hand and the held tile types whose discard keeps
 /// it (bit `d`), kept per thread.
 pub fn keeping(hand: &Counts) -> (i8, u64) {
-    facts(Facts::Keeping, hand, |hand| {
+    keeping_packed(pack(hand), hand)
+}
+
+/// `keeping` with the hand already packed (`hash::pack`).
+pub fn keeping_packed(key: u128, hand: &Counts) -> (i8, u64) {
+    facts_packed(Facts::Keeping, key, hand, |hand| {
         let hs = HandShanten::new(hand);
-        let s = hs.shanten();
-        let mask = (0..34).filter(|&d| hand[d] > 0 && hs.minus(d) == s).fold(0u64, |m, d| m | 1 << d);
-        (s, mask)
+        (hs.shanten(), hs.keeping_discards())
     })
 }
 
@@ -109,6 +124,13 @@ mod tests {
             }
             let hs = HandShanten::new(&c);
             assert_eq!(hs.shanten(), reference(&c), "{c:?}");
+            let base = hs.shanten();
+            if n_tiles < 14 {
+                let slow = (0..34).filter(|&t| c[t] < 4 && hs.plus(t) < base).fold(0u64, |m, t| m | 1 << t);
+                assert_eq!(hs.lowering_draws((1u64 << 34) - 1), slow, "{c:?}");
+            }
+            let slow = (0..34).filter(|&t| c[t] > 0 && hs.minus(t) == base).fold(0u64, |m, t| m | 1 << t);
+            assert_eq!(hs.keeping_discards(), slow, "{c:?}");
             for t in 0..34 {
                 if c[t] < 4 && n_tiles < 14 {
                     let mut d = c;
