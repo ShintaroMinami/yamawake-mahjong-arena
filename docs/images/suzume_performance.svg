@@ -135,8 +135,8 @@
 <text class="fg" x="436.0" y="136.0" font-size="10.5" text-anchor="end" font-weight="400">31.3</text>
 <text class="suzumef" x="11.0" y="162.0" font-size="10.5" text-anchor="start" font-weight="800">suzume</text>
 <text class="fg" x="278.0" y="162.0" font-size="10.5" text-anchor="end" font-weight="800">2.500</text>
-<text class="fg" x="364.0" y="162.0" font-size="10.5" text-anchor="end" font-weight="800">0.274</text>
-<text class="fg" x="436.0" y="162.0" font-size="10.5" text-anchor="end" font-weight="800">334.5</text>
+<text class="fg" x="364.0" y="162.0" font-size="10.5" text-anchor="end" font-weight="800">0.192</text>
+<text class="fg" x="436.0" y="162.0" font-size="10.5" text-anchor="end" font-weight="800">466.0</text>
 <rect class="zb" x="1" y="171.0" width="445" height="26.0"/>
 <text class="mortalf" x="11.0" y="188.0" font-size="10.5" text-anchor="start" font-weight="400">mortal-298k</text>
 <text class="fg" x="278.0" y="188.0" font-size="10.5" text-anchor="end" font-weight="400">2.514</text>
@@ -144,8 +144,8 @@
 <text class="fg" x="436.0" y="188.0" font-size="10.5" text-anchor="end" font-weight="400">13.3</text>
 <text class="suzumef" x="11.0" y="214.0" font-size="10.5" text-anchor="start" font-weight="800">suzume-rla225</text>
 <text class="fg" x="278.0" y="214.0" font-size="10.5" text-anchor="end" font-weight="800">2.515</text>
-<text class="fg" x="364.0" y="214.0" font-size="10.5" text-anchor="end" font-weight="800">0.266</text>
-<text class="fg" x="436.0" y="214.0" font-size="10.5" text-anchor="end" font-weight="800">320.2</text>
+<text class="fg" x="364.0" y="214.0" font-size="10.5" text-anchor="end" font-weight="800">0.186</text>
+<text class="fg" x="436.0" y="214.0" font-size="10.5" text-anchor="end" font-weight="800">447.9</text>
 <rect class="zb" x="1" y="223.0" width="445" height="26.0"/>
 <text class="windshadowf" x="11.0" y="240.0" font-size="10.5" text-anchor="start" font-weight="400">windshadow-sl</text>
 <text class="fg" x="278.0" y="240.0" font-size="10.5" text-anchor="end" font-weight="400">2.545</text>
@@ -158,8 +158,8 @@
 <rect class="zb" x="1" y="275.0" width="445" height="26.0"/>
 <text class="suzumef" x="11.0" y="292.0" font-size="10.5" text-anchor="start" font-weight="800">rulebot</text>
 <text class="fg" x="278.0" y="292.0" font-size="10.5" text-anchor="end" font-weight="800">2.667</text>
-<text class="fg" x="364.0" y="292.0" font-size="10.5" text-anchor="end" font-weight="800">0.083</text>
-<text class="fg" x="436.0" y="292.0" font-size="10.5" text-anchor="end" font-weight="800">1007.4</text>
+<text class="fg" x="364.0" y="292.0" font-size="10.5" text-anchor="end" font-weight="800">0.058</text>
+<text class="fg" x="436.0" y="292.0" font-size="10.5" text-anchor="end" font-weight="800">1362.5</text>
 <text class="manuef" x="11.0" y="318.0" font-size="10.5" text-anchor="start" font-weight="400">mjai-manue</text>
 <text class="fg" x="278.0" y="318.0" font-size="10.5" text-anchor="end" font-weight="400">2.694</text>
 <text class="fg" x="364.0" y="318.0" font-size="10.5" text-anchor="end" font-weight="400">81.253</text>

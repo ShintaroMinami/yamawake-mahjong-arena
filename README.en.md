@@ -34,11 +34,11 @@ only from the players' choices.
   - **Play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
     can field opponents with different play styles (see [Play-style control](#play-style-control-of-suzume)).
 
-On one CPU core (AMD EPYC 4564P, measured on 2026-11-02) it runs at about
-1,000 hanchan/min with four rulebots and
-about 330 hanchan/min with four suzume bots (128 concurrent hanchan, mean of three runs).
-For reference, a Mac (Apple M4 Pro) does about 1,100 (rulebot) and 380
-(suzume) hanchan/min on one thread, and about 10,800 and 3,700 hanchan/min on
+On one CPU core (AMD EPYC 4564P, measured on 2026-11-04) it runs at about
+1,360 hanchan/min with four rulebots and
+about 470 hanchan/min with four suzume bots (128 concurrent hanchan, mean of three runs).
+For reference, a Mac (Apple M4 Pro) does about 1,660 (rulebot) and 570
+(suzume) hanchan/min on one thread, and about 14,900 and 5,300 hanchan/min on
 all its threads (14 cores).
 A Python player pays about 55 µs per decision to pass
 the observation back and forth, about twice the arena's own time per decision
@@ -53,11 +53,11 @@ suzume compared with other models (including the unpublished RLActor-225):
 on the left, each model's average rank over 2,000 hanchan of 2 vs 2 against
 suzume on split fixed walls; on the right, each model's average time per
 decision (a discard or a call) and the hanchan it plays per minute.
-Speed was measured on 2026-11-02, pinned to one AMD EPYC 4564P core with its SMT sibling idle,
+Speed was measured pinned to one AMD EPYC 4564P core with its SMT sibling idle,
 the same model in all four seats, and CPU-only inference. There were 128 concurrent hanchan,
 with batched inference where supported. Majiang and mjai-manue played 20 hanchan
 (20 and one in flight, respectively). Values for suzume, suzume-rla225 and rulebot
-are means of three runs; the other models were measured once.
+are means of three runs on 2026-11-04; the other models were measured once on 2026-11-02.
 
 <img src="docs/images/suzume_performance.en.svg" alt="Average rank in a 2 vs 2 against suzume, and each model's time per decision and hanchan/min">
 
@@ -67,8 +67,8 @@ are means of three runs; the other models were measured once.
   about 0.05 in average rank.
 - suzume-rla225 was trained the same way with RLActor-225 (unpublished) as its
   teacher; it is about as strong as suzume (about 0.015 weaker in average rank).
-- Time per decision is 0.274 ms for suzume versus 7.16 ms for its teacher
-  Mortal-S42, about a 26-fold speedup, and about 11 times as fast as TanyaoDojo (3.00 ms).
+- Time per decision is 0.192 ms for suzume versus 7.16 ms for its teacher
+  Mortal-S42, about a 37-fold speedup, and about 16 times as fast as TanyaoDojo (3.00 ms).
 
 Sources of the models compared:
 

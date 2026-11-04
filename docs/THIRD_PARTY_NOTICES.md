@@ -10,8 +10,9 @@ following third-party work.
   (taken from the riichienv 0.4.8 distribution; the crate ships no NOTICE file)
 - Use: vendored and modified under [`src/engine/riichienv-core/`](../src/engine/riichienv-core/). Changes: split
   per-seat draw queues and an explicit (kyoku, honba) wall table, both opt-in,
-  and an incremental shanten type (`shanten::HandShanten`) over its own
-  tables ([`src/engine/README.md`](../src/engine/README.md), `src/engine/riichienv-core.patch`). The Python
+  an incremental shanten type (`shanten::HandShanten`) over its own
+  tables, and a win verdict without the score and the yaku list
+  (`HandEvaluator::verdict`; [`src/engine/README.md`](../src/engine/README.md), `src/engine/riichienv-core.patch`). The Python
   package `riichienv` (same license) is a runtime dependency.
 
 ## majiang-ai (電脳麻将 / Majiang)
