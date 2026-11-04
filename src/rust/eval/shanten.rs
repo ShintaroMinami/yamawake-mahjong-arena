@@ -30,8 +30,9 @@ pub enum Facts {
 /// Entries per kind of a thread's table (as a power of two). Small on purpose:
 /// most misses are hands never seen before, not hands pushed out (no limit at
 /// all gave the same hit rate), so a bigger table only reads memory further
-/// away (2^12 to 2^14 were the fastest, 2^19 clearly slower; Apple M4 Pro).
-const FACTS_BITS: u32 = 14;
+/// away (2^12 was the fastest on an Apple M4 Pro and an AMD EPYC 4564P, by
+/// about 1% over 2^14; 2^19 clearly slower).
+const FACTS_BITS: u32 = 12;
 
 /// A key no hand has (`pack` fills 102 bits).
 const EMPTY: u128 = u128::MAX;
