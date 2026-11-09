@@ -254,12 +254,15 @@ insights they share.
   [`src/rust/rulebot/kobalab_ev.rs`](src/rust/rulebot/kobalab_ev.rs) is a port of majiang-ai's `eval_shoupai` /
   `eval_fulou`, the call logic follows its `select_fulou` and the kan logic
   its `select_gang`.
-- The algorithm for valuing hands (dynamic programming, DP) implements the method of
-  [tomohxx](https://github.com/tomohxx)'s *Mahjong Algorithm* book
-  ([ch. 6, win probability](https://tomohxx.github.io/mahjong-algorithm-book/probability/)),
-  following the explanations of [nekobean](https://github.com/nekobean)'s
-  [mahjong-cpp](https://github.com/nekobean/mahjong-cpp). Some implementation
-  details follow libriichi ([Mortal](https://github.com/Equim-chan/Mortal)).
+- The algorithm for valuing hands (dynamic programming, DP):
+  - Source of the method: [tomohxx](https://github.com/tomohxx)'s *Mahjong Algorithm* book
+    ([ch. 6, win probability](https://tomohxx.github.io/mahjong-algorithm-book/probability/)).
+  - Consulted to understand and implement it: the explanations of
+    [nekobean](https://github.com/nekobean)'s [mahjong-cpp](https://github.com/nekobean/mahjong-cpp).
+    Some implementation details follow libriichi ([Mortal](https://github.com/Equim-chan/Mortal)).
+  - Our own extensions: ron, furiten, and the distinction between dama and riichi.
+
+  No code from any of them is included.
 - Also used, with thanks: through riichienv-core, the shanten tables of
   [Nyanten](https://github.com/Cryolite/nyanten) (MIT).
 

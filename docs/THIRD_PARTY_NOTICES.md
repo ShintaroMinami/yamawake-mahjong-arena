@@ -76,12 +76,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Method credit (no code included)
 
-- The single-player DP ([`src/rust/eval/dp.rs`](../src/rust/eval/dp.rs), [`src/rust/eval/score.rs`](../src/rust/eval/score.rs)) implements the method
-  of tomohxx's *Mahjong Algorithm* book, ch. 6 "win probability"
-  (https://tomohxx.github.io/mahjong-algorithm-book/probability/),
-  following the explanations of nekobean's mahjong-cpp
-  (https://github.com/nekobean/mahjong-cpp, GPL-3.0).
-  Some implementation details follow libriichi (Mortal,
-  https://github.com/Equim-chan/Mortal, AGPL-3.0).
+- The single-player DP for hand values ([`src/rust/eval/dp.rs`](../src/rust/eval/dp.rs), [`src/rust/eval/score.rs`](../src/rust/eval/score.rs)):
+  - Source of the method: tomohxx's *Mahjong Algorithm* book, ch. 6 "win probability"
+    (https://tomohxx.github.io/mahjong-algorithm-book/probability/).
+  - Consulted to understand and implement it: the explanations of nekobean's mahjong-cpp
+    (https://github.com/nekobean/mahjong-cpp, GPL-3.0). Some implementation details follow
+    libriichi (Mortal, https://github.com/Equim-chan/Mortal, AGPL-3.0).
+  - Our own extensions: ron (wins on the opponents' discards), furiten, and the
+    distinction between dama and riichi.
+
   yamawake-mahjong-arena contains no code from any of them.
 
