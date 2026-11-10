@@ -34,7 +34,7 @@ jobs:
           path: dist
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -76,7 +76,7 @@ jobs:
           - {os: ubuntu-latest, artifact: wheels-linux-x86_64, python: "3.11"}
           - {os: ubuntu-latest, artifact: wheels-linux-x86_64, python: "3.13"}
           - {os: ubuntu-24.04-arm, artifact: wheels-linux-aarch64, python: "3.12"}
-          - {os: macos-14, artifact: wheels-macos-arm64, python: "3.12"}
+          - {os: macos-15, artifact: wheels-macos-arm64, python: "3.12"}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
