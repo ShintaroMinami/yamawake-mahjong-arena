@@ -34,6 +34,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--opt KEY=VALUE` | options passed to the players (rulebot settings and so on) |
 | `--single-kyoku` | plays only East 1 in every game (see below) |
 | `--no-rotate` | plays only one hanchan per wall, without rotating the seats (see below) |
+| `--no-split` | does not use split walls: all seats draw from one wall, as in ordinary mahjong (see below) |
 | `--out FILE` | appends a summary of the results to a jsonl file |
 | `--save-scores FILE` | writes each game's final scores and seat order to an npz file |
 | `--record-logs DIR` | writes the game logs of all games in mjai format (gzip) |
@@ -55,6 +56,8 @@ Points are settled with 25,000 starting points, a 30,000 return, rank points of 
 With `--single-kyoku`, everyone starts with 25,000 points at 0 honba and plays the same wall as East 1 of a hanchan, and the game ends after that one kyoku. It is meant for comparing hand building without the influence of the score situation, and reports the kyoku balance and the win and deal-in rates.
 
 With `--no-rotate` (`run_match(rotate=False)`), only one hanchan is played per wall. The seats are rotated in turn by wall number (wall w uses rotation w % 4, or w % 2 in 2-vs-2), and every hanchan uses a different wall, so they are independent of one another. Use it as a baseline for comparison, for example when measuring how much seat rotation reduces variance. Standard errors are then per hanchan.
+
+With `--no-split` (`run_match(split_wall=False)`), split walls are not used and all seats draw in turn from one wall. Calls shift the draws, as in ordinary mahjong. To play on ordinary random walls, pass `--no-rotate --no-split --wall-base fresh` (see the [README](../README.en.md#arena-settings)).
 
 ## 3. Python
 

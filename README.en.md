@@ -134,6 +134,29 @@ From Python:
 | `suzume` | a light, reasonably strong bot (per-decision 3-layer MLPs taught by Mortal-S42) |
 | `suzume-rla225` | the same build as `suzume`, taught by RLActor-225 (unpublished) |
 
+## Arena settings
+
+By default the arena plays to the benchmark specification for comparing strength: fixed split walls played through every seat rotation, on the standard walls. Three settings decide how the walls are used.
+
+| Setting | `run_match` argument | Command line | Default |
+|---|---|---|---|
+| Fixed walls: one wall is played by everyone once, with the seats rotated | `rotate` | `--no-rotate` for `False` | `True` |
+| Split walls: each seat draws from its own wall (calls do not shift the draws) | `split_wall` | `--no-split` for `False` | `True` |
+| Wall randomness: which walls are used | `wall_base` | `--wall-base` | `0` (standard walls) |
+
+- The standard walls are 5,000 walls generated from `wall_base` 0; a run uses the first `walls` of them (1,000 by default). `FRESH` (`fresh` on the command line) draws new walls, and an integer reproduces the walls generated from that value. The `wall_base` used is shown on the first line of the result table.
+- **Benchmark (default)**: `rotate=True`, `split_wall=True`, `wall_base=0`. Everyone plays the same walls under the same conditions, so differences in results come only from the players' choices. As long as the standard walls are used, results from different runs are compared on the same walls.
+- **Ordinary random walls**: pass `rotate=False`, `split_wall=False`, `wall_base=FRESH`. With split walls, calls do not shift the draws, so the flow of draws differs from ordinary mahjong. To see results or play statistics as ordinary mahjong, switch all three.
+
+``` bash
+    uv run yamawake-arena --mode 1v3 --players suzume rulebot --no-rotate --no-split --wall-base fresh
+```
+``` python
+    from yamawake import FRESH, RulebotAgent, SuzumeAgent, lineup, run_match
+    r = run_match(lineup(SuzumeAgent(), RulebotAgent(), "1v3"), rotate=False, split_wall=False, wall_base=FRESH)
+```
+- With these settings, each wall is played for one hanchan only, and every hanchan is independent of the others. Standard errors are then per hanchan.
+
 ## Play-style control of suzume
 
 ### By style coordinates

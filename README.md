@@ -98,6 +98,29 @@ Python からの利用は以下のように行います。
 | `suzume` | 軽量かつある程度強いボット（Mortal-S42 を教師に学習した、判断ごとの 3 層の MLP） |
 | `suzume-rla225` | `suzume` と同じ作りで、RLActor-225（未公開）を教師に学習したボット |
 
+## アリーナの設定
+
+アリーナは、既定では実力を比べるためのベンチマークの仕様（固定分割牌山を席を回して打つ、標準牌山を使う）で対局します。牌山の扱いは次の 3 つの設定で決まります。
+
+| 設定 | `run_match` の引数 | コマンドライン | 既定 |
+|---|---|---|---|
+| 牌山の固定：1 つの牌山を、席を回して全員が 1 度ずつ打つ | `rotate` | `--no-rotate` で `False` | `True` |
+| 牌山の分割：各席が自分専用の山からツモる（副露してもツモがずれない） | `split_wall` | `--no-split` で `False` | `True` |
+| 牌山の乱数：どの牌山を使うか | `wall_base` | `--wall-base` | `0`（標準牌山） |
+
+- 標準牌山は `wall_base` 0 から作った 5,000 個の牌山で、先頭から `walls` 個（既定 1,000）を使います。`FRESH`（コマンドラインでは `fresh`）を指定すると新しい牌山を引き、整数を指定するとその値から作った牌山を再現します。使った `wall_base` は結果の表の 1 行目に出ます。
+- **ベンチマーク（既定）**：`rotate=True`、`split_wall=True`、`wall_base=0`。全員が同じ牌山を同じ条件で打つので、結果の違いは打ち手の選択だけから生じます。標準牌山を使う限り、別の実行の結果とも同じ牌山で比べられます。
+- **一般的なランダム牌山での対局**：`rotate=False`、`split_wall=False`、`wall_base=FRESH` を指定してください。分割牌山では副露してもツモがずれないため、ツモの流れが普通の麻雀とは違います。普通の麻雀としての成績や打ち方の統計を見たい場合は、3 つとも切り替えます。
+
+``` bash
+    uv run yamawake-arena --mode 1v3 --players suzume rulebot --no-rotate --no-split --wall-base fresh
+```
+``` python
+    from yamawake import FRESH, RulebotAgent, SuzumeAgent, lineup, run_match
+    r = run_match(lineup(SuzumeAgent(), RulebotAgent(), "1v3"), rotate=False, split_wall=False, wall_base=FRESH)
+```
+- この指定では、牌山ごとに 1 半荘だけを打ち、どの半荘も互いに独立です。標準誤差は半荘単位になります。
+
 ## suzume の打ち方の調節
 
 ### 打ち方の座標で指定する

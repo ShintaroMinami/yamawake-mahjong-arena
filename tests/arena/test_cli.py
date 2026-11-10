@@ -25,3 +25,13 @@ def test_cli_seats_suzume_with_an_option(capsys):
     main(["--mode", "1v3", "--players", "legacy-suzume-mlp1", "tsumogiri", "--walls", "1", "--opt", "kan=0"])
     out = capsys.readouterr().out
     assert "legacy-suzume-mlp1" in out and "tsumogiri" in out
+
+
+def test_cli_plays_ordinary_random_walls(tmp_path, capsys):
+    """--no-rotate --no-split --wall-base fresh: one game per new wall, shared draws."""
+    main(["--mode", "1v3", "--players", "tsumogiri", "rulebot", "--walls", "3",
+          "--no-rotate", "--no-split", "--wall-base", "fresh", "--out", str(tmp_path / "r.jsonl")])
+    assert "no split wall" in capsys.readouterr().out
+    p = json.loads((tmp_path / "r.jsonl").read_text())["protocol"]
+    assert p["split_wall"] is False and p["rotate"] is False and p["rotations"] == 1
+    assert p["wall_base"] != 0

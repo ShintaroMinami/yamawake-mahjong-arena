@@ -28,6 +28,10 @@ Examples:
     # --wall-base fresh draws a new set, or pass a recorded base to replay one
     python -m yamawake.arena --players ... --wall-base fresh
 
+    # ordinary random walls: no seat rotation, no split draws, new walls
+    python -m yamawake.arena --mode 1v3 --players suzume rulebot \
+        --no-rotate --no-split --wall-base fresh
+
     # East 1 only: each game is one kyoku (honba 0, 25,000 each, seat 0
     # dealing) on the hanchan's East 1 wall, free of score and placement
     # effects; reports the kyoku delta and win / deal-in rates
@@ -138,6 +142,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-rotate", action="store_true",
                     help="play each wall once instead of through every seat rotation "
                          "(the seating cycles over the walls); games are independent")
+    ap.add_argument("--no-split", action="store_true",
+                    help="all seats draw from one wall, as in ordinary mahjong, instead of "
+                         "per-seat draw queues (calls then shift the draws)")
     args = ap.parse_args(argv)
 
     if args.mode:
@@ -168,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
                        out=args.out,
                        save_scores=args.save_scores, progress=progress,
                        single_kyoku=args.single_kyoku, play_stats=not args.no_stats,
-                       rotate=not args.no_rotate)
+                       rotate=not args.no_rotate, split_wall=not args.no_split)
     progress.close()
     print(report(result), flush=True)
 

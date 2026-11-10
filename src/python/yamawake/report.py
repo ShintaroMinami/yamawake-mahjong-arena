@@ -53,7 +53,7 @@ def _standings(r: MatchResult, label: str, balanced: bool) -> list[str]:
     walls_at = (f"wall_base {p['wall_base']}" if "wall_base" in p
                 else f"wall_seed {p['wall_seed']}, from wall {p['wall_start']}")
     title = (f"Standings  ({r.games:,} {unit} = {p['walls']:,} walls x {p['rotations']}, "
-             f"{walls_at})")
+             f"{walls_at}{'' if p.get('split_wall', True) else ', no split wall'})")
     shown = r.slots if balanced else r.sides()
     rows = []
     if r.kyoku is None:

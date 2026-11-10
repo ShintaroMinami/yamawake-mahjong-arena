@@ -34,6 +34,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--opt KEY=VALUE` | プレイヤーに渡すオプション（rulebot の設定など） |
 | `--single-kyoku` | 全対局を東 1 局だけにする（下記） |
 | `--no-rotate` | 牌山を席で回さず、1 つの牌山で 1 半荘だけ打つ（下記） |
+| `--no-split` | 分割牌山を使わず、普通の麻雀と同じく全席が 1 つの山からツモる（下記） |
 | `--out FILE` | 結果の集計を jsonl に追記する |
 | `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
 | `--record-logs DIR` | 全対局の牌譜を mjai 形式（gzip）で書き出す |
@@ -55,6 +56,8 @@ Play per kyoku の副露率・立直率は全局を分母とした値です。�
 `--single-kyoku` では、全員 25,000 点、本場 0 で、半荘の東 1 局と同じ牌山を打ち、その 1 局で終えます。点数状況の影響なしに手組みを比べるためのもので、局の収支と和了率・放銃率を出します。
 
 `--no-rotate`（`run_match(rotate=False)`）では、牌山ごとに 1 半荘だけ打ちます。席は牌山の番号で順に回し（牌山 w では w % 4 回目の回転、2v2 では w % 2 回目）、どの半荘も別の牌山なので互いに独立です。席の回転による分散低減の効果を測るときなど、比較の基準に使います。標準誤差は半荘単位になります。
+
+`--no-split`（`run_match(split_wall=False)`）では、分割牌山を使わず、全席が 1 つの山から順にツモります。副露するとツモがずれる、普通の麻雀と同じツモの流れです。一般的なランダム牌山で対局するには `--no-rotate --no-split --wall-base fresh` を指定します（[README](../README.md#アリーナの設定)）。
 
 ## 3. Python
 
