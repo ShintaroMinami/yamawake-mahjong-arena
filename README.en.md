@@ -26,11 +26,11 @@ only from the players' choices.
 ### What's in the repository
 
 - **arena**: the split-fixed-wall arena; a Rust game loop runs N games in
-  parallel (see [`docs/arena.md`](docs/arena.md)).
+  parallel (see [`docs/arena.en.md`](docs/arena.en.md)).
 - **rulebot**: a fast rule-based bot, useful as a baseline (see
-  [`docs/rulebot.md`](docs/rulebot.md)).
+  [`docs/rulebot.en.md`](docs/rulebot.en.md)).
 - **suzume**: a distilled model of a reinforcement-learned mahjong AI
-  (Mortal-S42); a light bot built on small per-decision MLPs (see [`docs/suzume.md`](docs/suzume.md)).
+  (Mortal-S42); a light bot built on small per-decision MLPs (see [`docs/suzume.en.md`](docs/suzume.en.md)).
   - **Play-style control**: one number each sets how much suzume pushes, calls and declares riichi, so you
     can field opponents with different play styles (see [Play-style control](#play-style-control-of-suzume)).
 
@@ -44,7 +44,7 @@ A Python player pays about 55 µs per decision to pass
 the observation back and forth, about twice the arena's own time per decision
 (about 23 µs); these are earlier measurements on one AMD EPYC 7702 CPU capped at 2.0 GHz.
 When you evaluate a very fast algorithm, this overhead can affect
-the overall speed (see [`docs/arena.md`](docs/arena.md)).
+the overall speed (see [`docs/arena.en.md`](docs/arena.en.md)).
 The docs under [`docs/`](docs/) are in Japanese.
 
 ## Strength of suzume
@@ -55,7 +55,7 @@ suzume on split fixed walls; on the right, each model's average time per
 decision (a discard or a call) and the hanchan it plays per minute.
 Speed was measured pinned to one AMD EPYC 4564P core with its SMT sibling idle,
 the same model in all four seats, and CPU-only inference. There were 128 concurrent hanchan,
-with batched inference where supported. Majiang and mjai-manue played 20 hanchan
+with batched inference where supported. majiang-ai and mjai-manue played 20 hanchan
 (20 and one in flight, respectively). Values for suzume, suzume-rla225 and rulebot
 are means of three runs on 2026-11-04; the other models were measured once on 2026-11-02.
 
@@ -78,10 +78,10 @@ Sources of the models compared:
 | mortal-582500 | [Yuchen1457/mortal-582500](https://huggingface.co/Yuchen1457/mortal-582500) (mortal-v4, 582,500 steps) |
 | mortal-S42 | [haor/Mortal-S42](https://huggingface.co/haor/Mortal-S42) (mortal-v4, S42.8k) |
 | TanyaoDojo | `bc_v2_g186.pkl` from [Twu31/TanyaoDojo](https://huggingface.co/Twu31/TanyaoDojo) (code: [twu3202/TanyaoDojo](https://github.com/twu3202/TanyaoDojo)) |
-| 電脳麻将 (Majiang) | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0, run by [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 |
+| majiang-ai | [kobalab/majiang-ai](https://github.com/kobalab/majiang-ai) 1.3.0, run by [kobalab/mjai-bot](https://github.com/kobalab/mjai-bot) 2.0.0 |
 | mjai-manue | [Apricot-S/mjai-manue-go](https://github.com/Apricot-S/mjai-manue-go) (a Go port of [gimite/mjai-manue](https://github.com/gimite/mjai-manue)) |
 | windshadow-sl | [windshadow233/Mahjong-AI](https://github.com/windshadow233/Mahjong-AI) (a reimplementation of the supervised stage of Suphx) |
-| rulebot | this repository ([`docs/rulebot.md`](docs/rulebot.md)) |
+| rulebot | this repository ([`docs/rulebot.en.md`](docs/rulebot.en.md)) |
 | RLActor-225 | unpublished |
 
 ## Install
@@ -118,7 +118,7 @@ The package is `yamawake` and the command is `yamawake-arena`.
 ```
 The results go to stdout as tables: rank and points, per-kyoku win, deal-in,
 call and riichi rates, hand points and adjusted efficiency, and the time each
-player and the arena itself took (see [`docs/arena.md`](docs/arena.md#2-コマンドライン)).
+player and the arena itself took (see [`docs/arena.en.md`](docs/arena.en.md#2-command-line)).
 
 From Python:
 ``` python
@@ -190,7 +190,7 @@ Append them to the player spec as `:name=value`:
   by about e^3 (1/e^3).
 - The aim is opponents with different styles, not a stronger bot. The further from 0, the somewhat worse
   the results against `suzume`.
-- Only `suzume` has these parameters (`suzume-rla225` does not). See [`docs/suzume.md`](docs/suzume.md#打ち方の調節).
+- Only `suzume` has these parameters (`suzume-rla225` does not). See [`docs/suzume.en.md`](docs/suzume.en.md#adjusting-the-play-style).
 
 ## Playing your own agent
 
@@ -231,11 +231,11 @@ lets you name it within the same process, as in
 `yamawake.arena.main(["--players", "my-agent", "rulebot", ...])`. To use it from
 the `yamawake-arena` command, put the registering function in your package's
 `yamawake.agents` entry-point group. For what a decision carries and a fuller
-example, see [`docs/arena.md`](docs/arena.md#4-自作のプレイヤー).
+example, see [`docs/arena.en.md`](docs/arena.en.md#4-your-own-player).
 
 For more, including the low-level loop, single-position decisions (`decide`),
 log statistics (`handstats`) and the Tenhou replay converter (`tenhou6`), see
-[`docs/arena.md`](docs/arena.md).
+[`docs/arena.en.md`](docs/arena.en.md).
 
 ## Acknowledgements
 
