@@ -36,8 +36,9 @@ START_SCORE = 25_000   # every seat's score at the start of a game
 # `MatchResult.play`, every seat (A1 only until 2026-10-30): riichi / call legal and taken, over decisions, then over kyoku.
 A1_OPTION_KEYS = ("riichi_legal", "riichi_taken", "call_legal", "call_taken",
                   "riichi_legal_kyoku", "riichi_taken_kyoku", "call_legal_kyoku", "call_taken_kyoku")
-# The standard evaluation walls (`walls.standard_walls()`, 5,000 of them). A run
-# takes the FIRST `walls`, so a 1,000-wall run is a prefix of a 5,000-wall one and
+# The standard evaluation walls (`walls.standard_walls()`): ids from wall_base 0,
+# generated as needed (the first 5,000 are fingerprinted). A run takes the FIRST
+# `walls`, so a 1,000-wall run is a prefix of a 5,000-wall one and
 # the two compare directly; everything routine is measured there, so two results
 # differ by their players and nothing else. `wall_base=FRESH` draws a set that
 # has never been used, for a check that must not reuse these.
@@ -456,9 +457,6 @@ def run_match(players: list, walls: int | None = None,
         raise ValueError("wall_start needs wall_seed")
     elif wall_base is None:
         base = std["wall_base"]
-        if walls > std["walls"]:
-            raise ValueError(f"the standard set holds {std['walls']} walls; "
-                             f"asked for {walls}")
     elif wall_base == FRESH:
         base, _ = fresh_wall_ids(1)
     else:

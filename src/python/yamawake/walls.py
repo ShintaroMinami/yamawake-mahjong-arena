@@ -9,8 +9,9 @@ rotation of a duplicate pair, so combined with the engine's split-wall
 mode (per-seat draw queues) all players experience the same wall
 opportunities regardless of calls and renchan.
 
-Routine runs share the standard set (`standard_walls()`, 5,000 matrices
-from one recorded base id), so two results differ by their players only;
+Routine runs share the standard set (`standard_walls()`: matrices from
+one recorded base id, generated as needed, the first 5,000 fingerprinted),
+so two results differ by their players only;
 `fresh_wall_ids` draws a set never used before. Ids are deterministic
 handles (record them, e.g. a run's base id, to regenerate a run's
 walls); adjacent ids share nothing (SeedSequence-hashed streams).
@@ -124,9 +125,11 @@ def fresh_wall_ids(walls: int,
 def standard_walls() -> dict:
     """The recorded standard wall set (package data `eval_walls.json`).
 
-    Keys: `wall_base`, `walls` (5,000), `default_walls` (1,000) and the four
-    fingerprints `check_fingerprints` verifies. A run takes the FIRST `walls`
-    of the set, so a 1,000-wall run is a prefix of a 5,000-wall one.
+    Keys: `wall_base`, `walls` (5,000, the walls the fingerprints cover),
+    `default_walls` (1,000) and the four fingerprints `check_fingerprints`
+    verifies. Walls are generated from their ids as needed, so a run may take
+    more than `walls`; it takes the FIRST ones, so a 1,000-wall run is a
+    prefix of a 5,000-wall one.
     """
     text = resources.files("yamawake").joinpath("data/eval_walls.json").read_text()
     return json.loads(text)
