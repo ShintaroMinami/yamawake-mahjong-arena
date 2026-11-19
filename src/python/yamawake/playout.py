@@ -79,7 +79,8 @@ def seat_options(positions: list[dict], player: str = "suzume", threads: int | N
 
 
 def play_out(positions: list[dict], players: str | list[str] = "suzume", split_wall: bool = False,
-             threads: int | None = None, record_events: bool = False, on_error: str = "raise") -> list:
+             threads: int | None = None, record_events: bool = False, record_samples: bool = False,
+             on_error: str = "raise") -> list:
     """Play each position's kyoku out, for every forced action list and every sample.
 
     Args:
@@ -89,13 +90,16 @@ def play_out(positions: list[dict], players: str | list[str] = "suzume", split_w
         players: One in-loop bot spec for all four seats, or four.
         split_wall: Draw from per-seat queues (`wall_queues`) as the arena's split walls do.
         threads: Threads to use (`None`: every core).
-        record_events: Also return each play-out's mjai events.
+        record_events: Also return each play-out's mjai events (a rinshan draw marked `"rinshan": true`).
+        record_samples: Also return the sample as it came out at the position (`sample`, in the input form with
+            every part given: fed back without a seed it rebuilds the same position) and the four hands there
+            (`hands`).
         on_error: `"raise"` (ValueError naming the position, action and sample) or `"record"` (`{"error": why}`
             in that result's place).
 
     Returns:
         `results[i][a][s]`: `end`, `delta`, `scores`, `kyotaku`, `honba`, `renchan`, `hora`, `ryukyoku`, `forced`,
-        `n_decisions` (and `events`).
+        `n_decisions` (and `events`, `sample`, `hands`).
     """
     if on_error not in ("raise", "record"):
         raise ValueError(f"on_error is 'raise' or 'record', got {on_error!r}")
@@ -104,7 +108,7 @@ def play_out(positions: list[dict], players: str | list[str] = "suzume", split_w
         raise ValueError("players is one spec or four")
     bots = [_bot(s) for s in specs]
     out: list[Any] = json.loads(playout_play_out(json.dumps([_position(p) for p in positions]), bots,
-                                                 split_wall, threads, record_events))
+                                                 split_wall, threads, record_events, record_samples))
     if on_error == "raise":
         for i, per_action in enumerate(out):
             for a, per_sample in enumerate(per_action):

@@ -295,6 +295,8 @@ struct Sample {
     rinshan: Option<Vec<Kind>>,
     dora: Option<Vec<Kind>>,
     ura: Option<Vec<Kind>>,
+    /// The live tiles a kan cut off (never drawn), as `record_samples` returns them.
+    undrawn: Option<Vec<Kind>>,
     seed: Option<u64>,
 }
 
@@ -342,6 +344,7 @@ fn parse_sample(v: &Value) -> Result<Sample, String> {
             "rinshan" => s.rinshan = Some(kinds(x, "rinshan")?),
             "dora" => s.dora = Some(kinds(x, "dora")?),
             "ura" => s.ura = Some(kinds(x, "ura")?),
+            "undrawn" => s.undrawn = Some(kinds(x, "undrawn")?),
             "seed" => s.seed = Some(x.as_u64().ok_or("seed must be a non-negative integer")?),
             _ => return Err(format!("unknown sample field {k:?}")),
         }
@@ -422,6 +425,10 @@ pub struct Built {
     pub slot: GameSlot,
     /// The seats' scores there.
     pub scores: [i32; 4],
+    /// The sample as it came out (the input form, every part given: fed back, it rebuilds the same position).
+    pub sample: Value,
+    /// The four hands there.
+    pub hands: Value,
 }
 
 /// The tiles of the kyoku, laid out for the engine: each seat's start hand, every draw, the live wall left (or the
@@ -439,6 +446,9 @@ struct Layout {
     leftover: Vec<Kind>,
     /// The seats whose hand came from the shuffle (neither the events nor the sample gave it).
     shuffled: [bool; 4],
+    /// The seats' hands at the position, and which seats are hidden (their hands belong to the sample).
+    now: [Vec<Kind>; 4],
+    hidden: [bool; 4],
 }
 
 fn layout(start: &Start, evs: &[Ev], sample: &Sample, split: bool) -> Result<Layout, String> {
@@ -569,12 +579,17 @@ fn layout(start: &Start, evs: &[Ev], sample: &Sample, split: bool) -> Result<Lay
         }
         dead_open += max - got;
     }
+    let undrawn_given = sample.undrawn.as_ref().map_or(0, Vec::len);
+    if let Some(u) = &sample.undrawn {
+        most(u.len(), n_rinshan, "undrawn")?;
+        take(u, "undrawn")?;
+    }
     let mut rest: Vec<Kind> = (0..N_KIND as u8).flat_map(|k| std::iter::repeat_n(k, pool[usize::from(k)] as usize)).collect();
     let open: usize = (0..4).filter(|&s| hidden[s] && sample.hands[s].is_none()).map(|s| size[s]).sum::<usize>()
         + (drawable - live_given)
         + dead_open;
-    if rest.len() != open + n_rinshan {
-        return Err(format!("{} unseen tiles for {} hidden places", rest.len(), open + n_rinshan));
+    if rest.len() != open + n_rinshan - undrawn_given {
+        return Err(format!("{} unseen tiles for {} hidden places", rest.len(), open + n_rinshan - undrawn_given));
     }
     if open > 0 && sample.seed.is_none() {
         return Err("the sample leaves tiles out but has no seed".into());
@@ -609,7 +624,9 @@ fn layout(start: &Start, evs: &[Ev], sample: &Sample, split: bool) -> Result<Lay
     let rinshan = fill(&sample.rinshan, 4 - n_rinshan);
     let dora = fill(&sample.dora, 5 - n_dora);
     let ura = fill(&sample.ura, 5);
-    let leftover = next(n_rinshan);
+    let mut leftover = sample.undrawn.clone().unwrap_or_default();
+    let n = n_rinshan - leftover.len();
+    leftover.extend(next(n));
     // The hidden seats' start hands and draws.
     let mut start_hands: [Vec<Kind>; 4] = Default::default();
     for s in 0..4 {
@@ -622,7 +639,7 @@ fn layout(start: &Start, evs: &[Ev], sample: &Sample, split: bool) -> Result<Lay
         }
     }
     let shuffled = std::array::from_fn(|s| hidden[s] && sample.hands[s].is_none());
-    Ok(Layout { start: start_hands, draws, wall, queues, rinshan, dora, ura, leftover, shuffled })
+    Ok(Layout { start: start_hands, draws, wall, queues, rinshan, dora, ura, leftover, shuffled, now: hands, hidden })
 }
 
 /// Rebuild a position on the engine: lay out the kyoku's wall, deal it and replay the logged moves through `step`.
@@ -715,7 +732,21 @@ pub fn build(events: &[Value], sample: &Value, split: bool) -> Result<Built, Str
     let mut slot = GameSlot::from_state(st)?;
     replay(&mut slot, &evs, &src, &lay.draws, &lay.shuffled)?;
     let scores = std::array::from_fn(|i| slot.state.players[i].score);
-    Ok(Built { slot, scores })
+    let names = |v: &[Kind]| v.iter().map(|&k| kind_name(k)).collect::<Vec<_>>();
+    let mut out = Map::new();
+    let hidden_hands: Map<String, Value> =
+        (0..4).filter(|&s| lay.hidden[s]).map(|s| (s.to_string(), json!(names(&lay.now[s])))).collect();
+    out.insert("hands".into(), Value::Object(hidden_hands));
+    if split {
+        out.insert("wall_queues".into(), json!(lay.queues.iter().map(|q| names(q)).collect::<Vec<_>>()));
+    } else {
+        out.insert("wall".into(), json!(names(&lay.wall)));
+    }
+    for (k, v) in [("rinshan", &lay.rinshan), ("dora", &lay.dora), ("ura", &lay.ura), ("undrawn", &lay.leftover)] {
+        out.insert(k.into(), json!(names(v)));
+    }
+    let hands = json!(lay.now.iter().map(|h| names(h)).collect::<Vec<_>>());
+    Ok(Built { slot, scores, sample: Value::Object(out), hands })
 }
 
 /// Pass every seat asked to respond, but `except` (its own action instead).
@@ -988,7 +1019,8 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
 
 /// One play-out from a rebuilt position: `seat`'s next decisions forced by `forced` (mjai actions), the rest by
 /// `bots`, until the kyoku ends.
-fn roll(b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: bool) -> Result<Value, String> {
+fn roll(b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: bool, samples: bool)
+        -> Result<Value, String> {
     let mut slot = b.slot.fork();
     let k0 = slot.kyoku_events().len();
     let mut queue: VecDeque<&Value> = forced.iter().collect();
@@ -1065,7 +1097,27 @@ fn roll(b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: 
         "n_decisions": n_decisions,
     });
     if record {
-        out["events"] = Value::Array(tail.to_vec());
+        // A rinshan draw is marked: it follows its kan by the same seat (dora events aside).
+        let all = slot.kyoku_events();
+        let events: Vec<Value> = (k0..all.len())
+            .map(|i| {
+                let mut e = all[i].clone();
+                if e["type"] == "tsumo" {
+                    let prev = all[..i].iter().rev().find(|x| x["type"] != "dora");
+                    if prev.is_some_and(|x| matches!(x["type"].as_str(), Some("ankan" | "kakan" | "daiminkan"))
+                        && x["actor"] == e["actor"])
+                    {
+                        e["rinshan"] = json!(true);
+                    }
+                }
+                e
+            })
+            .collect();
+        out["events"] = Value::Array(events);
+    }
+    if samples {
+        out["sample"] = b.sample.clone();
+        out["hands"] = b.hands.clone();
     }
     Ok(out)
 }
@@ -1085,7 +1137,8 @@ fn action_lists(p: &Value) -> Result<Vec<Vec<Value>>, String> {
 }
 
 /// `play_out` for one (position, sample): one result per forced action list (an error string per failure).
-pub fn play_out_sample(p: &Value, sample: &Value, bots: &[Bot; 4], split: bool, record: bool) -> Vec<Result<Value, String>> {
+pub fn play_out_sample(p: &Value, sample: &Value, bots: &[Bot; 4], split: bool, record: bool, samples: bool)
+        -> Vec<Result<Value, String>> {
     let parts = (|| {
         let (events, seat) = position_parts(p)?;
         let lists = action_lists(p)?;
@@ -1099,7 +1152,7 @@ pub fn play_out_sample(p: &Value, sample: &Value, bots: &[Bot; 4], split: bool, 
         Err(e) => return vec![Err(e)],
     };
     match build(&events, sample, split) {
-        Ok(b) => lists.iter().map(|l| roll(&b, seat, l, bots, record)).collect(),
+        Ok(b) => lists.iter().map(|l| roll(&b, seat, l, bots, record, samples)).collect(),
         Err(e) => lists.iter().map(|_| Err(e.clone())).collect(),
     }
 }

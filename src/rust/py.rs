@@ -649,7 +649,7 @@ fn playout_seat_options(
 /// `results[i][a][s]` (a result, or `{"error"}`) as JSON. The (position, sample) pairs run in parallel, each rebuilt
 /// once for all its forced action lists.
 #[pyfunction]
-#[pyo3(signature = (positions, bots, split_wall=false, threads=None, record_events=false))]
+#[pyo3(signature = (positions, bots, split_wall=false, threads=None, record_events=false, record_samples=false))]
 fn playout_play_out(
     py: Python<'_>,
     positions: String,
@@ -657,6 +657,7 @@ fn playout_play_out(
     split_wall: bool,
     threads: Option<usize>,
     record_events: bool,
+    record_samples: bool,
 ) -> PyResult<String> {
     use pyo3::exceptions::PyValueError;
     use rayon::prelude::*;
@@ -683,7 +684,7 @@ fn playout_play_out(
         .allow_threads(|| {
             on_threads(threads, || {
                 jobs.par_iter()
-                    .map(|(i, _, x)| crate::playout::play_out_sample(&ps[*i], x, &bots, split_wall, record_events))
+                    .map(|(i, _, x)| crate::playout::play_out_sample(&ps[*i], x, &bots, split_wall, record_events, record_samples))
                     .collect::<Vec<_>>()
             })
         })
