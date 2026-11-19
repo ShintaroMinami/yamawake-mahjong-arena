@@ -16,8 +16,8 @@ users it adds `HandEvaluator::verdict`, what `calc` says of a win (han, fu,
 yakuman) without building the score and the yaku list, removes a division
 search `calc` did not use, and stops `calculate_yaku` filling `yaku_names`,
 which nothing read (the han, fu and yaku ids are unchanged). And it adds
-two opt-in wall controls to `GameState`, both bit-identical to stock when
-off:
+three opt-in controls to `GameState`, all bit-identical to stock when off:
+two for the wall and one for the end of a kyoku.
 
 - `wall_table`: explicit walls keyed by (kyoku ordinal, honba), so renchan can
   never shift which wall a game-progress coordinate is played on; missing keys
@@ -25,6 +25,10 @@ off:
 - `split_wall`: each seat draws only from its own fixed queue of the kyoku's
   live wall (the dead wall stays shared; a seat whose queue runs dry borrows
   from the longest), so calls never shift another seat's draws.
+- `defer_next_round`: stop at the end of a kyoku instead of dealing the next
+  one in the same `step`; the finished kyoku's hands, scores and sticks stay
+  in place, and the next `step` deals on. yamawake's `play_out` plays a kyoku
+  out from a position in its middle with it (`docs/play_out_spec.md`).
 
 It also fills in what a consumer would otherwise rebuild from the events
 (marked "yamawake patch"):

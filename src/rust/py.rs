@@ -592,6 +592,120 @@ impl SuzumeSeat {
     }
 }
 
+/// Run `f` on `threads` rayon threads (`None`: the global pool, all cores).
+fn on_threads<T: Send>(threads: Option<usize>, f: impl FnOnce() -> T + Send) -> Result<T, String> {
+    match threads {
+        None => Ok(f()),
+        Some(n) => rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build()
+            .map(|pool| pool.install(f))
+            .map_err(|e| format!("thread pool: {e}")),
+    }
+}
+
+fn json_arg(s: &str) -> PyResult<serde_json::Value> {
+    serde_json::from_str(s).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("bad JSON: {e}")))
+}
+
+/// `yamawake.playout.legal_actions` (`playout::legal_actions`): one position as JSON; its seat's legal actions in
+/// mjai form, as JSON.
+#[pyfunction]
+fn playout_legal(py: Python<'_>, position: String) -> PyResult<String> {
+    let p = json_arg(&position)?;
+    py.allow_threads(|| crate::playout::legal_actions(&p))
+        .map(|v| serde_json::Value::Array(v).to_string())
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// `yamawake.playout.seat_options`: positions as a JSON list and the in-loop bot (kind, config) of the seat; per
+/// position `{"legal", "choice"}` or `{"error"}`, as JSON, the positions in parallel.
+#[pyfunction]
+#[pyo3(signature = (positions, kind, config, threads=None))]
+fn playout_seat_options(
+    py: Python<'_>,
+    positions: String,
+    kind: &str,
+    config: &Bound<'_, PyDict>,
+    threads: Option<usize>,
+) -> PyResult<String> {
+    use rayon::prelude::*;
+    let ps = json_arg(&positions)?;
+    let ps = ps.as_array().cloned().ok_or_else(|| pyo3::exceptions::PyValueError::new_err("positions must be a list"))?;
+    let bot = bot_from(kind, config)?;
+    let out = py
+        .allow_threads(|| {
+            on_threads(threads, || {
+                ps.par_iter()
+                    .map(|p| crate::playout::seat_option(p, &bot).unwrap_or_else(|e| serde_json::json!({"error": e})))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(serde_json::Value::Array(out).to_string())
+}
+
+/// `yamawake.playout.play_out`: positions as a JSON list, the four seats' in-loop bots as (kind, config); returns
+/// `results[i][a][s]` (a result, or `{"error"}`) as JSON. The (position, sample) pairs run in parallel, each rebuilt
+/// once for all its forced action lists.
+#[pyfunction]
+#[pyo3(signature = (positions, bots, split_wall=false, threads=None, record_events=false))]
+fn playout_play_out(
+    py: Python<'_>,
+    positions: String,
+    bots: Vec<(String, Bound<'_, PyDict>)>,
+    split_wall: bool,
+    threads: Option<usize>,
+    record_events: bool,
+) -> PyResult<String> {
+    use pyo3::exceptions::PyValueError;
+    use rayon::prelude::*;
+    use serde_json::{Value, json};
+    let ps = json_arg(&positions)?;
+    let ps = ps.as_array().cloned().ok_or_else(|| PyValueError::new_err("positions must be a list"))?;
+    if bots.len() != 4 {
+        return Err(PyValueError::new_err("play_out needs 4 bots"));
+    }
+    let mut bs = Vec::with_capacity(4);
+    for (k, c) in &bots {
+        bs.push(bot_from(k, c)?);
+    }
+    let bots: [crate::arena::Bot; 4] = [bs[0], bs[1], bs[2], bs[3]];
+    let jobs: Vec<(usize, usize, Value)> = ps
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| {
+            let samples = p.get("samples").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!({})]);
+            samples.into_iter().enumerate().map(move |(s, x)| (i, s, x))
+        })
+        .collect();
+    let done = py
+        .allow_threads(|| {
+            on_threads(threads, || {
+                jobs.par_iter()
+                    .map(|(i, _, x)| crate::playout::play_out_sample(&ps[*i], x, &bots, split_wall, record_events))
+                    .collect::<Vec<_>>()
+            })
+        })
+        .map_err(PyValueError::new_err)?;
+    // results[i][a][s]
+    let mut out: Vec<Vec<Vec<Value>>> = ps.iter().map(|_| Vec::new()).collect();
+    for ((i, s, _), rs) in jobs.iter().zip(done) {
+        if out[*i].len() < rs.len() {
+            out[*i].resize_with(rs.len(), Vec::new);
+        }
+        for (a, r) in rs.into_iter().enumerate() {
+            let v = r.unwrap_or_else(|e| json!({"error": e}));
+            let row = &mut out[*i][a];
+            if row.len() <= *s {
+                row.resize(*s + 1, Value::Null);
+            }
+            row[*s] = v;
+        }
+    }
+    Ok(serde_json::to_string(&out).map_err(|e| PyValueError::new_err(e.to_string()))?)
+}
+
 #[pymodule]
 #[pyo3(name = "_core")]
 fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -601,6 +715,9 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(a1_model_sets, m)?)?;
     m.add_function(wrap_pyfunction!(suzume_config, m)?)?;
     m.add_function(wrap_pyfunction!(decide_one, m)?)?;
+    m.add_function(wrap_pyfunction!(playout_legal, m)?)?;
+    m.add_function(wrap_pyfunction!(playout_seat_options, m)?)?;
+    m.add_function(wrap_pyfunction!(playout_play_out, m)?)?;
     m.add_class::<SelfPlayLoop>()?;
     m.add_class::<SuzumeSeat>()?;
     m.add_class::<features::SuzumeFeatures>()?;

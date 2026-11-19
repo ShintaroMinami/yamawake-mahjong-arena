@@ -88,6 +88,13 @@ impl GameSlot {
         state.wall_table = wall_table;
         state.split_wall = split_wall;
         state._initialize_round(0, 0, 0, 0, None, None);
+        Self::from_state(state)
+    }
+
+    /// A slot on a state already set up (`playout` builds one mid-kyoku): its
+    /// mjai log so far is drained into the kyoku's events (from the last
+    /// `start_kyoku`).
+    pub fn from_state(state: GameState) -> Result<Self, String> {
         let mut slot = Self {
             state,
             event_cursor: 0,
@@ -103,6 +110,39 @@ impl GameSlot {
         };
         slot.drain_events()?;
         Ok(slot)
+    }
+
+    /// The current kyoku's events (from its `start_kyoku`).
+    pub fn kyoku_events(&self) -> &[Value] {
+        &self.kyoku_events
+    }
+
+    /// A copy of the game for a separate continuation (`playout`): the state and the kyoku's events, with empty bot
+    /// memos and counters.
+    pub fn fork(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            event_cursor: self.event_cursor,
+            kyoku_events: self.kyoku_events.clone(),
+            auto_actions: HashMap::new(),
+            suzume_trace: Vec::new(),
+            a1_options: [[0; 8]; 4],
+            a1_kyoku_seen: self.a1_kyoku_seen,
+            suzume_memo: Default::default(),
+            bot_decisions: [0; 4],
+            bot_nanos: [0; 4],
+            work_nanos: 0,
+        }
+    }
+
+    /// One in-loop bot's decision for `seat`.
+    pub fn bot_action(&mut self, seat: u8, bot: &Bot) -> Result<Action, String> {
+        match bot {
+            Bot::Rulebot(cfg) => self.rulebot_action(seat, cfg),
+            Bot::Suzume(cfg) => self.suzume_action(seat, cfg),
+            Bot::Tsumogiri => self.tsumogiri_action(seat),
+            Bot::A1(a1) => self.a1_action(seat, a1),
+        }
     }
 
     /// Fold the mjai lines appended since the last drain (deal, discards,
@@ -334,10 +374,7 @@ impl LockstepLoop {
                     for seat in actors {
                         let t0 = std::time::Instant::now();
                         let action = match bot_seats[gi].iter().find(|(s, _)| *s == seat) {
-                            Some((_, Bot::Rulebot(cfg))) => slot.rulebot_action(seat, cfg)?,
-                            Some((_, Bot::Suzume(cfg))) => slot.suzume_action(seat, cfg)?,
-                            Some((_, Bot::Tsumogiri)) => slot.tsumogiri_action(seat)?,
-                            Some((_, Bot::A1(a1))) => slot.a1_action(seat, a1)?,
+                            Some((_, bot)) => slot.bot_action(seat, bot)?,
                             None => {
                                 external.push(seat);
                                 continue;

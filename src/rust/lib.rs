@@ -5,6 +5,8 @@
 //! - `rulebot`: the author's own rule-based bot, ported to riichienv;
 //! - `suzume`: a bot decided by per-decision MLPs, run through a registry of
 //!   rules (the frame);
+//! - `playout`: a kyoku played out by in-loop bots from a position in its
+//!   middle (`docs/play_out_spec.md`);
 //! - `eval`: hand evaluation the bots share (the single-player DP, its
 //!   scoring, shanten; on riichienv-core, the fork in `src/engine/`).
 //!
@@ -18,5 +20,6 @@ pub(crate) mod eval;
 pub(crate) mod arena;
 pub(crate) mod rulebot;
 pub(crate) mod suzume;
+pub(crate) mod playout;
 #[cfg(feature = "extension-module")]
 mod py;

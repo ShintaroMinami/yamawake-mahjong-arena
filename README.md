@@ -194,6 +194,21 @@ Python からの利用は以下のように行います。
 - ロンを見送ったときのフリテンなど、ルール上の扱いは普通の対局と同じです。
 - `suzume` の打ち方のパラメータや座標と組み合わせられます。`call=0` は `call_shift`・`call_rate` より優先されます。
 
+## 局の途中からの打ち切り
+
+局の途中の局面から、内蔵のボット（既定は suzume 4 人）に局の終わりまで打たせ、局末の結果を得られます（2026-11-20 から）。指定の席の最初の手を候補ごとに変えて結果を比べる、といった使い方をします。たくさんの局面をまとめて渡すと、Rust の中で並列に処理します。
+
+``` python
+    from yamawake import legal_actions, play_out
+    p = {"events": events, "seat": 2}            # その局の start_kyoku からの mjai のイベントと、手を指定する席
+    cands = legal_actions(p)                     # 席 2 の合法手（mjai の形）
+    res = play_out([{**p, "actions": cands, "samples": [{"seed": 0}, {"seed": 1}]}])
+    res[0][a][s]["delta"]                        # 候補 a・標本 s での、4 人の局末までの点数の変化
+```
+- 他家の手牌や残りの山などの隠れた牌は、標本（`samples`）で全部・一部を与えるか、乱数の種で埋めます。分割牌山（`split_wall=True`）も使えます。
+- 局面は、エンジンでその局を打ち直して作るので、フリテンや一発などもエンジンが通常の対局と同じに決めます。arena の対局を途中で切って打ち切ると、残りの局が arena と完全に一致します。
+- 局面と標本の形、返すもの、確かめた結果、速さ（Apple M4 Pro の全コアで、局の途中からの打ち切りが 1 秒あたり約 1,500 回）は [`docs/play_out_spec.md`](docs/play_out_spec.md) にあります。
+
 ## 自作のプレイヤーとの対局
 
 プレイヤーは、`lane = "observation"`、`act_batch(decisions)`、`describe()` を持つ任意のオブジェクトとし、以下のように実装します。

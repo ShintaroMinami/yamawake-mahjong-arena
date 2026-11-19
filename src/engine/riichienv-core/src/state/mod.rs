@@ -98,6 +98,13 @@ pub struct GameState {
     /// back to the seeded shuffle.
     pub split_wall: bool,
     pub wall_table: Option<HashMap<(u8, u8), Vec<u8>>>,
+    /// yamawake patch: stop at the end of a kyoku (default off: stock).
+    /// When set, `_initialize_next_round` only records its arguments in
+    /// `pending_oya_won` / `pending_is_draw` and sets
+    /// `needs_initialize_next_round`, leaving the finished kyoku's state
+    /// (hands, scores, sticks) in place; the next `step` deals the next
+    /// kyoku as stock does at once.
+    pub defer_next_round: bool,
 }
 
 impl GameState {
@@ -165,6 +172,7 @@ impl GameState {
             last_tedashis: [None; NP],
             split_wall: false,
             wall_table: None,
+            defer_next_round: false,
         };
 
         if !state.skip_mjai_logging {
@@ -1622,6 +1630,15 @@ impl GameState {
 
     pub fn _initialize_next_round(&mut self, oya_won: bool, is_draw: bool) {
         if self.is_done {
+            return;
+        }
+        // yamawake patch: with `defer_next_round`, hold the next kyoku
+        // until the next `step`, which calls back here with
+        // `needs_initialize_next_round` set and so deals it.
+        if self.defer_next_round && !self.needs_initialize_next_round {
+            self.needs_initialize_next_round = true;
+            self.pending_oya_won = oya_won;
+            self.pending_is_draw = is_draw;
             return;
         }
 

@@ -72,7 +72,7 @@
  fn splitmix64(x: u64) -> u64 {
 --- a/src/state/mod.rs
 +++ b/src/state/mod.rs
-@@ -88,6 +88,16 @@
+@@ -88,6 +88,23 @@
  
      pub riichi_sutehais: [Option<u8>; NP], // Tile discarded when declaring riichi
      pub last_tedashis: [Option<u8>; NP],   // Last hand discard (not tsumogiri)
@@ -86,19 +86,27 @@
 +    /// back to the seeded shuffle.
 +    pub split_wall: bool,
 +    pub wall_table: Option<HashMap<(u8, u8), Vec<u8>>>,
++    /// yamawake patch: stop at the end of a kyoku (default off: stock).
++    /// When set, `_initialize_next_round` only records its arguments in
++    /// `pending_oya_won` / `pending_is_draw` and sets
++    /// `needs_initialize_next_round`, leaving the finished kyoku's state
++    /// (hands, scores, sticks) in place; the next `step` deals the next
++    /// kyoku as stock does at once.
++    pub defer_next_round: bool,
  }
  
  impl GameState {
-@@ -153,6 +163,8 @@
+@@ -153,6 +170,9 @@
              is_after_kan: false,
              riichi_sutehais: [None; NP],
              last_tedashis: [None; NP],
 +            split_wall: false,
 +            wall_table: None,
++            defer_next_round: false,
          };
  
          if !state.skip_mjai_logging {
-@@ -249,9 +261,13 @@
+@@ -249,9 +269,13 @@
              is_tenpai,
              self.riichi_sutehais,
              self.last_tedashis,
@@ -113,7 +121,7 @@
  
          // Attach pre-computed progression snapshot.
          #[cfg(feature = "python")]
-@@ -872,6 +888,7 @@
+@@ -872,6 +896,7 @@
                                      serde_json::to_value(deltas).expect("valid JSON"),
                                  );
                                  ev.insert("tsumo".to_string(), Value::Bool(true));
@@ -121,7 +129,7 @@
  
                                  let mut ura_markers = Vec::new();
                                  if self.players[pid as usize].riichi_declared {
-@@ -1119,6 +1136,7 @@
+@@ -1119,6 +1144,7 @@
                                  "deltas".to_string(),
                                  serde_json::to_value(this_deltas).expect("valid JSON"),
                              );
@@ -129,7 +137,7 @@
  
                              let mut ura_markers = Vec::new();
                              if self.players[w_pid as usize].riichi_declared {
-@@ -1563,6 +1581,16 @@
+@@ -1563,6 +1589,16 @@
                  self._push_mjai_event(Value::Object(ev));
              }
              self.riichi_pending_acceptance = None;
@@ -146,7 +154,7 @@
          }
      }
  
-@@ -1572,7 +1600,7 @@
+@@ -1572,7 +1608,7 @@
              self._trigger_ryukyoku("exhaustive_draw");
              return;
          }
@@ -155,7 +163,23 @@
              self.wall.drawable_count -= 1;
              let pid = self.current_player;
              self.players[pid as usize].hand.push(t);
-@@ -1740,6 +1768,15 @@
+@@ -1596,6 +1632,15 @@
+         if self.is_done {
+             return;
+         }
++        // yamawake patch: with `defer_next_round`, hold the next kyoku
++        // until the next `step`, which calls back here with
++        // `needs_initialize_next_round` set and so deals it.
++        if self.defer_next_round && !self.needs_initialize_next_round {
++            self.needs_initialize_next_round = true;
++            self.pending_oya_won = oya_won;
++            self.pending_is_draw = is_draw;
++            return;
++        }
+ 
+         let np: u8 = NP as u8;
+ 
+@@ -1740,6 +1785,15 @@
              }
          }
  
@@ -171,7 +195,7 @@
          if let Some(w) = wall {
              self.wall.load_wall(w);
          } else {
-@@ -1769,6 +1806,11 @@
+@@ -1769,6 +1823,11 @@
  
          // 14 = dead wall tiles (2 rinshan stacks + 5 dora stacks)
          self.wall.drawable_count = (self.wall.tiles.len() as u8) - 14;
@@ -183,7 +207,7 @@
  
          // Record kyoku start offsets so get_observation() can return
          // the full round history (not just incremental deltas).
-@@ -1824,7 +1866,7 @@
+@@ -1824,7 +1883,7 @@
          self.active_players = vec![self.oya];
  
          // Draw 14th tile for Oya
@@ -192,10 +216,11 @@
              self.wall.drawable_count -= 1;
              self.players[self.oya as usize].hand.push(t);
              self.drawn_tile = Some(t);
-@@ -2161,3 +2203,13 @@
+@@ -2160,4 +2219,14 @@
+             Arc::make_mut(&mut self.round_seq_progression).push(entry);
          }
      }
- }
++}
 +
 +/// yamawake patch: a `hora` event also carries the win's han, fu, yaku ids
 +/// and whether it is a yakuman (as scored here), so a reader need not score
@@ -205,7 +230,7 @@
 +    ev.insert("yakuman".to_string(), Value::Bool(win.yakuman));
 +    ev.insert("fu".to_string(), Value::Number(win.fu.into()));
 +    ev.insert("yaku".to_string(), serde_json::to_value(&win.yaku).expect("valid JSON"));
-+}
+ }
 --- a/src/shanten.rs
 +++ b/src/shanten.rs
 @@ -611,7 +611,309 @@
