@@ -13,7 +13,8 @@ use crate::eval::feat::tiles::is_aka_tid;
 
 /// One rulebot decision: the seat's observation `obs`, the mjai events of
 /// the kyoku so far (from its `start_kyoku`) and the live wall count. The
-/// BotView is rebuilt from them and the engine's action candidates; when
+/// BotView is rebuilt from them and the engine's action candidates (less
+/// the ones `cfg.limits` takes away); when
 /// reacting, history is cut AT the row being reacted to -- a reach_accepted
 /// the core may have already logged has not happened yet from this
 /// decision's view. `debug` also returns the branch inputs
@@ -25,7 +26,8 @@ pub fn decide(
     debug: bool,
 ) -> Result<(Action, Option<String>), String> {
     let seat = obs.player_id;
-    let legal = obs.legal_actions_method();
+    let mut legal = obs.legal_actions_method();
+    legal.retain(|a| cfg.limits.keeps(a.action_type));
     if legal.is_empty() {
         return Err(format!("rulebot at seat {seat} has no legal actions"));
     }

@@ -230,6 +230,29 @@ pub struct LockstepLoop {
     pub bot_seats: Vec<Vec<(u8, Bot)>>,
 }
 
+/// The play limits an in-loop bot (rulebot, A1) can take, both off by default (2026-11-19): with `win` false it
+/// never declares tsumo or ron; with `call` false it never calls chi, pon or daiminkan (ankan stays). The bot
+/// decides as if the engine had not offered those actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub win: bool,
+    pub call: bool,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { win: true, call: true }
+    }
+}
+
+impl Limits {
+    /// Whether an action of type `at` stays legal under these limits.
+    pub fn keeps(&self, at: ActionType) -> bool {
+        (self.win || !matches!(at, ActionType::Tsumo | ActionType::Ron))
+            && (self.call || !matches!(at, ActionType::Chi | ActionType::Pon | ActionType::Daiminkan))
+    }
+}
+
 /// A bot decided inside the loop.
 #[derive(Clone, Copy, Debug)]
 pub enum Bot {

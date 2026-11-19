@@ -51,6 +51,8 @@ The settings are fields of `RulebotConfig` ([`src/rust/rulebot/config.rs`](../sr
 
 From Python, seat it with `RulebotAgent(setting)`. Fields left out keep the Rust default (on), and an unknown field is an error.
 
+Either setting also takes the win and call limits `win` / `call` (0: never wins / never calls; default 1; since 2026-11-19, [README](../README.en.md#win-and-call-limits)), appended to the player name as in `rulebot:win=0` or `rulebot:kobalab:call=0`. `RulebotConfig` holds them in `limits` (`arena::Limits`); before deciding, the bot drops tsumo and ron (`win`) or chi, pon and open kan (`call`) from the legal actions.
+
 ## 5. Deciding a single position
 
 `decide("rulebot", observation, the mjai events of the current kyoku, debug=True)` gives the same decision as in a game, along with what it was based on (shanten, threats, hand value and so on) ([`docs/arena.en.md`](arena.en.md), section 3).

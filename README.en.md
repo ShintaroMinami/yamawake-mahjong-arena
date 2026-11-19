@@ -215,6 +215,31 @@ Append them to the player spec as `:name=value`:
   the results against `suzume`.
 - Only `suzume` has these parameters (`suzume-rla225` does not). See [`docs/suzume.en.md`](docs/suzume.en.md#adjusting-the-play-style).
 
+## Win and call limits
+
+`rulebot` (also `rulebot:kobalab`) and `suzume` (also `suzume-rla225`) take two options that stop wins and calls.
+Both default to 1, which plays as before.
+
+| Option | Value | At 0 |
+|---|---|---|
+| `win` | 0 or 1 (default 1) | never wins (declares no tsumo or ron) |
+| `call` | 0 or 1 (default 1) | never calls (no chi, pon or open kan; it still declares concealed kan) |
+
+Append them to the player spec as `:name=value`:
+``` bash
+    uv run yamawake-arena --mode 1v3 --players rulebot:win=0 rulebot
+    uv run yamawake-arena --mode 2v2 --players suzume:call=0:aggression=0.5 suzume
+```
+``` python
+    from yamawake import RulebotAgent, SuzumeAgent
+    no_win = RulebotAgent({"win": 0}, name="rulebot:win=0")
+    no_call = SuzumeAgent({"call": 0}, name="suzume:call=0")
+```
+- The bot drops tsumo and ron (`win=0`) or chi, pon and open kan (`call=0`) from the legal actions and decides among
+  the rest as usual. It does not plan around never winning: with `win=0` it still declares riichi and pushes as before.
+- The rules apply as in any game, e.g. passing on a ron leaves the hand furiten.
+- They combine with suzume's style parameters and coordinates; `call=0` overrides `call_shift` and `call_rate`.
+
 ## Playing your own agent
 
 An agent is any object with `lane = "observation"`, `act_batch(decisions)` and

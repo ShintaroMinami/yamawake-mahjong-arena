@@ -614,6 +614,9 @@ pub struct A1Config {
     /// The score offsets of `call_shift` / `riichi_shift` (`style_offset`).
     pub call_offset: f64,
     pub riichi_offset: f64,
+    /// The play limits (no win, no calls; `arena::Limits`): `decide` plays as if the engine had not offered the
+    /// actions they take away.
+    pub limits: crate::arena::Limits,
 }
 
 /// Per shift (call, riichi): the score offset per unit below and above 0 (2026-10-25, from a sweep of the raw
@@ -633,7 +636,7 @@ impl A1Config {
         let models = A1Models::builtin(name)?;
         let cfg = SuzumeConfig { pf: false, fold: false, models: super::params::features_set(), ..SuzumeConfig::default() };
         Some(Self { cfg, models, pmf_fixed: None, aggression: 0.0, call_shift: 0.0, riichi_shift: 0.0, call_offset: 0.0,
-                    riichi_offset: 0.0 })
+                    riichi_offset: 0.0, limits: crate::arena::Limits::default() })
     }
 
     /// The bot of a directory set's `models` on the features-set config `cfg`, the mixture weights fixed by
@@ -661,7 +664,8 @@ impl A1Config {
             return Err(format!("{}: pmf_fixed without P / M / F experts ({{k}}_P / _M / _F)", models.dir));
         }
         let (call_offset, riichi_offset) = (style_offset(call_shift, STYLE_SCALES[0]), style_offset(riichi_shift, STYLE_SCALES[1]));
-        Ok(Self { cfg, models, pmf_fixed, aggression, call_shift, riichi_shift, call_offset, riichi_offset })
+        Ok(Self { cfg, models, pmf_fixed, aggression, call_shift, riichi_shift, call_offset, riichi_offset,
+                  limits: crate::arena::Limits::default() })
     }
 }
 
@@ -789,14 +793,16 @@ pub fn state_probs(
     Ok(x?.map(|x| probs_of(st, &x, &rv)))
 }
 
-/// One A1 decision on the seat's observation, the kyoku's events and the seat's kyoku memo.
+/// One A1 decision on the seat's observation, the kyoku's events and the seat's kyoku memo; the actions
+/// `a1.limits` takes away are dropped from the legal ones first.
 pub fn decide(
     obs: &riichienv_core::observation::Observation,
     kyoku_events: &[Value],
     a1: &A1Config,
     memo: &mut SeatMemo,
 ) -> Result<Action, String> {
-    let legal = obs.legal_actions_method();
+    let mut legal = obs.legal_actions_method();
+    legal.retain(|a| a1.limits.keeps(a.action_type));
     if legal.is_empty() {
         return Err(format!("A1 at seat {} has no legal actions", obs.player_id));
     }
@@ -813,7 +819,9 @@ pub fn decide(
     }
     let cfg = &a1.cfg;
     let md = a1.models;
-    let view = view_of(obs, kyoku_events, cfg, false)?;
+    let mut view = view_of(obs, kyoku_events, cfg, false)?;
+    // After view_of: it reads the offered tile of a reaction off the engine's own legal actions.
+    view.legal.retain(|a| a1.limits.keeps(a.action_type));
     let ctx = Ctx::with_memo(&view, cfg, std::mem::take(memo));
     let opp = view.riichi_threats().next().is_some();
     // This decision's universal options, rows (with the danger columns) and its model's choice.

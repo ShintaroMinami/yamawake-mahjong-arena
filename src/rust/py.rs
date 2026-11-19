@@ -285,16 +285,41 @@ fn rulebot_config_from(overrides: &Bound<'_, PyDict>) -> PyResult<crate::rulebot
             "call_ev_sp" => cfg.call_ev_sp = v.extract::<bool>()?,
             "call_sp_flat_pass" => cfg.call_sp_flat_pass = v.extract::<bool>()?,
             "kan" => cfg.kan = v.extract::<bool>()?,
+            "win" => cfg.limits.win = flag_from("win", &v)?,
+            "call" => cfg.limits.call = flag_from("call", &v)?,
             _ => return Err(PyKeyError::new_err(format!("unknown knob {key}"))),
         }
     }
     Ok(cfg)
 }
 
+/// A play-limit flag ("win" / "call"; `arena::Limits`) from a bool, 0 / 1 or their string forms ("0", "1",
+/// "true", "false"), as a player spec gives it.
+fn flag_from(key: &str, v: &Bound<'_, PyAny>) -> PyResult<bool> {
+    match v.str()?.to_string().trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        s => Err(pyo3::exceptions::PyValueError::new_err(format!("{key} {s}: not 0 or 1"))),
+    }
+}
+
+/// The play limits "win" / "call" of a config dict (`arena::Limits`, each on when not given), taken out of it.
+fn limits_from(config: &Bound<'_, PyDict>) -> PyResult<crate::arena::Limits> {
+    let mut limits = crate::arena::Limits::default();
+    for (key, flag) in [("win", &mut limits.win), ("call", &mut limits.call)] {
+        if let Some(v) = config.get_item(key)? {
+            *flag = flag_from(key, &v)?;
+            config.del_item(key)?;
+        }
+    }
+    Ok(limits)
+}
+
 /// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`), or {"a1": <A1 model
 /// directory>, optional "pmf_fixed": the P / M / F mixture weights ("P", "M", "F" or "p,m,f"; `a1::parse_pmf`),
 /// the rest: the suzume config of its features set}; both take optional "aggression": push / fold (a number in [-1, 1];
-/// `A1Config::aggression`) and "call_shift" / "riichi_shift" (numbers in [-1, 1]; `A1Config`).
+/// `A1Config::aggression`), "call_shift" / "riichi_shift" (numbers in [-1, 1]; `A1Config`) and the play limits
+/// "win" / "call" (0 / 1; `limits_from`).
 fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1Config> {
     use pyo3::exceptions::{PyKeyError, PyValueError};
     let rest = config.copy()?;
@@ -318,17 +343,23 @@ fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1C
         None => 0.0,
     };
     rest.del_item("riichi_shift").ok();
+    let limits = limits_from(&rest)?;
+    let with_limits = |c: crate::suzume::a1::A1Config| crate::suzume::a1::A1Config { limits, ..c };
     if let Some(c) = crate::suzume::a1::A1Config::builtin(&a1) {
         if !rest.is_empty() {
-            return Err(PyValueError::new_err(format!("{a1} takes only aggression / call_shift / riichi_shift")));
+            return Err(PyValueError::new_err(format!(
+                "{a1} takes only aggression / call_shift / riichi_shift / win / call"
+            )));
         }
         return crate::suzume::a1::A1Config::new(c.cfg, c.models, None, delta, call_shift, riichi_shift)
+            .map(with_limits)
             .map_err(PyValueError::new_err);
     }
     let pmf: Option<String> = rest.get_item("pmf_fixed")?.map(|v| v.str().map(|s| s.to_string())).transpose()?;
     rest.del_item("pmf_fixed").ok();
     let models = crate::suzume::a1::A1Models::load(&a1).map_err(PyValueError::new_err)?;
     crate::suzume::a1::A1Config::new(suzume_config_from(&rest)?, models, pmf.as_deref(), delta, call_shift, riichi_shift)
+        .map(with_limits)
         .map_err(PyValueError::new_err)
 }
 

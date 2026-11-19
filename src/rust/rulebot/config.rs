@@ -36,10 +36,13 @@ pub struct RulebotConfig {
     /// Declare ankan / kakan by kobalab's `select_gang` (`kan.rs`); never
     /// daiminkan.
     pub kan: bool,
+    /// The play limits (no win, no calls; `arena::Limits`), not a knob of
+    /// the shipped configs: options any config can take.
+    pub limits: crate::arena::Limits,
 }
 
 impl Default for RulebotConfig {
     fn default() -> Self {
-        Self { call_ev_sp: true, call_sp_flat_pass: true, kan: true }
+        Self { call_ev_sp: true, call_sp_flat_pass: true, kan: true, limits: crate::arena::Limits::default() }
     }
 }

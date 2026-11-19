@@ -51,6 +51,8 @@ majiang-ai の `select_fulou` に従います。3 向聴以上では、役を考
 
 Python からは `RulebotAgent(設定)` で座らせます。指定しなかった欄は Rust の既定（on）のままで、未知の欄を渡すとエラーになります。
 
+このほか、どちらの設定にも付けられるオプションとして、和了と副露の制限 `win`・`call`（0 で和了しない・副露しない。既定は 1）があります（2026-11-19 から。[README](../README.md#和了と副露の制限)）。プレイヤー名に `rulebot:win=0`、`rulebot:kobalab:call=0` のように付けます。`RulebotConfig` の `limits`（`arena::Limits`）が持ち、判断の前に合法手からツモ・ロン（`win`）、チー・ポン・大明槓（`call`）を除きます。
+
 ## 5. 1 局面の判断
 
 `decide("rulebot", 観測, その局の mjai の出来事, debug=True)` で、対局中と同じ判断と、判断の材料（向聴、脅威、手の価値など）を得られます（[`docs/arena.md`](arena.md) 3 節）。

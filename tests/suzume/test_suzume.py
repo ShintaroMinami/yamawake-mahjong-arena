@@ -84,13 +84,17 @@ def test_seat_spec_and_options():
                 {"kan": 2}, {"fold_shanten": 9}, {"bogus": 1}):
         with pytest.raises(ValueError):
             _legacy(bad)
-    # The current sets play on the A1 lane and take only the A1 knobs (--opt suzume options are ignored there).
+    # The current sets play on the A1 lane and take only the A1 knobs and the play limits (--opt legacy suzume
+    # options are ignored there).
     for name in ("suzume", "suzume-rla225"):
         c = build_agent(name)
         assert c.lane == "a1" and c.config == {"a1": name}
         with pytest.raises(ValueError):
-            build_agent(f"{name}:call=0")
-        assert build_agent(name, call="0").config == {"a1": name}
+            build_agent(f"{name}:riichi=0")
+        assert build_agent(name, riichi="0").config == {"a1": name}
+        assert build_agent(f"{name}:call=0:win=1").config == {"a1": name, "call": False, "win": True}
+        with pytest.raises(ValueError):
+            build_agent(f"{name}:win=2")
     k = build_agent("suzume:aggression=-0.5:riichi_shift=1.25", call_shift="0.5")
     assert k.config == {"a1": "suzume", "aggression": "-0.5", "riichi_shift": "1.25", "call_shift": "0.5"}
 

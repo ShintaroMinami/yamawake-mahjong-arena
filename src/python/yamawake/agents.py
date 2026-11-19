@@ -23,9 +23,10 @@ An observation agent may also carry the two context hooks of `context.py`:
 (attached to each of its decisions under `Decision.extra`).
 
 Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
-same moves through the observation lane), `rulebot`, `rulebot:kobalab`,
-`suzume[:KEY=VALUE...]` (the default set; `STYLE_OPTIONS` or `STYLE_TARGETS`) and
-`suzume-rla225[:KEY=VALUE...]` (`SUZUME_SETS`; `STYLE_OPTIONS`),
+same moves through the observation lane), `rulebot[:KEY=VALUE...]`,
+`rulebot:kobalab[:KEY=VALUE...]` (`PLAY_LIMITS`),
+`suzume[:KEY=VALUE...]` (the default set; `STYLE_OPTIONS` or `STYLE_TARGETS`, and `PLAY_LIMITS`) and
+`suzume-rla225[:KEY=VALUE...]` (`SUZUME_SETS`; `STYLE_OPTIONS`, `PLAY_LIMITS`),
 the legacy sets `legacy-suzume-mlp3[:KEY=VALUE[:KEY=VALUE...]]` (e.g.
 `legacy-suzume-mlp3:call=0`; also `legacy-suzume-mlp3-flat`, `legacy-suzume-mlp3-avoid4`,
 `legacy-suzume-mlp1`, `legacy-suzume-mlp1-flat`, `LEGACY_SETS`), plus
@@ -53,6 +54,26 @@ LANE_TSUMOGIRI = "tsumogiri"
 LANE_A1 = "a1"
 #: The lanes decided inside the Rust loop.
 IN_LOOP_LANES = (LANE_RULEBOT, LANE_SUZUME, LANE_TSUMOGIRI, LANE_A1)
+#: The play limits rulebot and the suzume sets take (2026-11-19; `arena::Limits` in `src/rust/arena/mod.rs`):
+#: `win` 0 never declares tsumo or ron, `call` 0 never calls chi, pon or daiminkan (ankan stays); 1, the
+#: default, plays as before. The bot then decides as if those actions were not legal.
+PLAY_LIMITS = ("win", "call")
+
+
+def play_limit(key: str, value: Any) -> bool:
+    """A play limit's value (`PLAY_LIMITS`) as a bool.
+
+    Args:
+        key: The limit's name, for the error.
+        value: A bool, 0 / 1, or "0" / "1" / "true" / "false" (any case), as a player spec gives it.
+
+    Raises:
+        ValueError: Any other value.
+    """
+    s = str(value).strip().lower()
+    if s not in ("0", "1", "true", "false"):
+        raise ValueError(f"{key} takes 0 or 1, got {value!r}")
+    return s in ("1", "true")
 
 
 @runtime_checkable
@@ -114,9 +135,13 @@ class RulebotAgent:
     lane = LANE_RULEBOT
 
     def __init__(self, config: dict | None = None, name: str = "rulebot") -> None:
-        """Args: config: knob dict (default `rulebot.STANDARD`); name: its label."""
+        """Args: config: knob dict (default `rulebot.STANDARD`; a knob not given keeps STANDARD's value), which
+        may also hold `PLAY_LIMITS` (e.g. `{"win": 0}`); name: its label."""
         from yamawake.rulebot import STANDARD
         self.config = dict(config or STANDARD)
+        for k in PLAY_LIMITS:
+            if k in self.config:
+                self.config[k] = play_limit(k, self.config[k])
         self.name = name
 
     def describe(self) -> dict:
@@ -153,7 +178,7 @@ class SuzumeAgent:
     def __init__(self, config: dict | None = None, name: str = "suzume", models: str = "suzume") -> None:
         """Args: config: option dict: for a legacy set the suzume options
         (`yamawake.suzume` lists them; an unknown knob raises ValueError here),
-        for an A1 set `STYLE_OPTIONS` (checked when the bot is built); name: its label;
+        for an A1 set `STYLE_OPTIONS` (checked when the bot is built) and `PLAY_LIMITS`; name: its label;
         models: the model set (`MODEL_SETS`), or `dir:<path>` for a legacy-layout
         set read from a directory (for fitting new models;
         `src/rust/suzume/params.rs`, `load_dir`)."""
@@ -166,14 +191,15 @@ class SuzumeAgent:
         self.style = None
         if models in SUZUME_SETS:
             config = dict(config or {})
-            allowed = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ())
+            allowed = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS
             bad = [k for k in config if k not in allowed]
             if bad:
                 raise ValueError(f"{models} takes only {', '.join(allowed)} (got {', '.join(bad)}); the legacy sets "
                                  "take the suzume options")
+            limits = {k: play_limit(k, config.pop(k)) for k in PLAY_LIMITS if k in config}
             if any(k in config for k in STYLE_TARGETS):
                 config = self._calibrate(config)
-            self.lane, self.config = LANE_A1, {"a1": models, **config}
+            self.lane, self.config = LANE_A1, {"a1": models, **config, **limits}
             return
         self.lane = LANE_SUZUME
         self.config = {**(config or {}), "models": models}
@@ -310,27 +336,46 @@ def decide(spec: str, obs_b64: str, kyoku_events: list, debug: bool = False) -> 
     return decide_one(agent.lane, agent.config, obs_b64, events, debug)
 
 
+def _spec_pairs(spec: str, pairs: list[str]) -> dict[str, str]:
+    """The `KEY=VALUE` parts of a player spec as a dict (ValueError on a part without `=`)."""
+    out = {}
+    for pair in pairs:
+        k, sep, v = pair.partition("=")
+        if not sep:
+            raise ValueError(f"{spec.split(':')[0]} spec takes KEY=VALUE pairs, got {pair!r} in {spec!r}")
+        out[k] = v
+    return out
+
+
 def _rulebot(spec: str, **_) -> RulebotAgent:
+    """`rulebot[:kobalab][:KEY=VALUE...]`: `STANDARD` (`KOBALAB` with `kobalab`) with the play limits
+    (`PLAY_LIMITS`) of the pairs."""
     from yamawake.rulebot import STANDARD, KOBALAB
-    configs = {"rulebot": STANDARD, "rulebot:kobalab": KOBALAB}
-    if spec not in configs:
-        raise ValueError(f"unknown rulebot config: {spec}")
-    return RulebotAgent(configs[spec], name=spec)
+    _, *parts = spec.split(":")
+    base = STANDARD
+    if parts and "=" not in parts[0]:
+        if parts[0] != "kobalab":
+            raise ValueError(f"unknown rulebot config: {spec}")
+        base, parts = KOBALAB, parts[1:]
+    limits = _spec_pairs(spec, parts)
+    bad = [k for k in limits if k not in PLAY_LIMITS]
+    if bad:
+        raise ValueError(f"rulebot takes only {', '.join(PLAY_LIMITS)} (got {', '.join(bad)} in {spec!r})")
+    return RulebotAgent({**base, **limits}, name=spec)
 
 
 def _suzume(spec: str, **options) -> SuzumeAgent:
     """`<model set>[:KEY=VALUE...]` (`MODEL_SETS`); `--opt` options that are
-    the set's options (suzume options, or `STYLE_OPTIONS` for an A1 set) apply too
+    the set's options (suzume options, or `STYLE_OPTIONS` and `PLAY_LIMITS` for an A1 set) apply too
     (the spec's own pairs win)."""
     from yamawake.suzume import KNOBS
     models, *pairs = spec.split(":")
-    keys = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) if models in SUZUME_SETS else KNOBS
+    if models in SUZUME_SETS:
+        keys = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS
+    else:
+        keys = KNOBS
     config = {k: v for k, v in options.items() if k in keys}
-    for pair in pairs:
-        k, sep, v = pair.partition("=")
-        if not sep:
-            raise ValueError(f"suzume spec takes KEY=VALUE pairs, got {pair!r} in {spec!r}")
-        config[k] = v
+    config.update(_spec_pairs(spec, pairs))
     return SuzumeAgent(config, name=spec, models=models)
 
 

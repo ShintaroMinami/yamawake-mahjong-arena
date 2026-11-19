@@ -5,9 +5,14 @@
 
 A player is one of:
 
-    rulebot | rulebot:kobalab      the ported rulebot, decided inside Rust
+    rulebot[:kobalab][:KEY=VALUE...]
+                                   the ported rulebot, decided inside Rust
     suzume[:KEY=VALUE...]         the per-decision MLP bot, decided inside Rust
                                    (`python -m yamawake.suzume list`)
+
+Both take the play limits win=0 (never wins) and call=0 (never calls chi,
+pon or daiminkan), e.g. `rulebot:win=0`, `suzume:call=0`
+(`yamawake.agents.PLAY_LIMITS`).
     tsumogiri                      the floor baseline, decided inside Rust
     tsumogiri-python               the same moves made in Python (observation lane)
     <anything a plugin registers>  see `yamawake.agents.build_agent`

@@ -171,6 +171,29 @@ Python からの利用は以下のように行います。
 - 調節の目的は打ち方の違う相手を作ることで、強くすることではありません。0 から離すほど、`suzume` との対戦成績は少しずつ下がります。
 - 3 つのパラメータを持つのは `suzume` だけです（`suzume-rla225` にはありません）。詳しくは [`docs/suzume.md`](docs/suzume.md#打ち方の調節) を参照してください。
 
+## 和了と副露の制限
+
+`rulebot`（`rulebot:kobalab` も）と `suzume`（`suzume-rla225` も）には、和了と副露を止める 2 つのオプションがあります。既定はどちらも 1 で、これまでと同じに打ちます。
+
+| オプション | 値 | 0 のとき |
+|---|---|---|
+| `win` | 0 または 1（既定 1） | 和了しない（ツモ・ロンを宣言しない） |
+| `call` | 0 または 1（既定 1） | 副露しない（チー・ポン・大明槓をしない。暗槓はする） |
+
+プレイヤーの指定に `:名前=値` で付けます。
+``` bash
+    uv run yamawake-arena --mode 1v3 --players rulebot:win=0 rulebot
+    uv run yamawake-arena --mode 2v2 --players suzume:call=0:aggression=0.5 suzume
+```
+``` python
+    from yamawake import RulebotAgent, SuzumeAgent
+    no_win = RulebotAgent({"win": 0}, name="rulebot:win=0")
+    no_call = SuzumeAgent({"call": 0}, name="suzume:call=0")
+```
+- 合法手からツモ・ロン（`win=0`）、チー・ポン・大明槓（`call=0`）を除き、残りの合法手の中で普段どおりに判断します。和了しないことを手組みや押し引きには織り込まないので、`win=0` でも立直や押しはこれまでどおりにします。
+- ロンを見送ったときのフリテンなど、ルール上の扱いは普通の対局と同じです。
+- `suzume` の打ち方のパラメータや座標と組み合わせられます。`call=0` は `call_shift`・`call_rate` より優先されます。
+
 ## 自作のプレイヤーとの対局
 
 プレイヤーは、`lane = "observation"`、`act_batch(decisions)`、`describe()` を持つ任意のオブジェクトとし、以下のように実装します。
