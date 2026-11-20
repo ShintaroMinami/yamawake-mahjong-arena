@@ -203,10 +203,10 @@ Python からの利用は以下のように行います。
     p = {"events": events, "seat": 2}            # その局の start_kyoku からの mjai のイベントと、手を指定する席
     cands = legal_actions(p)                     # 席 2 の合法手（mjai の形）
     res = play_out([{**p, "actions": cands, "samples": [{"seed": 0}, {"seed": 1}]}])
-    res[0][a][s]["delta"]                        # 候補 a・標本 s での、4 人の局末までの点数の変化
+    res[0][a][s]["delta"]                        # 候補 a・サンプル s での、4 人の局末までの点数の変化
 ```
 - 他家の手牌や残りの山などの隠れた牌は、サンプル（`samples`）として全部・一部を与えるか、乱数の種で生成します。分割牌山（`split_wall=True`）も使えます。
-- 局面と標本の形、戻り値などの詳細は [`docs/play_out_spec.md`](docs/play_out_spec.md) を参照。
+- 局面とサンプルの形、戻り値などの詳細は [`docs/play_out_spec.md`](docs/play_out_spec.md) を参照。
 
 ## 自作のプレイヤーとの対局
 
