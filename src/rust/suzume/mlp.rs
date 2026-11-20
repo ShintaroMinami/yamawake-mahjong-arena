@@ -19,6 +19,9 @@
 //! vectorizes; each unit still adds its terms in input order from the same
 //! start as `Iterator::sum`, so the values are bit-identical to the plain
 //! dot product per unit (up to the sign of an exact zero, `add_columns`).
+//! The rows of one decision go through together (`pre_rows`, `activate_rows`):
+//! each weight column is read once for all of them, and every row's values
+//! are those of the row alone.
 
 use serde_json::Value;
 
@@ -93,20 +96,38 @@ fn sum_start() -> f64 {
     std::iter::empty::<f64>().sum()
 }
 
-/// `acc[k] += sum_j wt[j][k] x[j]` in `j` order; `wt` holds `x.len()`
-/// columns of `acc.len()`. A zero input's column is skipped (after a ReLU
+/// For every row `r`: `acc[r][k] += sum_j wt[j][k] x[r][j]` in `j` order;
+/// `acc` holds rows of `h` and `x` the same number of rows of `n_in`, `wt`
+/// `n_in` columns of `h`. A zero input's column is skipped (after a ReLU
 /// about half of them): its terms are signed zeros, which leave every
 /// nonzero sum bit for bit as it is and can only flip the sign of a sum that
 /// is exactly zero, a difference nothing downstream reads (comparisons,
-/// `exp`, ReLU and further sums treat both zeros alike).
-fn add_columns(acc: &mut [f64], wt: &[f64], x: &[f64]) {
-    let n = acc.len();
-    for (col, &xj) in wt.chunks_exact(n).zip(x) {
-        if xj == 0.0 {
-            continue;
+/// `exp`, ReLU and further sums treat both zeros alike). Column `j` is
+/// applied to every row before column `j + 1`, so it is read once for all
+/// rows; each row's sums are those of the row alone. The rows with a nonzero
+/// input in a column are found from a bit mask per column (64 rows at a
+/// time), so the skips cost no unpredictable branch per input.
+fn add_columns(acc: &mut [f64], h: usize, wt: &[f64], x: &[f64], n_in: usize) {
+    if n_in == 0 {
+        return;
+    }
+    for (acc, x) in acc.chunks_mut(64 * h).zip(x.chunks(64 * n_in)) {
+        let mut mask = vec![0u64; n_in];
+        for (r, xr) in x.chunks_exact(n_in).enumerate() {
+            for (m, &v) in mask.iter_mut().zip(xr) {
+                *m |= u64::from(v != 0.0) << r;
+            }
         }
-        for (a, &w) in acc.iter_mut().zip(col) {
-            *a += w * xj;
+        for (j, (col, &m)) in wt.chunks_exact(h).zip(&mask).enumerate() {
+            let mut m = m;
+            while m != 0 {
+                let r = m.trailing_zeros() as usize;
+                m &= m - 1;
+                let xj = x[r * n_in + j];
+                for (a, &w) in acc[r * h..(r + 1) * h].iter_mut().zip(col) {
+                    *a += w * xj;
+                }
+            }
         }
     }
 }
@@ -136,27 +157,44 @@ impl Hidden {
     /// `base[k] + W1[k, from..from + x.len()] . x` for every first-layer
     /// unit `k` (`pre_dense` is `base` = `b1`, `from` = 0).
     pub fn pre_from(&self, base: &[f64], x: &[f64], from: usize) -> Vec<f64> {
-        let h = self.widths[0];
-        let mut acc = vec![sum_start(); h];
-        add_columns(&mut acc, &self.w1t[from * h..(from + x.len()) * h], x);
-        for (s, b) in acc.iter_mut().zip(base) {
-            *s = b + *s;
+        self.pre_rows(base, x, 1, from)
+    }
+
+    /// `pre_from` of each of the `n_rows` rows of `xs` (row-major), the rows'
+    /// pre-activations one after the other.
+    pub fn pre_rows(&self, base: &[f64], xs: &[f64], n_rows: usize, from: usize) -> Vec<f64> {
+        let (h, width) = (self.widths[0], xs.len() / n_rows.max(1));
+        let mut acc = vec![sum_start(); n_rows * h];
+        add_columns(&mut acc, h, &self.w1t[from * h..(from + width) * h], xs, width);
+        for row in acc.chunks_exact_mut(h) {
+            for (s, b) in row.iter_mut().zip(base) {
+                *s = b + *s;
+            }
         }
         acc
     }
 
     /// The last layer's activations from the first layer's pre-activations.
-    pub fn activate(&self, mut z: Vec<f64>) -> Vec<f64> {
+    pub fn activate(&self, z: Vec<f64>) -> Vec<f64> {
+        self.activate_rows(z)
+    }
+
+    /// `activate` of each row of `z` (rows of the first layer's width,
+    /// row-major), the rows' activations one after the other.
+    pub fn activate_rows(&self, mut z: Vec<f64>) -> Vec<f64> {
         for v in &mut z {
             *v = v.max(0.0);
         }
+        let mut width = self.widths[0];
         for ((_, b), wt) in self.deep.iter().zip(&self.deep_t) {
-            let mut acc = vec![sum_start(); b.len()];
-            add_columns(&mut acc, wt, &z);
-            for (s, bk) in acc.iter_mut().zip(b) {
-                *s = (bk + *s).max(0.0);
+            let mut acc = vec![sum_start(); z.len() / width * b.len()];
+            add_columns(&mut acc, b.len(), wt, &z, width);
+            for row in acc.chunks_exact_mut(b.len()) {
+                for (s, bk) in row.iter_mut().zip(b) {
+                    *s = (bk + *s).max(0.0);
+                }
             }
-            z = acc;
+            (z, width) = (acc, b.len());
         }
         z
     }
@@ -238,5 +276,46 @@ mod tests {
         assert_eq!(h.activate(h.pre_dense(&[2.0, -3.0])), [5.5, 0.0]);
         let bad: Value = serde_json::from_str(r#"{"hidden": 2, "W1": [[1, 0], [0, 1]], "b1": [0, 0], "Wh": [[[1, 1, 1]]], "bh": [[0]]}"#).unwrap();
         assert!(parse_hidden(&bad, 2).is_err());
+    }
+
+    #[test]
+    fn rows_together_equal_each_row_alone() {
+        // Pseudo-random weights and rows (some inputs exactly zero), against the plain per-unit dot products.
+        let mut seed = 7u64;
+        let mut rnd = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        };
+        let (n_in, widths) = (9, [7, 5, 6]);
+        let mut mat = |r: usize, c: usize| -> Vec<Vec<f64>> { (0..r).map(|_| (0..c).map(|_| rnd()).collect()).collect() };
+        let (w1, b1) = (mat(widths[0], n_in), mat(1, widths[0]).remove(0));
+        let deep: Vec<(Vec<Vec<f64>>, Vec<f64>)> = (1..widths.len()).map(|i| (mat(widths[i], widths[i - 1]), mat(1, widths[i]).remove(0))).collect();
+        // More than 64 rows: the rows go 64 at a time (`add_columns`).
+        let mut xs = mat(70, n_in);
+        xs[1][3] = 0.0;
+        xs[4] = vec![0.0; n_in];
+        xs[66][0] = 0.0;
+        let v = serde_json::json!({"hidden": widths[0], "W1": w1, "b1": b1,
+                                   "Wh": deep.iter().map(|d| &d.0).collect::<Vec<_>>(), "bh": deep.iter().map(|d| &d.1).collect::<Vec<_>>()});
+        let net = parse_hidden(&v, n_in).unwrap();
+        let dense = |w: &[Vec<f64>], b: &[f64], x: &[f64]| -> Vec<f64> {
+            w.iter().zip(b).map(|(r, bk)| bk + r.iter().zip(x).map(|(a, c)| a * c).sum::<f64>()).collect()
+        };
+        let want: Vec<f64> = xs
+            .iter()
+            .flat_map(|x| {
+                let mut h: Vec<f64> = dense(&w1, &b1, x).iter().map(|z| z.max(0.0)).collect();
+                for (w, b) in &deep {
+                    h = dense(w, b, &h).iter().map(|z| z.max(0.0)).collect();
+                }
+                h
+            })
+            .collect();
+        let flat: Vec<f64> = xs.concat();
+        let got = net.activate_rows(net.pre_rows(&net.b1, &flat, xs.len(), 0));
+        assert_eq!(got, want);
+        assert!(got.iter().any(|&g| g > 0.0));
+        let one: Vec<f64> = xs.iter().flat_map(|x| net.activate(net.pre_dense(x))).collect();
+        assert_eq!(one, want);
     }
 }

@@ -141,24 +141,27 @@ impl Model {
         self.states.iter().position(|s| *s == full).or_else(|| self.states.iter().position(|s| s == name))
     }
 
-    fn score(&self, row: &[f64; N_ROW], state: Option<usize>, sit: &[f64]) -> f64 {
-        let n_in = self.cols.len();
-        let x: Vec<f64> = self.cols.iter().enumerate().map(|(j, &c)| (row[c] - self.mean[j]) / self.std[j]).collect();
-        let mut z = self.net.pre_dense(&x);
-        add_bias(&mut z, sit);
-        if let Some(si) = state {
-            for (k, zk) in z.iter_mut().enumerate() {
-                *zk += self.net.w1_row(k)[n_in + si];
-            }
-        }
-        self.b2 + self.w2.iter().zip(self.net.activate(z)).map(|(w, h)| w * h).sum::<f64>()
-    }
-
-    /// The score of each row, the situation of view `v` added when the model reads it.
+    /// The score of each row, the situation of view `v` added when the model reads it (the rows go through the
+    /// network together, `Hidden::pre_rows`; each score is the row's alone).
     fn scores(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> Vec<f64> {
         let sit = self.sit.as_ref().map_or_else(Vec::new, |s| s.bias(&self.net, v));
         let si = self.state_index(state, opp);
-        rows.iter().map(|r| self.score(r, si, &sit)).collect()
+        let n_in = self.cols.len();
+        let x: Vec<f64> = rows
+            .iter()
+            .flat_map(|row| self.cols.iter().enumerate().map(move |(j, &c)| (row[c] - self.mean[j]) / self.std[j]))
+            .collect();
+        let mut z = self.net.pre_rows(&self.net.b1, &x, rows.len(), 0);
+        for zr in z.chunks_exact_mut(self.net.widths[0]) {
+            add_bias(zr, &sit);
+            if let Some(si) = si {
+                for (k, zk) in zr.iter_mut().enumerate() {
+                    *zk += self.net.w1_row(k)[n_in + si];
+                }
+            }
+        }
+        let h = self.net.activate_rows(z);
+        h.chunks_exact(self.net.out_width()).map(|hr| self.b2 + self.w2.iter().zip(hr).map(|(w, h)| w * h).sum::<f64>()).collect()
     }
 
     /// The index of the best row (the first on a tie).
