@@ -269,7 +269,11 @@ fn decision_rows<'m>(ctx: &Ctx, md: &'m A1Models, rv: &MjView) -> Option<Rows<'m
         shanten_after[usize::from(c.tile_type)] = Some(c.shanten);
     }
     let inp = FoldInputs { shanten_after, hand_mlp: [0.0; 34] };
-    let x: [_; 3] = std::array::from_fn(|k| features(ctx.models.tables(), rv, (usize::from(rv.seat) + k + 1) % 4, &inp));
+    // An array literal, not `array::from_fn`: the three 34 x N_FEATURES tables are written in place instead of each
+    // being copied about four times.
+    let seat = |k: usize| (usize::from(rv.seat) + k + 1) % 4;
+    let tables = ctx.models.tables();
+    let x = [features(tables, rv, seat(0), &inp), features(tables, rv, seat(1), &inp), features(tables, rv, seat(2), &inp)];
     let diff = score_diffs(ctx.view);
     let rows: Vec<[f64; N_ROW]> = u
         .options
