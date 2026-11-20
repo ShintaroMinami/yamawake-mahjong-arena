@@ -27,12 +27,12 @@ impl Rng {
 /// The tile types a hand of `style` draws from: 0 any, 1 one suit and honors, 2 terminals and honors, 3 simples,
 /// 4 honors and one suit's terminals, 5 one suit.
 fn allowed(style: usize, suit: usize, t: usize) -> bool {
-    let term = t >= 27 || t % 9 == 0 || t % 9 == 8;
+    let term = t >= 27 || t.is_multiple_of(9) || t % 9 == 8;
     match style {
         1 => t >= 27 || t / 9 == suit,
         2 => term,
         3 => !term,
-        4 => t >= 27 || (t / 9 == suit && t % 9 % 8 == 0),
+        4 => t >= 27 || (t / 9 == suit && (t % 9).is_multiple_of(8)),
         5 => t < 27 && t / 9 == suit,
         _ => true,
     }

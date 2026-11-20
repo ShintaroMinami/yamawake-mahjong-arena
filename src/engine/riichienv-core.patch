@@ -678,7 +678,72 @@
      pub yaku_names: Vec<String>,
      pub yakuman_count: u8,
  }
-@@ -240,14 +242,10 @@
+@@ -225,11 +227,64 @@
+             ura_dora_count: 0,
+             round_wind: 27,
+             seat_wind: 27,
++        }
++    }
++}
++
++/// yamawake patch: the tile types (0..34) a hand holds (`hand`) and those it holds or has in its melds (`all`), as
++/// bit masks, taken once per evaluation (`calculate_yaku`); the hand-level checks (tanyao, honroutou, honitsu,
++/// chinitsu, tsuu iisou, chinroutou, ryuu iisou, and whether chuuren poutou can hold) read them in place of a pass
++/// over the counts and the melds for each check of each division.
++#[derive(Clone, Copy)]
++struct Kinds {
++    hand: u64,
++    all: u64,
++}
++
++const fn tile_bits(ts: &[u8]) -> u64 {
++    let mut m = 0;
++    let mut i = 0;
++    while i < ts.len() {
++        m |= 1 << ts[i];
++        i += 1;
++    }
++    m
++}
++
++const HONORS: u64 = ((1 << 7) - 1) << 27;
++const SUITS: [u64; 3] = [0x1ff, 0x1ff << 9, 0x1ff << 18];
++const NUMBER_TERMINALS: u64 = tile_bits(&[0, 8, 9, 17, 18, 26]);
++const TERMINALS: u64 = NUMBER_TERMINALS | HONORS;
++const GREEN: u64 = tile_bits(&[19, 20, 21, 23, 25, 32]);
++
++impl Kinds {
++    fn of(hand: &Hand, melds: &[Meld]) -> Self {
++        let mut held = 0u64;
++        for (t, &c) in hand.counts.iter().enumerate() {
++            held |= u64::from(c > 0) << t;
+         }
++        let mut all = held;
++        for m in melds {
++            for &t in &m.tiles {
++                all |= 1 << t;
++            }
++        }
++        Kinds { hand: held, all }
+     }
++
++    /// The number suits present (in the hand or the melds).
++    fn suits(self) -> usize {
++        SUITS.iter().filter(|&&s| self.all & s != 0).count()
++    }
++
++    /// The hand alone holds one number suit and no honors (else `is_chuuren_poutou` is false).
++    fn hand_one_suit(self) -> bool {
++        self.hand & HONORS == 0 && SUITS.iter().filter(|&&s| self.hand & s != 0).count() == 1
++    }
+ }
+ 
+ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: u8) -> YakuResult {
++    let kinds = Kinds::of(hand, melds);
+     let divisions = agari::find_divisions(hand);
+     let mut best_res = YakuResult::default();
+ 
+@@ -240,14 +295,10 @@
                  best_res.han = 26;
                  best_res.yakuman_count = 2;
                  best_res.yaku_ids.push(ID_KOKUSHI_13);
@@ -693,35 +758,58 @@
              }
              return best_res;
          }
-@@ -255,26 +253,21 @@
+@@ -255,31 +306,27 @@
              best_res.han = 2;
              best_res.fu = 25;
              best_res.yaku_ids.push(ID_CHITOITSU);
 -            best_res.yaku_names.push("Chiitoitsu".to_string());
  
-             if is_tanyao(hand, melds) {
+-            if is_tanyao(hand, melds) {
++            if is_tanyao(kinds) {
                  best_res.han += 1;
                  best_res.yaku_ids.push(12);
 -                best_res.yaku_names.push("Tanyao".to_string());
              }
-             if is_chinitsu(hand, melds) {
+-            if is_chinitsu(hand, melds) {
++            if is_chinitsu(kinds) {
                  best_res.han += 6;
                  best_res.yaku_ids.push(29);
 -                best_res.yaku_names.push("Chinitsu".to_string());
-             } else if is_honitsu(hand, melds) {
+-            } else if is_honitsu(hand, melds) {
++            } else if is_honitsu(kinds) {
                  best_res.han += 3;
                  best_res.yaku_ids.push(27);
 -                best_res.yaku_names.push("Honitsu".to_string());
              }
-             if is_honroutou(hand, melds) {
+-            if is_honroutou(hand, melds) {
++            if is_honroutou(kinds) {
                  best_res.han += 2;
                  best_res.yaku_ids.push(24);
 -                best_res.yaku_names.push("Honroutou".to_string());
              }
  
              apply_yakuman(
-@@ -338,14 +331,12 @@
-             if is_tanyao(hand, melds) {
+                 &mut best_res,
+                 hand,
++                kinds,
+                 melds,
+                 ctx,
+                 &Division {
+@@ -322,7 +369,7 @@
+         for wg_idx in win_group_indices {
+             let mut res = YakuResult::default();
+ 
+-            apply_yakuman(&mut res, hand, melds, ctx, div, wg_idx, win_tile);
++            apply_yakuman(&mut res, hand, kinds, melds, ctx, div, wg_idx, win_tile);
+             if res.han >= 13 {
+                 if res.han > best_res.han {
+                     best_res = res;
+@@ -335,17 +382,15 @@
+ 
+             // Tanyao
+             // Tanyao
+-            if is_tanyao(hand, melds) {
++            if is_tanyao(kinds) {
                  res.han += 1;
                  res.yaku_ids.push(ID_TANYAO); // Corrected to 12
 -                res.yaku_names.push("Tanyao".to_string());
@@ -735,7 +823,7 @@
                  res.fu = if ctx.is_tsumo { 20 } else { 30 };
              } else {
                  res.fu = calculate_fu_with_waiting(div, melds, ctx, wg_idx, win_tile);
-@@ -381,7 +372,6 @@
+@@ -381,7 +426,6 @@
                          }
                      };
                      res.yaku_ids.push(id);
@@ -743,7 +831,7 @@
                  }
              }
  
-@@ -417,7 +407,6 @@
+@@ -417,7 +461,6 @@
                  if dragon_koutsu_count == 2 && dragon_pair_count == 1 {
                      res.han += 2;
                      res.yaku_ids.push(ID_SHOSANGEN);
@@ -751,7 +839,7 @@
                  }
              }
  
-@@ -434,7 +423,6 @@
+@@ -434,7 +477,6 @@
              if koutsu_total == 4 {
                  res.han += 2;
                  res.yaku_ids.push(ID_TOITOI);
@@ -759,7 +847,7 @@
              }
  
              // San Ankou
-@@ -456,7 +444,6 @@
+@@ -456,7 +498,6 @@
              if closed_koutsu_count == 3 {
                  res.han += 2;
                  res.yaku_ids.push(ID_SANANKOU);
@@ -767,7 +855,7 @@
              }
  
              // San Kantsu
-@@ -471,7 +458,6 @@
+@@ -471,7 +512,6 @@
              if kantsu_count == 3 {
                  res.han += 2;
                  res.yaku_ids.push(ID_SANKANTSU);
@@ -775,7 +863,7 @@
              }
  
              // Iipeiko / Ryanpeikou (Closed only)
-@@ -496,11 +482,9 @@
+@@ -496,11 +536,9 @@
                  if identical_pairs == 2 {
                      res.han += 3;
                      res.yaku_ids.push(ID_RYANPEIKO);
@@ -787,7 +875,7 @@
                  }
              }
  
-@@ -508,43 +492,35 @@
+@@ -508,43 +546,35 @@
              if check_ittsu(div, melds) {
                  res.han += if ctx.is_menzen { 2 } else { 1 };
                  res.yaku_ids.push(ID_ITTSU);
@@ -805,18 +893,21 @@
              }
  
              // Honitsu / Chinitsu
-             if is_chinitsu(hand, melds) {
+-            if is_chinitsu(hand, melds) {
++            if is_chinitsu(kinds) {
                  res.han += if ctx.is_menzen { 6 } else { 5 };
                  res.yaku_ids.push(ID_CHINITSU);
 -                res.yaku_names.push("Chinitsu".to_string());
-             } else if is_honitsu(hand, melds) {
+-            } else if is_honitsu(hand, melds) {
++            } else if is_honitsu(kinds) {
                  res.han += if ctx.is_menzen { 3 } else { 2 };
                  res.yaku_ids.push(ID_HONITSU);
 -                res.yaku_names.push("Honitsu".to_string());
              }
  
              // Chantai / Junchan / Honroutou
-             if is_honroutou(hand, melds) {
+-            if is_honroutou(hand, melds) {
++            if is_honroutou(kinds) {
                  res.han += 2;
                  res.yaku_ids.push(ID_HONROUTO);
 -                res.yaku_names.push("Honroutou".to_string());
@@ -831,29 +922,145 @@
              }
  
              // Static Yaku and Dora are handled by apply_static_yaku (already called at start of loop)
-@@ -910,21 +886,18 @@
-     if is_tsuu_iisou(hand, melds) {
+@@ -689,19 +719,8 @@
+     tile >= 31 || tile == ctx.round_wind || tile == ctx.seat_wind
+ }
+ 
+-fn is_honroutou(hand: &Hand, melds: &[Meld]) -> bool {
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 && !is_terminal(i as u8) {
+-            return false;
+-        }
+-    }
+-    if melds
+-        .iter()
+-        .any(|m| m.tiles.iter().any(|&t| !is_terminal(t)))
+-    {
+-        return false;
+-    }
+-    true
++fn is_honroutou(k: Kinds) -> bool {
++    k.all & !TERMINALS == 0
+ }
+ 
+ fn is_junchan(div: &Division, melds: &[Meld]) -> bool {
+@@ -773,71 +792,12 @@
+     tile >= 27
+ }
+ 
+-fn is_honitsu(hand: &Hand, melds: &[Meld]) -> bool {
+-    let mut suits = [false; 3];
+-    let mut has_honor = false;
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 {
+-            if i < 9 {
+-                suits[0] = true;
+-            } else if i < 18 {
+-                suits[1] = true;
+-            } else if i < 27 {
+-                suits[2] = true;
+-            } else {
+-                has_honor = true;
+-            }
+-        }
+-    }
+-    for meld in melds {
+-        for &t in &meld.tiles {
+-            let idx = t as usize;
+-            if idx < 9 {
+-                suits[0] = true;
+-            } else if idx < 18 {
+-                suits[1] = true;
+-            } else if idx < 27 {
+-                suits[2] = true;
+-            } else {
+-                has_honor = true;
+-            }
+-        }
+-    }
+-    suits.iter().filter(|&&b| b).count() == 1 && has_honor
++fn is_honitsu(k: Kinds) -> bool {
++    k.suits() == 1 && k.all & HONORS != 0
+ }
+ 
+-fn is_chinitsu(hand: &Hand, melds: &[Meld]) -> bool {
+-    let mut suits = [false; 3];
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 {
+-            if i >= 27 {
+-                return false;
+-            }
+-            if i < 9 {
+-                suits[0] = true;
+-            } else if i < 18 {
+-                suits[1] = true;
+-            } else if i < 27 {
+-                suits[2] = true;
+-            }
+-        }
+-    }
+-    for meld in melds {
+-        for &t in &meld.tiles {
+-            let idx = t as usize;
+-            if idx >= 27 {
+-                return false;
+-            }
+-            if idx < 9 {
+-                suits[0] = true;
+-            } else if idx < 18 {
+-                suits[1] = true;
+-            } else if idx < 27 {
+-                suits[2] = true;
+-            }
+-        }
+-    }
+-    suits.iter().filter(|&&b| b).count() == 1
++fn is_chinitsu(k: Kinds) -> bool {
++    k.all & HONORS == 0 && k.suits() == 1
+ }
+ 
+ fn apply_static_yaku(res: &mut YakuResult, ctx: &YakuContext) {
+@@ -889,9 +849,11 @@
+     }
+ }
+ 
++#[allow(clippy::too_many_arguments)]
+ fn apply_yakuman(
+     res: &mut YakuResult,
+     hand: &Hand,
++    kinds: Kinds,
+     melds: &[Meld],
+     ctx: &YakuContext,
+     div: &Division,
+@@ -907,24 +869,21 @@
+     }
+ 
+     // Tsuu iisou (All Honors)
+-    if is_tsuu_iisou(hand, melds) {
++    if is_tsuu_iisou(kinds) {
          yakuman_count += 1;
          res.yaku_ids.push(ID_TSUISO);
 -        res.yaku_names.push("Tsuu iisou".to_string());
      }
  
      // Chinroutou (All Terminals)
-     if is_chinroutou(hand, melds) {
+-    if is_chinroutou(hand, melds) {
++    if is_chinroutou(kinds) {
          yakuman_count += 1;
          res.yaku_ids.push(ID_CHINROUTO);
 -        res.yaku_names.push("Chinroutou".to_string());
      }
  
      // Ryuu iisou (All Green)
-     if is_ryuu_iisou(hand, melds) {
+-    if is_ryuu_iisou(hand, melds) {
++    if is_ryuu_iisou(kinds) {
          yakuman_count += 1;
          res.yaku_ids.push(ID_RYUISOU);
 -        res.yaku_names.push("Ryuu iisou".to_string());
      }
  
      // Su Kantsu (Four Kans)
-@@ -940,7 +913,6 @@
+@@ -940,22 +899,19 @@
      {
          yakuman_count += 1;
          res.yaku_ids.push(ID_SUKANTSU);
@@ -861,7 +1068,11 @@
      }
  
      // Chuuren Poutou
-@@ -951,11 +923,9 @@
+     if ctx.is_menzen && (div.body.len() + melds.len()) == 4 {
+         // Only check if we have a valid standard division
+-        if is_chuuren_poutou(hand) {
++        if kinds.hand_one_suit() && is_chuuren_poutou(hand) {
+             let is_9_wait = is_chuuren_9_wait(hand, win_tile);
              if is_9_wait {
                  yakuman_count += 2;
                  res.yaku_ids.push(ID_JUNSEI_CHUUREN);
@@ -873,7 +1084,7 @@
              }
          }
      }
-@@ -966,11 +936,9 @@
+@@ -966,11 +922,9 @@
              // Oya (East)
              yakuman_count += 1;
              res.yaku_ids.push(ID_TENHO);
@@ -885,7 +1096,7 @@
          }
      }
  
-@@ -994,11 +962,9 @@
+@@ -994,11 +948,9 @@
          if wg_idx.is_none() {
              yakuman_count += 2;
              res.yaku_ids.push(ID_SUANKO_TANKI); // Su Ankou Tanki
@@ -897,7 +1108,7 @@
          }
      }
  
-@@ -1019,7 +985,6 @@
+@@ -1019,7 +971,6 @@
      if haku_koutsu && hatsu_koutsu && chun_koutsu {
          yakuman_count += 1;
          res.yaku_ids.push(ID_DAISANGEN);
@@ -905,7 +1116,7 @@
      }
  
      // Winds
-@@ -1041,11 +1006,9 @@
+@@ -1041,11 +992,9 @@
      if wind_koutsu_count == 4 {
          yakuman_count += 2; // Double Yakuman
          res.yaku_ids.push(ID_DAISUUSHI);
@@ -917,3 +1128,82 @@
      }
  
      if yakuman_count > 0 {
+@@ -1054,48 +1003,17 @@
+     }
+ }
+ 
+-fn is_tsuu_iisou(hand: &Hand, melds: &[Meld]) -> bool {
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 && i < 27 {
+-            return false;
+-        }
+-    }
+-    for m in melds {
+-        if m.tiles.iter().any(|&t| t < 27) {
+-            return false;
+-        }
+-    }
+-    true
++fn is_tsuu_iisou(k: Kinds) -> bool {
++    k.all & !HONORS == 0
+ }
+ 
+-fn is_chinroutou(hand: &Hand, melds: &[Meld]) -> bool {
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 && !is_number_terminal(i as u8) {
+-            return false;
+-        }
+-    }
+-    for m in melds {
+-        if m.tiles.iter().any(|&t| !is_number_terminal(t)) {
+-            return false;
+-        }
+-    }
+-    true
++fn is_chinroutou(k: Kinds) -> bool {
++    k.all & !NUMBER_TERMINALS == 0
+ }
+ 
+-fn is_ryuu_iisou(hand: &Hand, melds: &[Meld]) -> bool {
++fn is_ryuu_iisou(k: Kinds) -> bool {
+     // 2, 3, 4, 6, 8 of sou + Green Dragon (32)
+-    let green_tiles = [19, 20, 21, 23, 25, 32];
+-    for (i, &count) in hand.counts.iter().enumerate() {
+-        if count > 0 && !green_tiles.contains(&(i as u8)) {
+-            return false;
+-        }
+-    }
+-    for m in melds {
+-        if m.tiles.iter().any(|&t| !green_tiles.contains(&t)) {
+-            return false;
+-        }
+-    }
+-    true
++    k.all & !GREEN == 0
+ }
+ 
+ fn is_chuuren_poutou(hand: &Hand) -> bool {
+@@ -1223,21 +1141,8 @@
+     false
+ }
+ 
+-fn is_tanyao(hand: &Hand, melds: &[Meld]) -> bool {
+-    let terminals = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
+-    for &t in &terminals {
+-        if hand.counts[t] > 0 {
+-            return false;
+-        }
+-    }
+-    for meld in melds {
+-        for &t in &meld.tiles {
+-            if terminals.contains(&(t as usize)) {
+-                return false;
+-            }
+-        }
+-    }
+-    true
++fn is_tanyao(k: Kinds) -> bool {
++    k.all & TERMINALS == 0
+ }
+ 
+ fn is_sanshoku_doukou(div: &Division, melds: &[Meld]) -> bool {

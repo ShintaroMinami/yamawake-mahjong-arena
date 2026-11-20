@@ -231,7 +231,60 @@ impl Default for YakuContext {
     }
 }
 
+/// yamawake patch: the tile types (0..34) a hand holds (`hand`) and those it holds or has in its melds (`all`), as
+/// bit masks, taken once per evaluation (`calculate_yaku`); the hand-level checks (tanyao, honroutou, honitsu,
+/// chinitsu, tsuu iisou, chinroutou, ryuu iisou, and whether chuuren poutou can hold) read them in place of a pass
+/// over the counts and the melds for each check of each division.
+#[derive(Clone, Copy)]
+struct Kinds {
+    hand: u64,
+    all: u64,
+}
+
+const fn tile_bits(ts: &[u8]) -> u64 {
+    let mut m = 0;
+    let mut i = 0;
+    while i < ts.len() {
+        m |= 1 << ts[i];
+        i += 1;
+    }
+    m
+}
+
+const HONORS: u64 = ((1 << 7) - 1) << 27;
+const SUITS: [u64; 3] = [0x1ff, 0x1ff << 9, 0x1ff << 18];
+const NUMBER_TERMINALS: u64 = tile_bits(&[0, 8, 9, 17, 18, 26]);
+const TERMINALS: u64 = NUMBER_TERMINALS | HONORS;
+const GREEN: u64 = tile_bits(&[19, 20, 21, 23, 25, 32]);
+
+impl Kinds {
+    fn of(hand: &Hand, melds: &[Meld]) -> Self {
+        let mut held = 0u64;
+        for (t, &c) in hand.counts.iter().enumerate() {
+            held |= u64::from(c > 0) << t;
+        }
+        let mut all = held;
+        for m in melds {
+            for &t in &m.tiles {
+                all |= 1 << t;
+            }
+        }
+        Kinds { hand: held, all }
+    }
+
+    /// The number suits present (in the hand or the melds).
+    fn suits(self) -> usize {
+        SUITS.iter().filter(|&&s| self.all & s != 0).count()
+    }
+
+    /// The hand alone holds one number suit and no honors (else `is_chuuren_poutou` is false).
+    fn hand_one_suit(self) -> bool {
+        self.hand & HONORS == 0 && SUITS.iter().filter(|&&s| self.hand & s != 0).count() == 1
+    }
+}
+
 pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: u8) -> YakuResult {
+    let kinds = Kinds::of(hand, melds);
     let divisions = agari::find_divisions(hand);
     let mut best_res = YakuResult::default();
 
@@ -254,18 +307,18 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             best_res.fu = 25;
             best_res.yaku_ids.push(ID_CHITOITSU);
 
-            if is_tanyao(hand, melds) {
+            if is_tanyao(kinds) {
                 best_res.han += 1;
                 best_res.yaku_ids.push(12);
             }
-            if is_chinitsu(hand, melds) {
+            if is_chinitsu(kinds) {
                 best_res.han += 6;
                 best_res.yaku_ids.push(29);
-            } else if is_honitsu(hand, melds) {
+            } else if is_honitsu(kinds) {
                 best_res.han += 3;
                 best_res.yaku_ids.push(27);
             }
-            if is_honroutou(hand, melds) {
+            if is_honroutou(kinds) {
                 best_res.han += 2;
                 best_res.yaku_ids.push(24);
             }
@@ -273,6 +326,7 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             apply_yakuman(
                 &mut best_res,
                 hand,
+                kinds,
                 melds,
                 ctx,
                 &Division {
@@ -315,7 +369,7 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
         for wg_idx in win_group_indices {
             let mut res = YakuResult::default();
 
-            apply_yakuman(&mut res, hand, melds, ctx, div, wg_idx, win_tile);
+            apply_yakuman(&mut res, hand, kinds, melds, ctx, div, wg_idx, win_tile);
             if res.han >= 13 {
                 if res.han > best_res.han {
                     best_res = res;
@@ -328,7 +382,7 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
 
             // Tanyao
             // Tanyao
-            if is_tanyao(hand, melds) {
+            if is_tanyao(kinds) {
                 res.han += 1;
                 res.yaku_ids.push(ID_TANYAO); // Corrected to 12
             }
@@ -503,16 +557,16 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
             }
 
             // Honitsu / Chinitsu
-            if is_chinitsu(hand, melds) {
+            if is_chinitsu(kinds) {
                 res.han += if ctx.is_menzen { 6 } else { 5 };
                 res.yaku_ids.push(ID_CHINITSU);
-            } else if is_honitsu(hand, melds) {
+            } else if is_honitsu(kinds) {
                 res.han += if ctx.is_menzen { 3 } else { 2 };
                 res.yaku_ids.push(ID_HONITSU);
             }
 
             // Chantai / Junchan / Honroutou
-            if is_honroutou(hand, melds) {
+            if is_honroutou(kinds) {
                 res.han += 2;
                 res.yaku_ids.push(ID_HONROUTO);
             } else if is_junchan(div, melds) {
@@ -665,19 +719,8 @@ fn is_yakuhai_tile(tile: u8, ctx: &YakuContext) -> bool {
     tile >= 31 || tile == ctx.round_wind || tile == ctx.seat_wind
 }
 
-fn is_honroutou(hand: &Hand, melds: &[Meld]) -> bool {
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 && !is_terminal(i as u8) {
-            return false;
-        }
-    }
-    if melds
-        .iter()
-        .any(|m| m.tiles.iter().any(|&t| !is_terminal(t)))
-    {
-        return false;
-    }
-    true
+fn is_honroutou(k: Kinds) -> bool {
+    k.all & !TERMINALS == 0
 }
 
 fn is_junchan(div: &Division, melds: &[Meld]) -> bool {
@@ -749,71 +792,12 @@ fn is_honor(tile: u8) -> bool {
     tile >= 27
 }
 
-fn is_honitsu(hand: &Hand, melds: &[Meld]) -> bool {
-    let mut suits = [false; 3];
-    let mut has_honor = false;
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 {
-            if i < 9 {
-                suits[0] = true;
-            } else if i < 18 {
-                suits[1] = true;
-            } else if i < 27 {
-                suits[2] = true;
-            } else {
-                has_honor = true;
-            }
-        }
-    }
-    for meld in melds {
-        for &t in &meld.tiles {
-            let idx = t as usize;
-            if idx < 9 {
-                suits[0] = true;
-            } else if idx < 18 {
-                suits[1] = true;
-            } else if idx < 27 {
-                suits[2] = true;
-            } else {
-                has_honor = true;
-            }
-        }
-    }
-    suits.iter().filter(|&&b| b).count() == 1 && has_honor
+fn is_honitsu(k: Kinds) -> bool {
+    k.suits() == 1 && k.all & HONORS != 0
 }
 
-fn is_chinitsu(hand: &Hand, melds: &[Meld]) -> bool {
-    let mut suits = [false; 3];
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 {
-            if i >= 27 {
-                return false;
-            }
-            if i < 9 {
-                suits[0] = true;
-            } else if i < 18 {
-                suits[1] = true;
-            } else if i < 27 {
-                suits[2] = true;
-            }
-        }
-    }
-    for meld in melds {
-        for &t in &meld.tiles {
-            let idx = t as usize;
-            if idx >= 27 {
-                return false;
-            }
-            if idx < 9 {
-                suits[0] = true;
-            } else if idx < 18 {
-                suits[1] = true;
-            } else if idx < 27 {
-                suits[2] = true;
-            }
-        }
-    }
-    suits.iter().filter(|&&b| b).count() == 1
+fn is_chinitsu(k: Kinds) -> bool {
+    k.all & HONORS == 0 && k.suits() == 1
 }
 
 fn apply_static_yaku(res: &mut YakuResult, ctx: &YakuContext) {
@@ -865,9 +849,11 @@ fn apply_static_yaku(res: &mut YakuResult, ctx: &YakuContext) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_yakuman(
     res: &mut YakuResult,
     hand: &Hand,
+    kinds: Kinds,
     melds: &[Meld],
     ctx: &YakuContext,
     div: &Division,
@@ -883,19 +869,19 @@ fn apply_yakuman(
     }
 
     // Tsuu iisou (All Honors)
-    if is_tsuu_iisou(hand, melds) {
+    if is_tsuu_iisou(kinds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_TSUISO);
     }
 
     // Chinroutou (All Terminals)
-    if is_chinroutou(hand, melds) {
+    if is_chinroutou(kinds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_CHINROUTO);
     }
 
     // Ryuu iisou (All Green)
-    if is_ryuu_iisou(hand, melds) {
+    if is_ryuu_iisou(kinds) {
         yakuman_count += 1;
         res.yaku_ids.push(ID_RYUISOU);
     }
@@ -918,7 +904,7 @@ fn apply_yakuman(
     // Chuuren Poutou
     if ctx.is_menzen && (div.body.len() + melds.len()) == 4 {
         // Only check if we have a valid standard division
-        if is_chuuren_poutou(hand) {
+        if kinds.hand_one_suit() && is_chuuren_poutou(hand) {
             let is_9_wait = is_chuuren_9_wait(hand, win_tile);
             if is_9_wait {
                 yakuman_count += 2;
@@ -1017,48 +1003,17 @@ fn apply_yakuman(
     }
 }
 
-fn is_tsuu_iisou(hand: &Hand, melds: &[Meld]) -> bool {
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 && i < 27 {
-            return false;
-        }
-    }
-    for m in melds {
-        if m.tiles.iter().any(|&t| t < 27) {
-            return false;
-        }
-    }
-    true
+fn is_tsuu_iisou(k: Kinds) -> bool {
+    k.all & !HONORS == 0
 }
 
-fn is_chinroutou(hand: &Hand, melds: &[Meld]) -> bool {
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 && !is_number_terminal(i as u8) {
-            return false;
-        }
-    }
-    for m in melds {
-        if m.tiles.iter().any(|&t| !is_number_terminal(t)) {
-            return false;
-        }
-    }
-    true
+fn is_chinroutou(k: Kinds) -> bool {
+    k.all & !NUMBER_TERMINALS == 0
 }
 
-fn is_ryuu_iisou(hand: &Hand, melds: &[Meld]) -> bool {
+fn is_ryuu_iisou(k: Kinds) -> bool {
     // 2, 3, 4, 6, 8 of sou + Green Dragon (32)
-    let green_tiles = [19, 20, 21, 23, 25, 32];
-    for (i, &count) in hand.counts.iter().enumerate() {
-        if count > 0 && !green_tiles.contains(&(i as u8)) {
-            return false;
-        }
-    }
-    for m in melds {
-        if m.tiles.iter().any(|&t| !green_tiles.contains(&t)) {
-            return false;
-        }
-    }
-    true
+    k.all & !GREEN == 0
 }
 
 fn is_chuuren_poutou(hand: &Hand) -> bool {
@@ -1186,21 +1141,8 @@ fn is_sanshoku_doujun(div: &Division, melds: &[Meld]) -> bool {
     false
 }
 
-fn is_tanyao(hand: &Hand, melds: &[Meld]) -> bool {
-    let terminals = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
-    for &t in &terminals {
-        if hand.counts[t] > 0 {
-            return false;
-        }
-    }
-    for meld in melds {
-        for &t in &meld.tiles {
-            if terminals.contains(&(t as usize)) {
-                return false;
-            }
-        }
-    }
-    true
+fn is_tanyao(k: Kinds) -> bool {
+    k.all & TERMINALS == 0
 }
 
 fn is_sanshoku_doukou(div: &Division, melds: &[Meld]) -> bool {

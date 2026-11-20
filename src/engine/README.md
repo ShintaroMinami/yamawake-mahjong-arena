@@ -15,7 +15,11 @@ removed by rehashing one suit, or with every tile at once
 users it adds `HandEvaluator::verdict`, what `calc` says of a win (han, fu,
 yakuman) without building the score and the yaku list, removes a division
 search `calc` did not use, and stops `calculate_yaku` filling `yaku_names`,
-which nothing read (the han, fu and yaku ids are unchanged). The riichi
+which nothing read (the han, fu and yaku ids are unchanged); its hand-level
+checks (tanyao, the flushes, honroutou, the all-honor / all-terminal /
+all-green yakuman) read one bit mask of the tile types taken per evaluation
+instead of a pass over the counts each (the same results, pinned by a
+fingerprint test in `src/rust/eval/yaku_check.rs`). The riichi
 check of the legal actions skips its per-discard tenpai tests when the hand's
 shanten is 1 or more (no discard can leave such a hand tenpai; the same
 actions, tested in `src/rust/eval/shanten.rs`). And it adds
