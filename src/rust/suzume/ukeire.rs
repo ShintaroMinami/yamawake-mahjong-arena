@@ -64,14 +64,18 @@ fn pack_bit(t: usize) -> u128 {
     1u128 << (99 - 3 * t)
 }
 
-/// The improving draws of a 3n+1 hand, kept per thread (`key`: its `pack`).
-fn improving_draws(key: u128, hand: &[u8; 34]) -> u64 {
+/// The shanten and the improving draws of a 3n+1 hand, kept per thread (`key`: its `pack`).
+fn improving(key: u128, hand: &[u8; 34]) -> (i8, u64) {
     facts_packed(Facts::Improving, key, hand, |hand| {
         let hs = HandShanten::new(hand);
         let base = hs.shanten();
         (base, hs.lowering_draws(probe_mask(hand, base)))
     })
-    .1
+}
+
+/// The improving draws of a 3n+1 hand, kept per thread (`key`: its `pack`).
+fn improving_draws(key: u128, hand: &[u8; 34]) -> u64 {
+    improving(key, hand).1
 }
 
 impl UkeireTables {
@@ -105,6 +109,16 @@ impl UkeireTables {
 
     /// Ukeire of a 3n+1 hand: the unseen copies of every tile type whose
     /// draw lowers the shanten, and those tile types as a bit mask.
+    /// The waits of a 3n+1 hand (the tile types whose draw completes it, a type held four times excepted) as a bit
+    /// mask; 0 when it is not tenpai. At shanten 0 they are its improving draws (kept per thread); above, one tile
+    /// cannot complete it.
+    pub fn waits(&mut self, hand: &[u8; 34]) -> u64 {
+        match improving(pack(hand), hand) {
+            (0, draws) => draws,
+            _ => 0,
+        }
+    }
+
     pub fn ukeire(&mut self, hand: &[u8; 34]) -> (u32, u64) {
         self.unseen_in(improving_draws(pack(hand), hand))
     }
@@ -153,6 +167,77 @@ mod tests {
     use crate::suzume::test_util::counts;
 
     /// The pruned probe agrees with probing every tile type.
+    /// `waits` equals its definition (the tile types, held fewer than four times, whose addition completes the hand)
+    /// on hands of every 3n+1 size: wins of each form with one tile taken out, some of them changed, and random ones.
+    #[test]
+    fn waits_are_the_completing_tiles() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let orphans = [0usize, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
+        let mut tables = UkeireTables::new([4; 34]);
+        let mut tenpai = 0;
+        for round in 0..20_000 {
+            let n_sets = [4, 4, 4, 3, 2, 1, 0][round % 7];
+            let mut h = [0u8; 34];
+            let add = |h: &mut [u8; 34], t: usize| h[t] < 4 && { h[t] += 1; true };
+            match (round / 7) % 4 {
+                0 | 3 => {
+                    let p = loop { let t = next(34); if h[t] <= 2 { break t; } };
+                    add(&mut h, p);
+                    add(&mut h, p);
+                    let mut sets = 0;
+                    while sets < n_sets {
+                        let t = next(34);
+                        let set = if t < 27 && t % 9 < 7 && next(2) == 0 { [t, t + 1, t + 2] } else { [t; 3] };
+                        if set.iter().all(|&u| h[u] + set.iter().filter(|&&v| v == u).count() as u8 <= 4) {
+                            set.iter().for_each(|&u| { add(&mut h, u); });
+                            sets += 1;
+                        }
+                    }
+                }
+                1 if n_sets == 4 => while h.iter().filter(|&&c| c == 2).count() < 7 {
+                    let t = next(34);
+                    if h[t] == 0 {
+                        h[t] = 2;
+                    }
+                },
+                2 if n_sets == 4 => {
+                    orphans.iter().for_each(|&t| h[t] = 1);
+                    h[orphans[next(13)]] += 1;
+                }
+                _ => {
+                    let mut n = 0;
+                    while n < 3 * n_sets + 2 {
+                        n += usize::from(add(&mut h, next(34)));
+                    }
+                }
+            }
+            // One tile out, then maybe one swapped (round % 4 == 3: always).
+            let held = |h: &[u8; 34], k: usize| (0..34).filter(|&t| h[t] > 0).nth(k).unwrap();
+            let kinds = h.iter().filter(|&&c| c > 0).count();
+            let out = held(&h, next(kinds));
+            h[out] -= 1;
+            if round % 4 == 3 || next(3) == 0 {
+                let kinds = h.iter().filter(|&&c| c > 0).count();
+                let a = held(&h, next(kinds));
+                let b = next(34);
+                if h[b] < 4 {
+                    h[a] -= 1;
+                    h[b] += 1;
+                }
+            }
+            let want = (0..34).filter(|&w| h[w] < 4 && { let mut g = h; g[w] += 1; tables.shanten(&g) < 0 }).fold(0u64, |m, w| m | 1 << w);
+            assert_eq!(tables.waits(&h), want, "{h:?}");
+            tenpai += usize::from(want != 0);
+        }
+        assert!(tenpai > 5_000, "tenpai {tenpai}");
+    }
+
     #[test]
     fn probe_is_exact() {
         let mut x = 0x2545_f491_4f6c_dd1du64;

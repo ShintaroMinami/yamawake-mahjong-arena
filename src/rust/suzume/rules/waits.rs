@@ -24,20 +24,9 @@ pub(crate) struct WaitValue {
     pub(crate) ron_possible: bool,
 }
 
+/// The waits of the 3n+1 hand `h13` (`UkeireTables::waits`; 0 when it is not tenpai).
 pub(crate) fn waits_of(ctx: &Ctx, h13: &[u8; 34]) -> u64 {
-    let mut tables = ctx.tables();
-    let mut mask = 0u64;
-    for w in 0..34 {
-        if h13[w] >= 4 {
-            continue;
-        }
-        let mut h = *h13;
-        h[w] += 1;
-        if tables.shanten(&h) < 0 {
-            mask |= 1 << w;
-        }
-    }
-    mask
+    ctx.tables().waits(h13)
 }
 
 /// Dama ron and tsumo points of each wait, weighted by `unseen`.
