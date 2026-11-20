@@ -146,4 +146,101 @@ mod tests {
             }
         }
     }
+
+    /// The riichi check of the engine's legal actions (a yamawake patch to
+    /// `state/legal_actions.rs`) skips its per-discard `is_tenpai` tests when
+    /// the hand's shanten is 1 or more: on hands of every size a seat holds
+    /// after a draw (0..=4 ankan), near wins of every form among them, no
+    /// discard of such a hand leaves it tenpai.
+    #[test]
+    fn far_hands_have_no_tenpai_discard() {
+        use riichienv_core::hand_evaluator::HandEvaluator;
+        use riichienv_core::types::{Meld, MeldType};
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |n: usize| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as usize
+        };
+        let orphans = [0usize, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
+        let (mut tenpai, mut skipped) = (0, 0);
+        for round in 0..40_000 {
+            let n_kan = [0, 0, 0, 1, 2, 3, 4][round % 7];
+            let n_tiles = 14 - 3 * n_kan;
+            let mut c = [0u8; 34];
+            let kans: Vec<usize> = (0..n_kan).map(|_| loop {
+                let t = next(34);
+                if c[t] == 0 {
+                    c[t] = 4;
+                    break t;
+                }
+            }).collect();
+            // A win of the round's form, then up to two of its tiles swapped (or a random hand).
+            let mut hand: Vec<usize> = Vec::new();
+            let take = |c: &mut [u8; 34], hand: &mut Vec<usize>, t: usize| c[t] < 4 && { c[t] += 1; hand.push(t); true };
+            match (round / 7) % 4 {
+                0 => {
+                    let pair = loop {
+                        let t = next(34);
+                        if c[t] <= 2 {
+                            break t;
+                        }
+                    };
+                    take(&mut c, &mut hand, pair);
+                    take(&mut c, &mut hand, pair);
+                    while hand.len() < n_tiles {
+                        let t = next(34);
+                        let run = t < 27 && t % 9 < 7 && next(2) == 0;
+                        let set = if run { [t, t + 1, t + 2] } else { [t; 3] };
+                        if set.iter().all(|&u| c[u] + set.iter().filter(|&&v| v == u).count() as u8 <= 4) {
+                            set.iter().for_each(|&u| { take(&mut c, &mut hand, u); });
+                        }
+                    }
+                }
+                1 if n_kan == 0 => {
+                    while hand.len() < 14 {
+                        let t = next(34);
+                        if c[t] == 0 {
+                            take(&mut c, &mut hand, t);
+                            take(&mut c, &mut hand, t);
+                        }
+                    }
+                }
+                2 if n_kan == 0 => {
+                    orphans.iter().for_each(|&t| { take(&mut c, &mut hand, t); });
+                    take(&mut c, &mut hand, orphans[next(13)]);
+                }
+                _ => while hand.len() < n_tiles {
+                    take(&mut c, &mut hand, next(34));
+                },
+            }
+            for _ in 0..next(3) {
+                let i = next(hand.len());
+                let t = next(34);
+                if c[t] < 4 && !kans.contains(&t) {
+                    c[hand[i]] -= 1;
+                    c[t] += 1;
+                    hand[i] = t;
+                }
+            }
+            // Tile ids: copy k of type t is 4 t + k (the kans hold all four).
+            let mut copy = [0u8; 34];
+            let ids: Vec<u8> = hand.iter().map(|&t| { copy[t] += 1; (4 * t) as u8 + copy[t] - 1 }).collect();
+            let melds: Vec<Meld> = kans.iter().map(|&t| Meld::new(MeldType::Ankan, (0..4).map(|k| (4 * t + k) as u8).collect(), false, -1, None)).collect();
+            let mut counts = [0u8; 34];
+            hand.iter().for_each(|&t| counts[t] += 1);
+            let far = calc_shanten_from_counts(&counts, (hand.len() / 3) as u8) > 0;
+            let any = (0..ids.len()).any(|i| {
+                let mut rest = ids.clone();
+                rest.remove(i);
+                HandEvaluator::new(rest, melds.clone()).is_tenpai()
+            });
+            assert!(!(far && any), "{hand:?} with ankan {kans:?}");
+            tenpai += usize::from(any);
+            skipped += usize::from(far);
+        }
+        // The hands reach both sides of the skip.
+        assert!(tenpai > 5_000 && skipped > 5_000, "tenpai {tenpai}, skipped {skipped}");
+    }
 }

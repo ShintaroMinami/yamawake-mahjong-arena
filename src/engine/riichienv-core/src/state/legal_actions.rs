@@ -114,7 +114,16 @@ impl GameStateLegalActions for GameState {
                     && self.players[pid_us].melds.iter().all(|m| !m.opened)
                 {
                     let mut can_riichi = false;
-                    for skip_idx in 0..self.players[pid_us].hand.len() {
+                    // yamawake patch: a hand of shanten 1 or more is not tenpai after any
+                    // discard (a win the test below finds has shanten -1, and one tile
+                    // swapped moves the shanten by at most 1), so its tests are skipped.
+                    let hand = &self.players[pid_us].hand;
+                    let mut counts = [0u8; crate::types::TILE_MAX];
+                    for &t in hand {
+                        counts[usize::from(t / 4)] += 1;
+                    }
+                    let far = crate::shanten::calc_shanten_from_counts(&counts, (hand.len() / 3) as u8) > 0;
+                    for skip_idx in 0..if far { 0 } else { hand.len() } {
                         let mut temp_hand = self.players[pid_us].hand.clone();
                         temp_hand.remove(skip_idx);
                         let calc = crate::hand_evaluator::HandEvaluator::new(

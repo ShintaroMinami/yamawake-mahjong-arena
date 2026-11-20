@@ -5,7 +5,7 @@
 Apache-2.0 (`riichienv-core/LICENSE`, taken from the riichienv 0.4.8 wheel;
 the crate ships no license file of its own). yamawake-mahjong-arena links it statically.
 
-The fork changes six files (`riichienv-core.patch`, against the crates.io
+The fork changes seven files (`riichienv-core.patch`, against the crates.io
 source, made with `diff -u` per file with `a/` and `b/` labels). It adds
 `shanten::HandShanten` (marked "yamawake patch"): a hand's Nyanten suit keys
 and chiitoitsu/kokushi tallies, giving the shanten with one tile added or
@@ -15,7 +15,10 @@ removed by rehashing one suit, or with every tile at once
 users it adds `HandEvaluator::verdict`, what `calc` says of a win (han, fu,
 yakuman) without building the score and the yaku list, removes a division
 search `calc` did not use, and stops `calculate_yaku` filling `yaku_names`,
-which nothing read (the han, fu and yaku ids are unchanged). And it adds
+which nothing read (the han, fu and yaku ids are unchanged). The riichi
+check of the legal actions skips its per-discard tenpai tests when the hand's
+shanten is 1 or more (no discard can leave such a hand tenpai; the same
+actions, tested in `src/rust/eval/shanten.rs`). And it adds
 three opt-in controls to `GameState`, all bit-identical to stock when off:
 two for the wall and one for the end of a kyoku.
 
