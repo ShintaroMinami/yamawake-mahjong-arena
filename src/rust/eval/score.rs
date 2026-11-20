@@ -237,7 +237,12 @@ impl Scorer {
         self.cache.take().map(|(c, _)| c)
     }
 
-    /// `evaluate` through the cache when one is attached.
+    /// `evaluate` through the cache when one is attached. The cache holds the verdicts of the hands with their red
+    /// fives taken out (each read as a plain copy): `reds` red fives (held or won on) add `reds` han of akadora to a
+    /// win below yakuman and change nothing else, as every candidate (division and winning group) of the evaluator
+    /// below yakuman gains the same han, so the best one stays the best and no yakuman candidate can pass it; a hand
+    /// that does not win without them does not win with them. A yakuman's verdict could change (a candidate below
+    /// yakuman might pass it), so a yakuman with red fives is evaluated as it is.
     fn eval_cached(
         &mut self,
         hand13: &Counts,
@@ -250,16 +255,28 @@ impl Scorer {
         let Some((cache, id)) = self.cache.as_mut() else {
             return self.evaluate(hand13, akas, win_tile_type, win_is_aka, tsumo, riichi);
         };
-        let key = eval_key(*id, hand13, akas, win_tile_type, win_is_aka, tsumo, riichi);
-        if let Some(&e) = cache.map.get(&key) {
-            cache.hits += 1;
-            return e;
+        let plain = [false; 3];
+        let key = eval_key(*id, hand13, &plain, win_tile_type, false, tsumo, riichi);
+        let e = match cache.map.get(&key) {
+            Some(&e) => {
+                cache.hits += 1;
+                e
+            }
+            None => {
+                let e = self.evaluate(hand13, &plain, win_tile_type, false, tsumo, riichi);
+                let (cache, _) = self.cache.as_mut().expect("attached");
+                cache.misses += 1;
+                cache.map.insert(key, e);
+                e
+            }
+        };
+        // `evaluate` reads four plain copies of a five as holding its red one, with or without `akas`.
+        let reds = (0..3).filter(|&s| akas[s] && hand13[4 + 9 * s] < 4).count() as u32 + u32::from(win_is_aka);
+        match e {
+            Some((han, fu, false)) => Some((han + reds, fu, false)),
+            Some((_, _, true)) if reds > 0 => self.evaluate(hand13, akas, win_tile_type, win_is_aka, tsumo, riichi),
+            e => e,
         }
-        let e = self.evaluate(hand13, akas, win_tile_type, win_is_aka, tsumo, riichi);
-        let (cache, _) = self.cache.as_mut().expect("attached");
-        cache.misses += 1;
-        cache.map.insert(key, e);
-        e
     }
 
     fn pts(&mut self, han: u32, fu: u32, tsumo: bool) -> f64 {
@@ -750,5 +767,56 @@ mod ura_tests {
             }
         }
         assert!(wins > 1000, "{wins} wins of {total}");
+    }
+
+    /// The cached verdicts (kept without red fives, `Scorer::eval_cached`) equal the direct ones: winning hands of
+    /// every form (`yaku_check::winning_hand`, yakuman among them), each with every valid set of red fives held and
+    /// won on, tsumo or ron, riichi or not.
+    #[test]
+    fn cached_verdicts_equal_direct_ones() {
+        use crate::eval::yaku_check::{Rng, winning_hand};
+        let mut r = Rng(0x2545_f491_4f6c_dd1d);
+        let (mut checked, mut red_wins, mut red_yakuman) = (0, 0, 0);
+        let mut made = 0;
+        while made < 6000 {
+            let Some((tiles, melds)) = winning_hand(&mut r) else { continue };
+            made += 1;
+            let code = |m: &riichienv_core::types::Meld| match m.meld_type {
+                MeldType::Chi => 0,
+                MeldType::Pon => 1,
+                MeldType::Daiminkan => 2,
+                MeldType::Ankan => 3,
+                _ => 4,
+            };
+            let spec: Vec<(u8, Vec<u8>, bool, i8)> = melds.iter().map(|m| (code(m), m.tiles.clone(), m.opened, m.from_who)).collect();
+            let dora: Vec<u8> = (0..r.below(3)).map(|_| r.below(34) as u8).collect();
+            let (pw, rw) = (27 + r.below(4) as u8, 27 + r.below(2) as u8);
+            let mut cached = Scorer::new(false, pw, rw, dora.clone(), 0, spec.clone());
+            cached.attach_cache(EvalCache::default());
+            let direct = Scorer::new(false, pw, rw, dora, 0, spec);
+            let win = usize::from(tiles[tiles.len() - 1] / 4);
+            let mut h = [0u8; 34];
+            tiles[..tiles.len() - 1].iter().for_each(|&t| h[usize::from(t / 4)] += 1);
+            // Every set of red fives the hand can hold (a five it holds) and whether the winning five is red.
+            for mask in 0..16u8 {
+                let akas: Akas = std::array::from_fn(|s| mask >> s & 1 == 1);
+                let red_win = mask & 8 != 0;
+                let fives_ok = (0..3).all(|s| !akas[s] || h[4 + 9 * s] > 0);
+                let win_ok = !red_win || aka_slot(win).is_some_and(|s| !akas[s]);
+                if !fives_ok || !win_ok {
+                    continue;
+                }
+                for (tsumo, riichi) in [(true, false), (false, false), (true, true), (false, true)] {
+                    let a = cached.eval_cached(&h, &akas, win, red_win, tsumo, riichi);
+                    let b = direct.evaluate(&h, &akas, win, red_win, tsumo, riichi);
+                    assert_eq!(a, b, "{h:?} akas {akas:?} win {win} red {red_win} tsumo {tsumo} riichi {riichi}");
+                    checked += 1;
+                    let reds = mask != 0;
+                    red_wins += usize::from(reds && b.is_some());
+                    red_yakuman += usize::from(reds && b.is_some_and(|e| e.2));
+                }
+            }
+        }
+        assert!(red_wins > 5000 && red_yakuman > 200, "checked {checked}, red wins {red_wins}, red yakuman {red_yakuman}");
     }
 }

@@ -9,10 +9,10 @@ use riichienv_core::hand_evaluator::HandEvaluator;
 use riichienv_core::types::{Conditions, Meld, MeldType, Wind};
 
 /// A deterministic xorshift draw in `0..n`.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    fn below(&mut self, n: usize) -> usize {
+    pub(super) fn below(&mut self, n: usize) -> usize {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -39,7 +39,7 @@ fn allowed(style: usize, suit: usize, t: usize) -> bool {
 }
 
 /// One generated winning hand: the concealed 14 tile ids (the winning tile last) and the melds.
-fn winning_hand(r: &mut Rng) -> Option<(Vec<u8>, Vec<Meld>)> {
+pub(super) fn winning_hand(r: &mut Rng) -> Option<(Vec<u8>, Vec<Meld>)> {
     let mut count = [0u8; 34];
     let (style, suit) = (r.below(6), r.below(3));
     let form = r.below(10);
