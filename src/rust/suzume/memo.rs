@@ -33,4 +33,11 @@ impl SeatMemo {
         self.riichi_tile = None;
         self.pf = PfMemo::default();
     }
+
+    /// Keep only the exact caches (`eval`, `solves`), for another play of the same seat in the same kyoku
+    /// (`playout` reuses them across the play-outs from one position).
+    pub fn keep_caches(&mut self) {
+        self.riichi_tile = None;
+        self.pf = PfMemo::default();
+    }
 }

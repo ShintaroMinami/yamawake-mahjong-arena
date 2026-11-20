@@ -135,6 +135,11 @@ impl GameSlot {
         }
     }
 
+    /// Swap the seats' suzume memos with `memos` (`playout` carries the caches from one play-out to the next).
+    pub fn swap_memos(&mut self, memos: &mut [SeatMemo; 4]) {
+        std::mem::swap(&mut self.suzume_memo, memos);
+    }
+
     /// One in-loop bot's decision for `seat`.
     pub fn bot_action(&mut self, seat: u8, bot: &Bot) -> Result<Action, String> {
         match bot {

@@ -20,6 +20,7 @@ use riichienv_core::state::legal_actions::GameStateLegalActions;
 use serde_json::{Map, Value, json};
 
 use crate::arena::{Bot, GameSlot};
+use crate::suzume::SeatMemo;
 
 /// A tile kind: 0..34 the tile types (red fives excluded), 34 / 35 / 36 the red 5m / 5p / 5s.
 type Kind = u8;
@@ -1019,9 +1020,20 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
 
 /// One play-out from a rebuilt position: `seat`'s next decisions forced by `forced` (mjai actions), the rest by
 /// `bots`, until the kyoku ends.
-fn roll(b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: bool, samples: bool)
-        -> Result<Value, String> {
+/// `memos`: the seats' suzume caches, carried from the play-outs before from the same position (only the exact
+/// caches, so the play is the one an empty memo gives) and handed back for the next.
+fn roll(b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: bool, samples: bool,
+        memos: &mut [SeatMemo; 4]) -> Result<Value, String> {
     let mut slot = b.slot.fork();
+    slot.swap_memos(memos);
+    let out = roll_on(&mut slot, b, seat, forced, bots, record, samples);
+    slot.swap_memos(memos);
+    memos.iter_mut().for_each(SeatMemo::keep_caches);
+    out
+}
+
+fn roll_on(slot: &mut GameSlot, b: &Built, seat: Option<u8>, forced: &[Value], bots: &[Bot; 4], record: bool,
+           samples: bool) -> Result<Value, String> {
     let k0 = slot.kyoku_events().len();
     let mut queue: VecDeque<&Value> = forced.iter().collect();
     // A forced reach between its riichi and its discard.
@@ -1152,7 +1164,10 @@ pub fn play_out_sample(p: &Value, sample: &Value, bots: &[Bot; 4], split: bool, 
         Err(e) => return vec![Err(e)],
     };
     match build(&events, sample, split) {
-        Ok(b) => lists.iter().map(|l| roll(&b, seat, l, bots, record, samples)).collect(),
+        Ok(b) => {
+            let mut memos: [SeatMemo; 4] = Default::default();
+            lists.iter().map(|l| roll(&b, seat, l, bots, record, samples, &mut memos)).collect()
+        }
         Err(e) => lists.iter().map(|_| Err(e.clone())).collect(),
     }
 }
