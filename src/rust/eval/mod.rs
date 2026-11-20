@@ -8,3 +8,5 @@ pub mod feat;
 pub mod hash;
 pub mod score;
 pub mod shanten;
+#[cfg(test)]
+mod yaku_check;
