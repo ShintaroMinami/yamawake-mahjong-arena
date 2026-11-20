@@ -240,11 +240,11 @@ Append them to the player spec as `:name=value`:
 - The rules apply as in any game, e.g. passing on a ron leaves the hand furiten.
 - They combine with suzume's style parameters and coordinates; `call=0` overrides `call_shift` and `call_rate`.
 
-## Playing a kyoku out from its middle
+## Play-outs from the middle of a kyoku
 
-From a position in the middle of a kyoku, in-loop bots (suzume x 4 by default) play to the kyoku's end and the
-result comes back (since 2026-11-20): e.g. to compare the specified seat's candidate first moves. Many positions at
-once run in parallel inside Rust.
+From a position in the middle of a kyoku, in-loop bots (suzume x 4 by default) play to the end of the kyoku and the
+result comes back: e.g. to change the specified seat's move and compare the results. Several positions passed at once
+run in parallel inside Rust.
 
 ``` python
     from yamawake import legal_actions, play_out
@@ -253,12 +253,10 @@ once run in parallel inside Rust.
     res = play_out([{**p, "actions": cands, "samples": [{"seed": 0}, {"seed": 1}]}])
     res[0][a][s]["delta"]                        # the four seats' score change to the kyoku's end, move a, sample s
 ```
-- The hidden tiles (the other hands, the wall left, the dead wall) are given in full or in part by the samples, or
-  filled from a seed. Split walls (`split_wall=True`) work too.
-- The position is rebuilt by replaying the kyoku on the engine, so furiten, ippatsu and the like are the engine's
-  own; a recorded arena game cut at a decision plays on exactly as it did.
-- Positions, samples, results, the checks made and the speed (about 1,500 play-outs from mid-kyoku per second on all cores of an Apple
-  M4 Pro): [`docs/play_out_spec.md`](docs/play_out_spec.md) (Japanese).
+- The hidden tiles (the other hands, the wall left and so on) are given in full or in part as samples (`samples`), or
+  generated from a seed. Split walls (`split_wall=True`) work too.
+- The forms of positions and samples, the return values and other details: [`docs/play_out_spec.md`](docs/play_out_spec.md)
+  (Japanese).
 
 ## Playing your own agent
 
