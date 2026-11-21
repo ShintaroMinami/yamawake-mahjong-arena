@@ -5,13 +5,18 @@
     player = SuzumePlayer("suzume")             # any suzume player spec
     action = player.act(obs, kyoku_events)      # riichienv Observation -> Action
     reply = player.act_mjai(obs, kyoku_events)  # the same move as an mjai dict
+    r = player.choose(obs, kyoku_events)        # the move and a score per legal action (A1 sets)
 
 The environment hands the seat a riichienv `Observation` and the kyoku's
 mjai events as the seat saw them (from its `start_kyoku`; others' draws may be
 masked). One `SuzumePlayer` serves one seat: it keeps the kyoku memo the
-arena keeps per seat (the riichi tile, the push / fold history) and starts
-it over at every new `start_kyoku`, so it plays the moves the in-loop bot
-plays. The decision itself is the in-loop bot's, in Rust (`_core.SuzumeSeat`).
+arena keeps per seat (the tile chosen with a riichi, for the discard right
+after the declaration, and the solve caches; for `pf=1` sets also the push /
+fold history, which the A1 sets such as `suzume` do not use) and starts it
+over at every new `start_kyoku`, so it plays the moves the in-loop bot plays.
+The decision itself is the in-loop bot's, in Rust (`_core.SuzumeSeat`).
+`choose` gives the move with a score per legal action in one call, a riichi
+with its discard (`docs/play_out_spec.md` section 5).
 
 `SuzumeObservationAgent` is the same player on the arena's observation lane
 (a Python agent, one `SuzumePlayer` per game and seat): it plays the games the

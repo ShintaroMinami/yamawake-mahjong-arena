@@ -2,9 +2,12 @@
 //!
 //! Owned by the game that drives the bot (`arena::GameSlot`, one per
 //! seat), so a game advanced by one worker thread at a time needs no lock;
-//! cleared at every kyoku start. Everything kept here but `pf` is exact: a
-//! decision made with a warm memo is the decision made with an empty one
-//! (`pf` carries the push / fold state model's history, `pf=1`).
+//! cleared at every kyoku start. The caches (`eval`, `solves`) are exact: a
+//! decision made with them warm is the decision made with them empty. The
+//! other two fields are part of the decisions: `riichi_tile` carries the tile
+//! an A1 bot chose with its riichi to the discard right after the declaration
+//! (without it that discard is chosen anew and can differ), and `pf` carries
+//! the push / fold state model's history (`pf=1` sets; A1 sets do not use it).
 
 use crate::eval::score::EvalCache;
 

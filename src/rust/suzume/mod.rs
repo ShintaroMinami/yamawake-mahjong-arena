@@ -81,8 +81,9 @@ pub fn decide(view: &MjView, cfg: &SuzumeConfig) -> Result<(Action, u8), String>
     decide_with_memo(view, cfg, &mut SeatMemo::default())
 }
 
-/// `decide` with the seat's per-kyoku memo (`memo::SeatMemo`): the same
-/// decision, faster when the memo is warm.
+/// `decide` with the seat's per-kyoku memo (`memo::SeatMemo`): faster when
+/// its caches are warm; with `pf=1` its push / fold history is part of the
+/// decision (`decide` starts from an empty memo).
 pub fn decide_with_memo(view: &MjView, cfg: &SuzumeConfig, memo: &mut SeatMemo) -> Result<(Action, u8), String> {
     if view.legal.is_empty() {
         return Err("suzume: no legal action".into());
