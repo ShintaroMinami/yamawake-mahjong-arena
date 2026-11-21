@@ -72,6 +72,16 @@ agent = build_agent("suzume-rla225")   # コマンドラインと同じ指定
 
 `run_match` の引数は、コマンドラインのオプションと同じです（`walls`、`wall_base`、`single_kyoku`、`record_logs`、`save_scores` など）。統計は `play_stats=True` のときだけ集計し、`r.play_stats()` で読めます。時間は `r.time_stats()`、コマンドラインと同じ表は `yamawake.report.report(r)` で得られます。`run_match` 自体は何も表示しません。
 
+**対局を分けて回す**：`match_plan(players, walls=..., wall_base=...)`（0.16.0 から）は、`run_match` が打つ半荘の一覧を、打たずに返します。半荘ごとに、牌山の番号、席の回転、コアの seed、席ごとのエージェント、枠ごとの席、牌山があり、並びは `run_match` と同じです（牌山ごと、その中で回転の順）。好きな単位に分けて `play_games(**plan.play_args(games))` で打つと、それぞれの半荘で `run_match` と同じ得点になります。`run_match` 自体もこの一覧で打ちます。
+
+``` python
+from yamawake import RulebotAgent, TsumogiriAgent, lineup, match_plan, play_games
+
+plan = match_plan(lineup(TsumogiriAgent(), RulebotAgent(), "1v3"), walls=100)
+part = plan.games[:40]                          # 例えば最初の 10 牌山（各 4 回転）
+scores, _ = play_games(**plan.play_args(part))  # 席ごとの得点（半荘 × 4）
+```
+
 **1 局面の判断**：`decide(プレイヤーの指定, 観測, kyoku_events)` は、rulebot か suzume の判断を 1 つ返します。
 suzume は `rule` に `a1` を、rulebot は `debug=True` で判断の材料を付けて返します。
 

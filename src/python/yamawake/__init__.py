@@ -28,16 +28,17 @@ from yamawake.agents import (LANE_SUZUME, LANE_OBSERVATION, LANE_RULEBOT,
                               register_agent, register_resolver)
 from yamawake.context import Decision, SeatTracker, decision_of
 from yamawake.driver import mjai_action_spec, play_games
-from yamawake.match import (MatchResult, SlotResult, lineup, run_match)
+from yamawake.match import (GamePlan, MatchPlan, MatchResult, SlotResult, lineup, match_plan, run_match)
 from yamawake.playout import legal_actions, play_out, seat_options
 from yamawake.rules import DEFAULT_RULE, UmaRule, rank_of
 from yamawake.walls import FRESH, blob_for_wall, standard_walls
 
 __all__ = ["DEFAULT_RULE", "FRESH", "LANE_SUZUME", "LANE_OBSERVATION",
-           "LANE_RULEBOT", "LANE_TSUMOGIRI", "ArenaAgent", "PythonTsumogiriAgent", "Decision", "MatchResult",
+           "LANE_RULEBOT", "LANE_TSUMOGIRI", "ArenaAgent", "PythonTsumogiriAgent", "Decision", "GamePlan",
+           "MatchPlan", "MatchResult",
            "SuzumeAgent", "RulebotAgent", "SeatTracker", "SelfPlayLoop",
            "SlotResult", "TsumogiriAgent", "UmaRule", "blob_for_wall",
-           "build_agent", "decide", "decision_of", "legal_actions", "lineup", "mjai_action_spec",
+           "build_agent", "decide", "decision_of", "legal_actions", "lineup", "match_plan", "mjai_action_spec",
            "suzume_rules", "play_games", "play_out", "rank_of",
            "register_agent", "register_resolver", "run_match", "run_sp", "seat_options",
            "standard_walls"]

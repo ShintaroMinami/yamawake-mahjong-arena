@@ -72,6 +72,16 @@ agent = build_agent("suzume-rla225")   # same spec as on the command line
 
 `run_match` takes the same arguments as the command-line options (`walls`, `wall_base`, `single_kyoku`, `record_logs`, `save_scores` and so on). Statistics are collected only when `play_stats=True` and can be read with `r.play_stats()`. Timing is in `r.time_stats()`, and `yamawake.report.report(r)` gives the same tables as the command line. `run_match` itself prints nothing.
 
+**Running a match in parts**: `match_plan(players, walls=..., wall_base=...)` (since 0.16.0) returns the hanchan `run_match` plays, without playing them. Each has its wall index, seat rotation, core seed, agent per seat, seat per slot and wall, in `run_match`'s order (by wall, then rotation). Split them into any parts and play each with `play_games(**plan.play_args(games))`: every hanchan gets the scores `run_match` gives it. `run_match` itself plays from this list.
+
+``` python
+from yamawake import RulebotAgent, TsumogiriAgent, lineup, match_plan, play_games
+
+plan = match_plan(lineup(TsumogiriAgent(), RulebotAgent(), "1v3"), walls=100)
+part = plan.games[:40]                          # e.g. the first 10 walls (4 rotations each)
+scores, _ = play_games(**plan.play_args(part))  # scores by seat (hanchan x 4)
+```
+
 **Single-position decisions**: `decide(player spec, observation, kyoku_events)` returns one decision of rulebot or suzume.
 suzume returns it with `a1` as `rule`; rulebot, with `debug=True`, attaches the inputs to its decision.
 

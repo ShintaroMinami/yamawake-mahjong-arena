@@ -340,6 +340,106 @@ def _rotations(slot_agent: list[int]) -> int:
     return ROTATIONS
 
 
+@dataclass
+class GamePlan:
+    """One game of a match plan (`match_plan`).
+
+    Attributes:
+        wall: The wall's index in the match (0 .. walls - 1).
+        rotation: The seat rotation: slot j sits at seat (j + rotation) % 4.
+        seed: The core's game seed.
+        seat_agent: The agent (an index into `MatchPlan.agents`) at each seat.
+        seat_of_slot: Each slot's seat.
+        wall_blob: The wall matrix the game is dealt from (`walls.blob_for_wall`).
+    """
+
+    wall: int
+    rotation: int
+    seed: int
+    seat_agent: tuple[int, ...]
+    seat_of_slot: list[int]
+    wall_blob: bytes = field(repr=False)
+
+
+@dataclass
+class MatchPlan:
+    """The games `run_match` plays, in its order (wall-major), to run them in parts of one's own: each game
+    through `driver.play_games(seeds, seat_maps, agents, wall_blobs=...)` gives the scores `run_match` gets for it.
+
+    Attributes:
+        agents: The distinct agents (one agent object may fill several slots).
+        slot_agent: Each slot's index in `agents`.
+        seat_cycle: Rotations that give distinct games for this seating: 2 for a 2v2 (`[A, B, A, B]`), else 4.
+        rotations: Games per wall: `seat_cycle`, or 1 with `rotate=False` (wall w at rotation w % seat_cycle).
+        games: One `GamePlan` per game.
+        protocol: The protocol keys `run_match` records for the walls and seating (`walls`, `rotations`,
+            `slot_agent`, and `wall_base` or `wall_seed` / `wall_start`).
+        wall_tag: The wall part of `run_match`'s log names (the wall base, or `s<seed>-<start>`).
+    """
+
+    agents: list
+    slot_agent: list[int]
+    seat_cycle: int
+    rotations: int
+    games: list[GamePlan]
+    protocol: dict
+    wall_tag: str
+
+    def play_args(self, games: list[GamePlan] | None = None) -> dict:
+        """`driver.play_games`' `seeds`, `seat_maps`, `agents` and `wall_blobs` for `games` (all by default)."""
+        gs = self.games if games is None else games
+        return {"seeds": [g.seed for g in gs], "seat_maps": [g.seat_agent for g in gs], "agents": self.agents,
+                "wall_blobs": [g.wall_blob for g in gs]}
+
+
+def match_plan(players: list, walls: int | None = None, wall_base: int | str | None = None,
+               wall_seed: int | None = None, wall_start: int = 0, rotate: bool = True) -> MatchPlan:
+    """The games of `run_match` with these players and walls, without playing them.
+
+    Args:
+        players: Four agents; slot j is `players[j]`.
+        walls, wall_base, wall_seed, wall_start, rotate: As `run_match` (the standard set by default; `FRESH`
+            draws a new base).
+
+    Returns:
+        A `MatchPlan`: the agents, the seating, and per game its wall, rotation, seed, seat map and wall blob.
+
+    Raises:
+        ValueError: Not four players, or a bad combination of the wall arguments.
+    """
+    if len(players) != 4:
+        raise ValueError("a match takes exactly four players")
+    agents, slot_agent = _slot_agents(players)
+    std = standard_walls()
+    walls = walls or std["default_walls"]
+    if wall_seed is not None:
+        if wall_base is not None:
+            raise ValueError("pass wall_base or wall_seed, not both")
+        idx = range(wall_start, wall_start + walls)
+        blobs = [matrix_blob(seeded_matrix(wall_seed, i)) for i in idx]
+        game_seed = [(wall_seed << 32) | i for i in idx]        # the core's u64 game seed
+        walls_at, tag = {"wall_seed": wall_seed, "wall_start": wall_start}, f"s{wall_seed}-{wall_start}"
+    elif wall_start:
+        raise ValueError("wall_start needs wall_seed")
+    else:
+        if wall_base is None:
+            base = std["wall_base"]
+        elif wall_base == FRESH:
+            base, _ = fresh_wall_ids(1)
+        else:
+            base = int(wall_base)
+        blobs = [blob_for_wall(base + w) for w in range(walls)]
+        game_seed = [base + w for w in range(walls)]
+        walls_at, tag = {"wall_base": base}, base
+    cycle = _rotations(slot_agent)
+    games = [GamePlan(w, r, game_seed[w], tuple(slot_agent[(s - r) % 4] for s in range(4)),
+                      [(j + r) % 4 for j in range(4)], blobs[w])
+             for w in range(walls) for r in (range(cycle) if rotate else [w % cycle])]
+    rotations = cycle if rotate else 1
+    return MatchPlan(agents, slot_agent, cycle, rotations, games,
+                     {"walls": walls, "rotations": rotations, "slot_agent": list(slot_agent), **walls_at}, tag)
+
+
 def lineup(challenger, opponent, mode: str = "1v3") -> list:
     """The two standard seatings, as a `players` list.
 
@@ -442,40 +542,12 @@ def run_match(players: list, walls: int | None = None,
         game_mode = SINGLE_KYOKU
     rule = rule or DEFAULT_RULE
 
-    agents, slot_agent = _slot_agents(players)
-
-    std = standard_walls()
-    walls = walls or std["default_walls"]
-    if wall_seed is not None:
-        if wall_base is not None:
-            raise ValueError("pass wall_base or wall_seed, not both")
-        idx = range(wall_start, wall_start + walls)
-        blobs = [matrix_blob(seeded_matrix(wall_seed, i)) for i in idx]
-        game_seed = [(wall_seed << 32) | i for i in idx]        # the core's u64 game seed
-        base, walls_at = None, {"wall_seed": wall_seed, "wall_start": wall_start}
-    elif wall_start:
-        raise ValueError("wall_start needs wall_seed")
-    elif wall_base is None:
-        base = std["wall_base"]
-    elif wall_base == FRESH:
-        base, _ = fresh_wall_ids(1)
-    else:
-        base = int(wall_base)
-    if wall_seed is None:
-        blobs = [blob_for_wall(base + w) for w in range(walls)]
-        game_seed = [base + w for w in range(walls)]
-        walls_at = {"wall_base": base}
-
-    cycle = _rotations(slot_agent)
-    rotations = cycle if rotate else 1
-    seeds, maps, game_blobs, seat_of_slot = [], [], [], []
-    for w in range(walls):
-        for r in (range(cycle) if rotate else [w % cycle]):
-            seeds.append(game_seed[w])
-            # Rotation r seats slot j at seat (j + r) % 4.
-            seat_of_slot.append([(j + r) % 4 for j in range(4)])
-            maps.append(tuple(slot_agent[(s - r) % 4] for s in range(4)))
-            game_blobs.append(blobs[w])
+    plan = match_plan(players, walls, wall_base, wall_seed, wall_start, rotate)
+    agents, walls, rotations, cycle = plan.agents, plan.protocol["walls"], plan.rotations, plan.seat_cycle
+    seeds = [g.seed for g in plan.games]
+    maps = [g.seat_agent for g in plan.games]
+    game_blobs = [g.wall_blob for g in plan.games]
+    seat_of_slot = [g.seat_of_slot for g in plan.games]
 
     t0, c0 = time.time(), time.process_time()
     timing = [[0, 0.0] for _ in range(len(agents) + 1)]     # agents, then the arena
@@ -507,10 +579,7 @@ def run_match(players: list, walls: int | None = None,
         slots.append(SlotResult(j, players[j].describe().get("name", f"slot{j}"),
                                 float(rank.mean()), se, float(pt.mean()), se_pt))
 
-    protocol = {"walls": walls, "rotations": rotations,
-                "slot_agent": list(slot_agent), **walls_at,
-                "split_wall": split_wall, "game_mode": game_mode,
-                "rule": rule_label(rule)}
+    protocol = {**plan.protocol, "split_wall": split_wall, "game_mode": game_mode, "rule": rule_label(rule)}
     if not rotate:
         protocol.update(rotate=False, seat_cycle=cycle)
     kyoku = None
@@ -524,8 +593,7 @@ def run_match(players: list, walls: int | None = None,
                           **dict(zip(A1_OPTION_KEYS, np.array(options, dtype=np.int64).transpose(2, 0, 1)))}
                          if play_stats else None, timing, cpu_seconds)
     if record_logs is not None:
-        _write_logs(Path(record_logs), logs, seat_of_slot, players,
-                    base if wall_seed is None else f"s{wall_seed}-{wall_start}", traces)
+        _write_logs(Path(record_logs), logs, seat_of_slot, players, plan.wall_tag, traces)
     if save_scores is not None:
         Path(save_scores).parent.mkdir(parents=True, exist_ok=True)
         np.savez(save_scores, scores=scores, seat_of_slot=seat_of_slot,
