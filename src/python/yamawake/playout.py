@@ -56,7 +56,7 @@ def legal_actions(position: dict) -> list[dict]:
 
 
 def seat_options(positions: list[dict], player: str = "suzume", threads: int | None = None) -> list[dict]:
-    """Per position, the seat's legal actions and the bot's choice.
+    """Per position, the seat's legal actions, the bot's choice and, for suzume, a score per action.
 
     Args:
         positions: As for `legal_actions`.
@@ -64,8 +64,12 @@ def seat_options(positions: list[dict], player: str = "suzume", threads: int | N
         threads: Threads to use (`None`: every core).
 
     Returns:
-        `{"legal": legal_actions(...), "choice": the bot's action}` per position; a riichi is the `reach` with its
-        discard.
+        Per position (`docs/play_out_spec.md` section 5): `legal` (`legal_actions(...)`), `choice` (the bot's action;
+        a riichi is the `reach` with its discard), `choice_index` (its place in `legal`), `basis` (`"model"` when the
+        choice is the best of `scores`, else the rule or bot that chose it), `scores` (per legal action, the
+        log-probability of its option in suzume's decision, the play-style options applied; `None` for an action no
+        model scored, and the whole list `None` for a rule's decision or another bot) and, for a set with P / M / F
+        experts, `pmf`.
 
     Raises:
         ValueError: A position fails (its index and why).

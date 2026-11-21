@@ -149,12 +149,37 @@ def test_the_logged_move_is_legal_and_suzume_chooses_it(games):
         positions.append((p, act))
     opts = seat_options([p for p, _ in positions], bot)
     for (p, act), o in zip(positions, opts):
-        assert o["choice"] in o["legal"]
+        assert o["choice"] in o["legal"] and o["legal"][o["choice_index"]] == o["choice"]
         if bot == "suzume":
             # The game was suzume's own: its choice at the cut is the move it made (red / tsumogiri included).
             c, a = o["choice"], act
             assert (c["type"], c.get("pai"), sorted(c.get("consumed", []))) == \
                    (a["type"], a.get("pai"), sorted(a.get("consumed", [])))
+        else:
+            assert o["basis"] == "rulebot" and o["scores"] is None
+
+
+def test_suzume_scores_every_legal_action_and_its_best_is_the_choice(games):
+    """seat_options' scores (docs/play_out_spec.md section 5): aligned with `legal`, log-probabilities, the best the
+    choice when the model decided, with and without a play-style mix."""
+    bot, split, ks = games
+    if split or bot != "suzume":
+        pytest.skip("one suzume game set is enough")
+    positions = [{"events": ev[:j], "seat": _logged(ev, j)[0]} for ev, j in _cuts(ks, 60, seed=2)]
+    for spec in ("suzume", "suzume:aggression=0.6:call_shift=0.3"):
+        bases = set()
+        for o in seat_options(positions, spec):
+            bases.add(o["basis"])
+            sc = o["scores"]
+            if o["basis"] in ("win", "kyushu_kyuhai"):
+                assert sc is None
+                continue
+            if sc is None:
+                continue
+            assert len(sc) == len(o["legal"]) and all(v is not None and v <= 1e-9 for v in sc)
+            if o["basis"] == "model":
+                assert sc[o["choice_index"]] == max(sc)
+        assert "model" in bases
 
 
 @pytest.fixture(scope="module")

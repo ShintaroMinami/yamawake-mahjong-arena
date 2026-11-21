@@ -229,10 +229,15 @@ impl GameSlot {
 impl GameSlot {
     /// Decide one A1 bot in-loop (`suzume::a1::decide` with the seat's kyoku memo).
     pub fn a1_action(&mut self, seat: u8, a1: &crate::suzume::a1::A1Config) -> Result<Action, String> {
+        self.a1_explained(seat, a1).map(|e| e.action)
+    }
+
+    /// `a1_action` with what chose the action and the options' scores (`suzume::a1::decide_explained`).
+    pub fn a1_explained(&mut self, seat: u8, a1: &crate::suzume::a1::A1Config) -> Result<crate::suzume::a1::Explained, String> {
         let obs = self.state.get_observation(seat);
-        let action = crate::suzume::a1::decide(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])?;
-        self.count_options(seat, &obs.legal_actions_method(), &action);
-        Ok(action)
+        let e = crate::suzume::a1::decide_explained(&obs, &self.kyoku_events, a1, &mut self.suzume_memo[usize::from(seat)])?;
+        self.count_options(seat, &obs.legal_actions_method(), &e.action);
+        Ok(e)
     }
 
     /// Count one decision's riichi / call options into `a1_options` (decisions and kyoku).

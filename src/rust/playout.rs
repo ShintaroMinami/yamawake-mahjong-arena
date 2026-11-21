@@ -871,26 +871,30 @@ fn to_mjai(a: &Action, drawn: Option<u8>) -> Value {
 
 /// The seat's legal actions now, in mjai form, a riichi spelled out per declaring discard (on a fork of the slot).
 fn legal_mjai(slot: &GameSlot, seat: u8) -> Result<Vec<Value>, String> {
+    Ok(legal_entries(slot, seat)?.into_iter().map(|(m, _, _)| m).collect())
+}
+
+/// `legal_mjai`, each with its engine action (for a riichi, the discard after it) and whether it declares riichi.
+fn legal_entries(slot: &GameSlot, seat: u8) -> Result<Vec<(Value, Action, bool)>, String> {
     let legal = slot.state._get_legal_actions_internal(seat);
     let drawn = slot.state.drawn_tile;
-    let mut out: Vec<Value> = Vec::new();
+    let mut out: Vec<(Value, Action, bool)> = Vec::new();
+    let mut push = |m: Value, a: Action, declaring: bool| {
+        if !out.iter().any(|(x, _, _)| *x == m) {
+            out.push((m, a, declaring));
+        }
+    };
     for a in &legal {
-        let m = if a.action_type == ActionType::Riichi {
+        if a.action_type == ActionType::Riichi {
             let mut f = slot.fork();
             f.step(&HashMap::from([(seat, a.clone())]))?;
             for d in f.state._get_legal_actions_internal(seat) {
                 let mut m = to_mjai(&d, drawn);
                 m["type"] = json!("reach");
-                if !out.contains(&m) {
-                    out.push(m);
-                }
+                push(m, d, true);
             }
-            continue;
         } else {
-            to_mjai(a, drawn)
-        };
-        if !out.contains(&m) {
-            out.push(m);
+            push(to_mjai(a, drawn), a.clone(), false);
         }
     }
     Ok(out)
@@ -997,15 +1001,25 @@ pub fn legal_actions(p: &Value) -> Result<Vec<Value>, String> {
     legal_mjai(&b.slot, seat)
 }
 
-/// `seat_options` for one position: `{"legal": ..., "choice": ...}`.
+/// `seat_options` for one position: `{"legal", "choice", "choice_index", "basis", "scores"}` and, for a set with
+/// P / M / F experts, `"pmf"` (docs/play_out_spec.md section 5). An A1 bot's (suzume's) decision gives the scores
+/// (`suzume::a1::decide_explained`): per legal action the log-probability of its option in the decision, null for an
+/// action no model scored; another bot's gives none (`"scores": null`, `"basis"`: the bot's kind).
 pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
     let (events, seat) = position_parts(p)?;
     let seat = seat.ok_or("seat_options needs the seat")?;
     let mut b = build(&events, &probe_sample(p, seat), false)?;
     seat_to_act(&b.slot, seat)?;
-    let legal = legal_mjai(&b.slot, seat)?;
+    let entries = legal_entries(&b.slot, seat)?;
     let drawn = b.slot.state.drawn_tile;
-    let a = b.slot.bot_action(seat, bot)?;
+    let explained = match bot {
+        Bot::A1(a1) => Some(b.slot.a1_explained(seat, a1)?),
+        _ => None,
+    };
+    let a = match &explained {
+        Some(e) => e.action.clone(),
+        None => b.slot.bot_action(seat, bot)?,
+    };
     let choice = if a.action_type == ActionType::Riichi {
         b.slot.step(&HashMap::from([(seat, a)]))?;
         let d = b.slot.bot_action(seat, bot)?;
@@ -1015,7 +1029,33 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
     } else {
         to_mjai(&a, drawn)
     };
-    Ok(json!({"legal": legal, "choice": choice}))
+    let legal: Vec<Value> = entries.iter().map(|(m, _, _)| m.clone()).collect();
+    let choice_index = legal.iter().position(|m| *m == choice);
+    let (basis, scores, pmf) = match &explained {
+        Some(e) => {
+            let scores = (!e.scored.is_empty()).then(|| {
+                entries
+                    .iter()
+                    .map(|(_, a, declaring)| crate::suzume::a1::option_index(&e.scored, a, *declaring).map(|i| e.scored[i].1))
+                    .collect::<Vec<_>>()
+            });
+            (e.basis, json!(scores), e.pmf)
+        }
+        None => {
+            let kind = match bot {
+                Bot::Rulebot(_) => "rulebot",
+                Bot::Suzume(_) => "suzume_rules",
+                Bot::Tsumogiri => "tsumogiri_bot",
+                Bot::A1(_) => unreachable!("an A1 bot is explained"),
+            };
+            (kind, Value::Null, None)
+        }
+    };
+    let mut out = json!({"legal": legal, "choice": choice, "choice_index": choice_index, "basis": basis, "scores": scores});
+    if let Some(p) = pmf {
+        out["pmf"] = json!(p);
+    }
+    Ok(out)
 }
 
 /// One play-out from a rebuilt position: `seat`'s next decisions forced by `forced` (mjai actions), the rest by

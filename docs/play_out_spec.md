@@ -31,7 +31,7 @@
 from yamawake import legal_actions, play_out, seat_options
 
 p = {"events": events, "seat": 2}                       # その局の start_kyoku からの mjai のイベント
-opts = seat_options([p])[0]                              # {"legal": [...], "choice": suzume の手}
+opts = seat_options([p])[0]                              # {"legal": [...], "choice": suzume の手, "scores": [...], ...}
 cands = [m for m in opts["legal"] if m["type"] in ("dahai", "reach")]
 res = play_out([{**p, "actions": cands, "samples": [{"seed": 0}]}])
 labels = [res[0][a][0]["delta"][2] for a in range(len(cands))]  # 候補ごとの、席 2 の局末の点数の変化
@@ -42,7 +42,7 @@ labels = [res[0][a][0]["delta"][2] for a in range(len(cands))]  # 候補ごと�
 | 入口 | 返すもの | 版 |
 |---|---|---|
 | `legal_actions(position)` | 指定の席の今の判断で合法な手の一覧（mjai の形） | 1（実装済み） |
-| `seat_options(positions, player="suzume", threads=None)` | 局面ごとに、合法な手の一覧と、ボットが選ぶ手 | 1（実装済み）。候補ごとの点数は 2 |
+| `seat_options(positions, player="suzume", threads=None)` | 局面ごとに、合法な手の一覧、ボットが選ぶ手、suzume では手ごとの点数 | 1、2（実装済み。点数は 0.16.0 から） |
 | `play_out(positions, players="suzume", split_wall=False, threads=None, record_events=False, record_samples=False, on_error="raise")` | 局面 × 指定の手 × サンプルの組ごとの局末の結果 | 1（実装済み） |
 | `SelfPlayLoop.from_positions(...)` | 局の途中から始める対局ループ（一部の席を Python のプレイヤーが打つ） | 3 |
 
@@ -169,10 +169,38 @@ labels = [res[0][a][0]["delta"][2] for a in range(len(cands))]  # 候補ごと�
 
 ### `seat_options(positions, player="suzume")`
 
-局面ごとに `{"legal": legal_actions の結果, "choice": ボットが選ぶ手}` を返します。
+局面ごとに次の dict を返します。
 
-- `choice` は `legal` の要素のどれかです。立直のときは、宣言牌まで含めた 1 手になります。
-- 第 2 版で、候補ごとの点数（ボットが最終判断に使う値。suzume では `aggression`・`call_shift` などを反映した後の値）も返せるようにする予定です。
+| 欄 | 中身 |
+|---|---|
+| `legal` | `legal_actions` の結果 |
+| `choice` | ボットが選ぶ手（`legal` の要素のどれか）。立直のときは、宣言牌まで含めた 1 手 |
+| `choice_index` | `choice` の `legal` での位置 |
+| `basis` | 何が手を決めたか（下の表） |
+| `scores` | `legal` と同じ並びの、手ごとの点数（下記）。suzume（A1 の組）以外のボットと、規則で決めた判断では `null` |
+| `pmf` | P / M / F の専門家を混ぜる組のときだけ：その判断の状態の確率 `[P, M, F]`（組み込みの `suzume`・`suzume-rla225` にはない） |
+
+点数（suzume、A1 の組。0.16.0 から）:
+
+- 判断の選択肢の上の対数確率（log-softmax）です。最終判断で比べる値そのものを確率に直したもので、`aggression`・`call_shift`・`riichi_shift` を反映した後の値です。
+  - 通常は、判断の MLP の出力（logit）に `call_shift`・`riichi_shift` のずれを足した値の log-softmax です。
+  - `aggression` が 0 でないときは、(1 − |w|)・元のモデルの logit ＋ |w|・押し（w > 0）か降り（w < 0）のモデルの logit ＋ ずれ、の log-softmax です（対数の方策を混ぜたもの）。
+  - P / M / F の専門家を混ぜる組では、専門家ごとの確率を状態の確率で混ぜた値の対数です。
+- 立直は、宣言と打牌が 1 つの判断です。立直できる局面の MLP は、「立直せずに切る（聴牌を保つ・崩す）」と「立直して切る」を打牌の種類ごとにまとめて採点するので、`dahai` と `reach` の点数はそのまま比べられます。
+- 鳴けるときの判断（チー・ポン・大明槓・見送り）は 1 つの MLP です。鳴いた後の打牌は、次の判断（別の局面）です。
+- 暗槓・加槓ができる局面は 2 段です。まず打牌（と立直）の MLP が最善の手を選び、次に槓の MLP が「その手を採る」と各槓を比べます。点数は、槓では槓の MLP の対数確率、それ以外の手では「その手を採る」の対数確率から、打牌の最善手との差を引いた値です（打牌の最善手は、ちょうど「その手を採る」の対数確率になります）。どちらの段が決めても点数の最大が選んだ手になる代わりに、この局面では点数の確率の和は 1 になりません。
+- 同じ牌の手出しとツモ切りは同じ選択肢なので、同じ点数です。suzume が打つのはそのうちの 1 つで、`choice_index` が示します。
+- `basis` が `"model"` のとき、`scores` の最大の手は `choice` です（同点になるのは上の手出しとツモ切りだけです）。arena の局面 8,733 個 × 5 つの設定で確かめました（8 節）。
+
+| `basis` | 意味 |
+|---|---|
+| `"model"` | MLP の点数の最善手 |
+| `"riichi_group"` | `aggression` があるとき、立直するかどうかは元のモデル（ずれを足した値）の選択に従い、混ぜた点数はその中でだけ比べます。そのため、`scores` の最大が他方（立直するか、しないか）にあることがあります |
+| `"win"` | 和了（ツモ・ロン）。合法なら必ず選びます。`scores` は `null` |
+| `"kyushu_kyuhai"` | 九種九牌。合法なら必ず選びます。`scores` は `null` |
+| `"riichi_tile"` | 立直を宣言した直後の打牌（宣言のときに選んだ牌）。`seat_options` は立直を宣言牌まで 1 手で返すので、ふつうは現れません |
+| `"one_discard"`・`"pass"`・`"tsumogiri"`・`"first"` | MLP の手が打てないときの代わりの規則（打牌が 1 種類しかない、見送り、ツモ切り、最初の合法手）。立直後のツモ切りなど。MLP が動いていれば `scores` はその値 |
+| `"rulebot"`・`"suzume_rules"`・`"tsumogiri_bot"` | suzume（A1 の組）以外のボット（`legacy-suzume-*` は `"suzume_rules"`）。`scores` は `null` |
 
 ### `play_out(...)`
 
@@ -247,6 +275,7 @@ labels = [res[0][a][0]["delta"][2] for a in range(len(cands))]  # 候補ごと�
 | **分割牌山と普通の牌山の同等性**：arena の局面 300 個 × 乱数のサンプル 20 個 = 6,000 回ずつ、指定の席の結果を比べる | 点数の変化 −80.3 と −57.9（差 +22.4、SE 51.5）、和了率 0.200 と 0.203（差 +0.003、SE 0.005）、放銃率 0.120 と 0.124（差 +0.004、SE 0.004）、流局率 0.143 と 0.144（差 +0.001、SE 0.003）。どれも標準誤差の範囲 |
 | **既定の打ち方**：エンジンのパッチと arena の整理の後で、既定の対局（開発の手引き 3 節の 3 つと、suzume-rla225 の 1 対 3） | 前の版と最終点が完全に一致。rulebot は golden のテストで一致 |
 | **返したサンプルの往復**：乱数で埋めたサンプルを `record_samples` で受け取り、種なしで渡し直す（arena の局面と DS1 の局面、普通の牌山と分割牌山、伏せた場合と伏せない場合） | 結果が完全に一致。返したサンプルと見えている牌を合わせると、各牌の数がちょうど全部（136 枚）になる |
+| **`seat_options` の点数**（2026-11-22）：arena の対局を、打牌・立直・鳴き・槓のあらゆる判断で切った 8,733 局面、suzume・`aggression=0.6`・`aggression=-0.7`・`suzume-rla225`・`call_shift=0.3:riichi_shift=0.2` | `basis` が `"model"` の判断（8,134〜8,251 局面）で、点数の最大はすべて `choice`。MLP の判断では合法な手すべてに点数がある。`"riichi_group"` は `aggression` のときだけ（92・113 局面）。arena の対局と `play_out` の結果は、点数を返すようにする前と完全に一致 |
 
 pytest のテスト（`tests/playout/test_playout.py`）は、このうち arena との再現（伏せた場合を含む。嶺上ツモの印も確かめる）、合法手と suzume の選択（suzume の対局では、切った判断での `seat_options` の選択が実際に打った手と一致する）、サンプルの種と先頭の指定、返したサンプルの往復と牌の総数、スレッドの数、エラーを小さな対局で確かめます。人の牌譜の確かめは、DS1 の見本をこのリポジトリに入れないので、テストには入れていません。
 
@@ -255,7 +284,7 @@ pytest のテスト（`tests/playout/test_playout.py`）は、このうち arena
 | 版 | 中身 |
 |---|---|
 | 1（実装済み） | 局面の組み立て（普通の牌山と分割牌山、サンプルの指定と乱数の埋め）、`legal_actions`、`seat_options`（ボットの選択）、`play_out`（強制する手の列、席ごとの打ち手） |
-| 2 | `seat_options` の候補ごとの点数。必要があれば `play_out` の `until="hanchan"`（半荘の終わりまで打つ。次局からの牌山は乱数か牌山表で与える） |
+| 2 | `seat_options` の候補ごとの点数（実装済み、0.16.0）。必要があれば `play_out` の `until="hanchan"`（半荘の終わりまで打つ。次局からの牌山は乱数か牌山表で与える） |
 | 3 | 局の途中から始める対局ループ `SelfPlayLoop.from_positions`：同じ局面とサンプルから始め、一部の席を Python のプレイヤー（tide の NN など）が collect / apply の形で打つ |
 
 ## 10. tide 側の回答の記録

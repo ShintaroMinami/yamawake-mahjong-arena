@@ -164,9 +164,10 @@ impl Model {
         h.chunks_exact(self.net.out_width()).map(|hr| self.b2 + self.w2.iter().zip(hr).map(|(w, h)| w * h).sum::<f64>()).collect()
     }
 
-    /// The index of the best row (the first on a tie).
-    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> usize {
-        argmax(&self.scores(rows, state, opp, v))
+    /// The index of the best row (the first on a tie) and the rows' scores.
+    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> (usize, Vec<f64>) {
+        let s = self.scores(rows, state, opp, v);
+        (argmax(&s), s)
     }
 
     /// The index of the best row under the play-style options (`A1Config`): with `bias` (one per row, when given;
@@ -177,10 +178,10 @@ impl Model {
     /// amount at every w (2026-10-28; it was added to `s` before the mix, so it shrank by 1 - |w| and vanished at
     /// +-1). Without that endpoint, or w = 0: the argmax of `s + bias`. `riichi` (the rows that declare riichi, when
     /// the decision has any): riichi or not stays this model's own choice (from `s + bias`) and the mix picks only
-    /// within that group (2026-10-23).
+    /// within that group (2026-10-23). Also the final scores compared (`styled_choice`).
     #[allow(clippy::too_many_arguments)]
     fn best_styled(&self, ends: [Option<&Model>; 2], aggression: f64, rows: &[[f64; N_ROW]], state: &str, opp: bool,
-                   v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
+                   v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> (usize, Vec<f64>) {
         let s = self.scores(rows, state, opp, v);
         let end = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0).map(|m| m.scores(rows, state, opp, v));
         styled_choice(&s, end.as_deref(), aggression.abs(), riichi, bias)
@@ -188,20 +189,24 @@ impl Model {
 }
 
 /// `Model::best_styled` on given scores: `s` the model's, `end` the endpoint's (none: w is not used), `w` = |aggression|.
-fn styled_choice(s: &[f64], end: Option<&[f64]>, w: f64, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
+/// Returns the choice and the final scores it compares: `s + bias` without `end`, else `(1 - w) s + w end + bias` (the
+/// choice is their argmax, but within the riichi group of `s + bias`'s argmax when `riichi` is given).
+fn styled_choice(s: &[f64], end: Option<&[f64]>, w: f64, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> (usize, Vec<f64>) {
     let b = |i: usize| bias.map_or(0.0, |b| b[i]);
     let biased: Vec<f64> = s.iter().enumerate().map(|(i, x)| x + b(i)).collect();
     let own = argmax(&biased);
-    let Some(end) = end else { return own };
+    let Some(end) = end else { return (own, biased) };
     let group = riichi.map(|r| r[own]);
     let mut best = (own, f64::NEG_INFINITY);
+    let mut mixed = Vec::with_capacity(s.len());
     for (i, (y, x)) in end.iter().zip(s).enumerate() {
         let t = (1.0 - w) * x + w * y + b(i);
+        mixed.push(t);
         if group.is_none_or(|g| riichi.unwrap()[i] == g) && t > best.1 {
             best = (i, t);
         }
     }
-    best.0
+    (best.0, mixed)
 }
 
 /// The index of the highest value (the first on a tie; 0 when none beats -inf).
@@ -221,8 +226,8 @@ fn expert_scores(ex: &[Model; 3], rows: &[[f64; N_ROW]], state: &str, opp: bool,
 }
 
 /// The best row of the P / M / F experts' scores `sc` (`expert_scores`) mixed by the state probabilities `p`:
-/// the argmax of `sum_s p_s softmax_s` (the first on a tie).
-fn mixture_best(sc: &[Vec<f64>; 3], p: &[f64; 3]) -> usize {
+/// the argmax of `sum_s p_s softmax_s` (the first on a tie), and those mixed probabilities.
+fn mixture_best(sc: &[Vec<f64>; 3], p: &[f64; 3]) -> (usize, Vec<f64>) {
     let mut pi = vec![0.0; sc[0].len()];
     for (s, &w) in sc.iter().zip(p) {
         let top = s.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -232,7 +237,7 @@ fn mixture_best(sc: &[Vec<f64>; 3], p: &[f64; 3]) -> usize {
             *q += w * x / z;
         }
     }
-    argmax(&pi)
+    (argmax(&pi), pi)
 }
 
 /// One decision's A1 rows: its universal options and rows with the danger columns, the model of its kind and the
@@ -705,30 +710,33 @@ fn tile_of(id: u16) -> (u8, bool) {
 
 /// The legal action of option `(kind, id)`, the first in legal order (as the Python player's `option_action`).
 fn option_action(legal: &[Action], kind: &str, id: u16) -> Option<Action> {
+    legal.iter().find(|a| option_matches(kind, id, a)).cloned()
+}
+
+/// Whether legal action `a` plays option `(kind, id)` (`option_action` plays the first such action): a discard-like
+/// option names a tile type and red flag (either copy of it), a riichi option any riichi (its tile is the discard
+/// after it), a call its consumed tiles' position and red flag, a kan its tile type.
+fn option_matches(kind: &str, id: u16, a: &Action) -> bool {
     let red = |t: u8| RED_TIDS.contains(&t);
-    let of = |at: ActionType| legal.iter().filter(move |a| a.action_type == at);
     match kind {
         "discard" | "dama" | "break" => {
             let (t, r) = tile_of(id);
-            of(ActionType::Discard).find(|a| a.tile.is_some_and(|x| x / 4 == t && red(x) == r)).cloned()
+            a.action_type == ActionType::Discard && a.tile.is_some_and(|x| x / 4 == t && red(x) == r)
         }
-        "riichi" => of(ActionType::Riichi).next().cloned(),
-        "pass" => of(ActionType::Pass).next().cloned(),
+        "riichi" => a.action_type == ActionType::Riichi,
+        "pass" => a.action_type == ActionType::Pass,
         "chi" | "pon" => {
             let r = id >= 76;
             let at = if kind == "chi" { ActionType::Chi } else { ActionType::Pon };
-            of(at).find(|a| {
-                if a.consume_tiles.iter().any(|&c| red(c)) != r {
-                    return false;
-                }
-                if kind == "pon" {
-                    return true;
-                }
-                let called = a.tile.map_or(0, |t| t / 4);
-                let pos = a.consume_tiles.iter().filter(|&&c| c / 4 < called).count() as u16;
-                id - if r { 76 } else { 38 } == pos
-            })
-            .cloned()
+            if a.action_type != at || a.consume_tiles.iter().any(|&c| red(c)) != r {
+                return false;
+            }
+            if kind == "pon" {
+                return true;
+            }
+            let called = a.tile.map_or(0, |t| t / 4);
+            let pos = a.consume_tiles.iter().filter(|&&c| c / 4 < called).count() as u16;
+            id - if r { 76 } else { 38 } == pos
         }
         "daiminkan" | "ankan" | "kakan" => {
             let at = match kind {
@@ -736,10 +744,23 @@ fn option_action(legal: &[Action], kind: &str, id: u16) -> Option<Action> {
                 "ankan" => ActionType::Ankan,
                 _ => ActionType::Kakan,
             };
-            of(at).find(|a| a.tile.is_some_and(|t| u16::from(t / 4) + 42 == id)).cloned()
+            a.action_type == at && a.tile.is_some_and(|t| u16::from(t / 4) + 42 == id)
         }
-        _ => None,
+        _ => false,
     }
+}
+
+/// The index in `scored` (`Explained::scored`) of the option legal action `a` plays; `declaring`: `a` is the discard
+/// that declares riichi (the riichi option of its tile). Both copies of a tile held and drawn play the same option.
+pub fn option_index(scored: &[((&'static str, u16), f64)], a: &Action, declaring: bool) -> Option<usize> {
+    if declaring {
+        let id = a.tile.map(|t| if RED_TIDS.contains(&t) { 34 + u16::from(t / 4 / 9) } else { u16::from(t / 4) })?;
+        return scored.iter().position(|&((k, i), _)| k == "riichi" && i == id);
+    }
+    if a.action_type == ActionType::Riichi {
+        return None;
+    }
+    scored.iter().position(|&((k, i), _)| option_matches(k, i, a))
 }
 
 /// Own score minus each other seat's (from the shimocha), / 25000.
@@ -801,27 +822,106 @@ pub fn state_probs(
 }
 
 /// One A1 decision on the seat's observation, the kyoku's events and the seat's kyoku memo; the actions
-/// `a1.limits` takes away are dropped from the legal ones first.
+/// `a1.limits` takes away are dropped from the legal ones first (`decide_explained`'s action).
 pub fn decide(
     obs: &riichienv_core::observation::Observation,
     kyoku_events: &[Value],
     a1: &A1Config,
     memo: &mut SeatMemo,
 ) -> Result<Action, String> {
+    decide_explained(obs, kyoku_events, a1, memo).map(|e| e.action)
+}
+
+/// Options (kind, id as `Universal::options`) with their scores.
+pub type Scored = Vec<((&'static str, u16), f64)>;
+
+/// The kan stage of a decision: the kan model's options (the first the option it keeps) and their log-probabilities.
+type KanStage = (Vec<(&'static str, u16)>, Vec<f64>);
+
+/// One A1 decision and what chose it (`decide_explained`).
+pub struct Explained {
+    /// The action played.
+    pub action: Action,
+    /// `"model"` when the action is the best of `scored`; else what decided it: `"win"` (tsumo or ron, taken
+    /// whenever legal), `"kyushu_kyuhai"` (taken whenever legal), `"riichi_tile"` (the discard of a riichi just
+    /// declared: the tile chosen with the declaration, kept in the memo), `"riichi_group"` (with `aggression`,
+    /// riichi or not is the model's own choice and the mix picks only within that group, `Model::best_styled`, so
+    /// the best of `scored` may be in the other group), or a fallback when no model option was playable:
+    /// `"one_discard"` (every discard is of one tile), `"pass"`, `"tsumogiri"`, `"first"` (the first legal action).
+    pub basis: &'static str,
+    /// The options the models scored (kind, id as `Universal::options`) and their scores, the log-probabilities the
+    /// decision compares (`scored_options`); empty when no model ran.
+    pub scored: Scored,
+    /// The P / M / F weights of the experts' mixture, for a set with experts.
+    pub pmf: Option<[f64; 3]>,
+}
+
+/// The decision's model stage (`decide_explained`): its options, the chosen index, the options' log-probabilities,
+/// whether the riichi group moved the choice off their best, and the P / M / F weights of an experts' mixture.
+struct UniStage {
+    u: std::rc::Rc<Universal>,
+    best: usize,
+    logp: Vec<f64>,
+    grouped: bool,
+    pmf: Option<[f64; 3]>,
+}
+
+/// `x` less its log-sum-exp (the log-probabilities of the softmax of `x`).
+fn log_softmax(x: &[f64]) -> Vec<f64> {
+    let top = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let lse = top + x.iter().map(|v| (v - top).exp()).sum::<f64>().ln();
+    x.iter().map(|v| v - lse).collect()
+}
+
+/// The scored options of a decision: without a kan stage the model stage's options at their log-probabilities; with
+/// one (`kan`, `KanStage`) each kan option at
+/// the kan model's log-probability and each other option at the kan model's log-probability of keeping less the
+/// option's distance below the model stage's best (the best itself is the kept option), so the best score is the
+/// choice whichever stage made it.
+fn scored_options(uni: Option<&UniStage>, kan: Option<&KanStage>) -> Scored {
+    let mut out = Vec::new();
+    match kan {
+        None => {
+            if let Some(u) = uni {
+                out.extend(u.u.options.iter().copied().zip(u.logp.iter().copied()));
+            }
+        }
+        Some((opts, lp)) => {
+            match uni {
+                Some(u) => {
+                    let top = u.logp[u.best];
+                    out.extend(u.u.options.iter().copied().zip(u.logp.iter().map(|x| lp[0] + (x - top))));
+                }
+                None => out.push((opts[0], lp[0])),
+            }
+            out.extend(opts.iter().copied().zip(lp.iter().copied()).skip(1));
+        }
+    }
+    out
+}
+
+/// `decide` with what chose the action and the scores of the options (`Explained`).
+pub fn decide_explained(
+    obs: &riichienv_core::observation::Observation,
+    kyoku_events: &[Value],
+    a1: &A1Config,
+    memo: &mut SeatMemo,
+) -> Result<Explained, String> {
+    let ruled = |action: Action, basis: &'static str| Explained { action, basis, scored: Vec::new(), pmf: None };
     let mut legal = obs.legal_actions_method();
     legal.retain(|a| a1.limits.keeps(a.action_type));
     if legal.is_empty() {
         return Err(format!("A1 at seat {} has no legal actions", obs.player_id));
     }
-    for at in [ActionType::Tsumo, ActionType::Ron, ActionType::KyushuKyuhai] {
+    for (at, basis) in [(ActionType::Tsumo, "win"), (ActionType::Ron, "win"), (ActionType::KyushuKyuhai, "kyushu_kyuhai")] {
         if let Some(a) = legal.iter().find(|a| a.action_type == at) {
-            return Ok(a.clone());
+            return Ok(ruled(a.clone(), basis));
         }
     }
     if let Some((t, r)) = memo.riichi_tile.take() {
         let id = if r { 34 + u16::from(t / 9) } else { u16::from(t) };
         if let Some(a) = option_action(&legal, "discard", id) {
-            return Ok(a);
+            return Ok(ruled(a, "riichi_tile"));
         }
     }
     let cfg = &a1.cfg;
@@ -836,7 +936,7 @@ pub fn decide(
         let rv = river_view(&view, kyoku_events)?;
         let Some(r) = decision_rows(&ctx, md, &rv) else { return Ok(None) };
         let ex = r.pk.and_then(|k| md.pmf[k].as_deref());
-        let best = match ex {
+        let (best, logp, grouped, pmf) = match ex {
             Some(ex) if a1.pmf_fixed.is_some() || md.state.is_some() => {
                 let sc = expert_scores(ex, &r.rows, &r.u.state.0, opp, &view);
                 let p = match (a1.pmf_fixed, &md.state) {
@@ -845,8 +945,14 @@ pub fn decide(
                     (None, None) => None,
                 };
                 match p {
-                    Some(p) => mixture_best(&sc, &p),
-                    None => r.model.best(&r.rows, &r.u.state.0, opp, &view),
+                    Some(p) => {
+                        let (best, pi) = mixture_best(&sc, &p);
+                        (best, pi.iter().map(|x| x.ln()).collect(), false, Some(p))
+                    }
+                    None => {
+                        let (best, s) = r.model.best(&r.rows, &r.u.state.0, opp, &view);
+                        (best, log_softmax(&s), false, None)
+                    }
                 }
             }
             _ => {
@@ -862,15 +968,17 @@ pub fn decide(
                         _ => 0.0,
                     })
                     .collect();
-                r.model.best_styled(r.ends, a1.aggression, &r.rows, &r.u.state.0, opp, &view,
-                                    riichi.contains(&true).then_some(&riichi[..]),
-                                    (a1.call_offset != 0.0 || a1.riichi_offset != 0.0).then_some(&bias[..]))
+                let (best, t) = r.model.best_styled(r.ends, a1.aggression, &r.rows, &r.u.state.0, opp, &view,
+                                                    riichi.contains(&true).then_some(&riichi[..]),
+                                                    (a1.call_offset != 0.0 || a1.riichi_offset != 0.0).then_some(&bias[..]));
+                (best, log_softmax(&t), argmax(&t) != best, None)
             }
         };
-        Ok::<_, String>(Some((r.u, best)))
+        Ok::<_, String>(Some(UniStage { u: r.u, best, logp, grouped, pmf }))
     })();
+    let mut kan_scores = None;
     let out = (|| {
-        let uni = uni?;
+        let uni = uni.as_ref().map_err(Clone::clone)?;
         if legal.iter().any(|a| matches!(a.action_type, ActionType::Ankan | ActionType::Kakan)) {
             // The kan rows are built with the features set's keep, then keep becomes A1's own choice (as Python).
             let base = if view.in_riichi {
@@ -879,9 +987,9 @@ pub fn decide(
                 mlp_choice(&ctx).map(|(_, u, _, best)| (u.options[best], u.rows[best]))
             };
             if let Some(mut k) = base.and_then(|(b, row)| kan_universal(&ctx, b, row)) {
-                if let Some((u, j)) = &uni {
-                    k.rows[0] = u.rows[*j];
-                    k.options[0] = u.options[*j];
+                if let Some(un) = uni {
+                    k.rows[0] = un.u.rows[un.best];
+                    k.options[0] = un.u.options[un.best];
                 }
                 let rows: Vec<[f64; N_ROW]> = k
                     .rows
@@ -892,45 +1000,58 @@ pub fn decide(
                         row
                     })
                     .collect();
-                let best = md.kan.best_styled(md.end_models(5), a1.aggression, &rows, &k.state.0, opp, &view, None, None);
+                let (best, t) = md.kan.best_styled(md.end_models(5), a1.aggression, &rows, &k.state.0, opp, &view, None, None);
+                kan_scores = Some((k.options.clone(), log_softmax(&t)));
                 if best > 0 {
                     let (kind, id) = k.options[best];
                     if let Some(a) = option_action(&legal, kind, id) {
-                        return Ok(Some(a));
+                        return Ok(Some((a, "model")));
                     }
                 }
             }
         }
-        if let Some((u, j)) = &uni {
-            let (kind, id) = u.options[*j];
+        if let Some(un) = uni {
+            let (kind, id) = un.u.options[un.best];
             if let Some(a) = option_action(&legal, kind, id) {
                 ctx.memo().riichi_tile = (kind == "riichi").then(|| tile_of(id));
-                return Ok(Some(a));
+                return Ok(Some((a, if un.grouped { "riichi_group" } else { "model" })));
             }
         }
         Ok::<_, String>(None)
     })();
     *memo = ctx.into_memo();
-    if let Some(a) = out? {
-        return Ok(a);
+    let picked = out?;
+    let uni = uni?;
+    let scored = scored_options(uni.as_ref(), kan_scores.as_ref());
+    let pmf = uni.as_ref().and_then(|u| u.pmf);
+    let explained = |action: Action, basis: &'static str| Ok(Explained { action, basis, scored: scored.clone(), pmf });
+    if let Some((a, basis)) = picked {
+        return explained(a, basis);
     }
     let discards: Vec<&Action> = legal.iter().filter(|a| a.action_type == ActionType::Discard).collect();
     let first = discards.first().map(|a| a.tile);
     if !discards.is_empty() && discards.iter().all(|a| a.tile == first.flatten()) {
-        return Ok(discards[0].clone());
+        return explained(discards[0].clone(), "one_discard");
     }
     if let Some(a) = legal.iter().find(|a| a.action_type == ActionType::Pass) {
-        return Ok(a.clone());
+        return explained(a.clone(), "pass");
     }
     if let Some(a) = discards.iter().find(|a| a.tile == obs.drawn_tile) {
-        return Ok((*a).clone());
+        return explained((*a).clone(), "tsumogiri");
     }
-    Ok(discards.first().map_or_else(|| legal[0].clone(), |a| (*a).clone()))
+    match discards.first() {
+        Some(a) => explained((*a).clone(), "first"),
+        None => explained(legal[0].clone(), "first"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn styled_choice_index(s: &[f64], end: Option<&[f64]>, w: f64, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> usize {
+        styled_choice(s, end, w, riichi, bias).0
+    }
 
     #[test]
     fn every_builtin_set_parses_with_its_features_set() {
@@ -1013,19 +1134,19 @@ mod tests {
     fn the_style_bias_moves_the_choice_at_every_aggression() {
         // options: pass, call. The model prefers pass by 1, the endpoint by 4; a call bias of 2 is added after the mix.
         let (s, end, bias) = ([1.0, 0.0], [4.0, 0.0], [0.0, 2.0]);
-        assert_eq!(styled_choice(&s, None, 0.0, None, Some(&bias)), 1);
-        assert_eq!(styled_choice(&s, Some(&end), 0.5, None, None), 0);
+        assert_eq!(styled_choice_index(&s, None, 0.0, None, Some(&bias)), 1);
+        assert_eq!(styled_choice_index(&s, Some(&end), 0.5, None, None), 0);
         // w = 0.5: mixed pass 2.5, call 0 + 2; w = 0.25: pass 1.75, call 2 (the bias is not scaled by 1 - w)
-        assert_eq!(styled_choice(&s, Some(&end), 0.5, None, Some(&bias)), 0);
-        assert_eq!(styled_choice(&s, Some(&end), 0.25, None, Some(&bias)), 1);
+        assert_eq!(styled_choice_index(&s, Some(&end), 0.5, None, Some(&bias)), 0);
+        assert_eq!(styled_choice_index(&s, Some(&end), 0.25, None, Some(&bias)), 1);
         // w = 1 plays the endpoint plus the bias: pass 4 vs call 2, then a bias of 5 calls
-        assert_eq!(styled_choice(&s, Some(&end), 1.0, None, Some(&bias)), 0);
-        assert_eq!(styled_choice(&s, Some(&end), 1.0, None, Some(&[0.0, 5.0])), 1);
+        assert_eq!(styled_choice_index(&s, Some(&end), 1.0, None, Some(&bias)), 0);
+        assert_eq!(styled_choice_index(&s, Some(&end), 1.0, None, Some(&[0.0, 5.0])), 1);
         // riichi: the group comes from s + bias; the mix picks within it
         let riichi = [false, true, true];
         let (s, end) = ([0.0, 0.5, 0.4], [9.0, 0.0, 1.0]);
-        assert_eq!(styled_choice(&s, Some(&end), 1.0, Some(&riichi), None), 2);
-        assert_eq!(styled_choice(&s, Some(&end), 1.0, Some(&riichi), Some(&[0.0, -1.0, -1.0])), 0);
+        assert_eq!(styled_choice_index(&s, Some(&end), 1.0, Some(&riichi), None), 2);
+        assert_eq!(styled_choice_index(&s, Some(&end), 1.0, Some(&riichi), Some(&[0.0, -1.0, -1.0])), 0);
     }
 
     #[test]
