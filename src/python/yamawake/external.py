@@ -66,6 +66,32 @@ class SuzumePlayer:
                 return a
         raise RuntimeError(f"suzume chose {want}, not a legal action here")
 
+    def choose(self, obs: rv.Observation, kyoku_events: list) -> dict:
+        """The seat's move with suzume's score of every legal action, in one call (an A1 set: `suzume`,
+        `suzume-rla225`).
+
+        A riichi comes back as one move, the `reach` with its discard (`{"type": "reach", "pai": ..., "tsumogiri":
+        ...}`): ask before the declaration, then play the declaration and that discard. Asked again right after the
+        declaration (`act`), the seat plays the same discard; a riichi it chose but that was not declared (another
+        move played in its place) is forgotten at its next decision.
+
+        Args:
+            obs: The seat's riichienv observation.
+            kyoku_events: The kyoku's mjai events so far, from its `start_kyoku` (dicts or JSON lines).
+
+        Returns:
+            `seat_options`' fields (`docs/play_out_spec.md` section 5): `legal` (mjai, a riichi per declaring
+            discard), `choice`, `choice_index`, `basis`, `scores` (per legal action, the log-probability of its
+            option in the decision) and, for a set with P / M / F experts, `pmf`.
+
+        Raises:
+            ValueError: The seat is not an A1 set (e.g. `legacy-suzume-*`).
+        """
+        lines = [e if isinstance(e, str) else json.dumps(e) for e in kyoku_events]
+        out = json.loads(self._seat.choose(obs.serialize_to_base64(), lines))
+        self.last_rule = "a1"
+        return out
+
     def act_mjai(self, obs: rv.Observation, kyoku_events: list) -> dict:
         """The seat's move as an mjai action (`act`, then `Action.to_mjai`)."""
         ev = self.act(obs, kyoku_events).to_mjai()

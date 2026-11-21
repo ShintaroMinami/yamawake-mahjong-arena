@@ -255,9 +255,12 @@ player = SuzumePlayer("suzume")                 # suzume のプレイヤー名�
 action = player.act(obs, kyoku_events)          # obs.legal_actions() の 1 つ（rv.Action）
 reply = player.act_mjai(obs, kyoku_events)      # 同じ手を mjai の形で（tsumogiri つき）
 player.last_rule                                # 手を決めた処理の名前（suzume は a1）
+r = player.choose(obs, kyoku_events)            # 手と、合法な手ごとの点数を 1 回で（立直は宣言牌まで 1 手）
 ```
 
 - **arena と同じ手**：判断は arena の中の suzume と同じ Rust の処理です。局の間に覚えておくもの（立直の宣言牌など）も、arena と同じく席ごとに持ち、新しい `start_kyoku` で忘れます。
+- **点数つきの 1 回の判断**：`choose`（A1 の組。0.16.0 から）は、`seat_options` と同じ欄（`legal`・`choice`・`choice_index`・`basis`・`scores`、P / M / F の組では `pmf`。意味は [`play_out_spec.md`](play_out_spec.md) の 5 節）を返します。立直は「立直して切る牌」までの 1 手（`{"type": "reach", "pai": ..., "tsumogiri": ...}`）なので、宣言の前に 1 回聞き、宣言とその打牌を打ちます。宣言の直後に `act` で聞き直しても、同じ牌を切ります。
+- **宣言しなかった立直**：suzume が立直を選んだのに、外の手で別の打牌をした場合、覚えた立直の牌は次の判断で捨てます（0.16.0 から。それまでは次の打牌でその牌を切ることがあった）。
 - **山の残り枚数**：riichienv の Python 版の `Observation` には、山の残り枚数（`drawable_count`）と最後に打牌した席（`last_discarder`）がありません。この 2 つは、渡された出来事から求めます（70 − ツモの数、最後の `dahai` の席）。
 - **新しい半荘**：同じ席で新しい半荘を始めるときは `player.reset()` を呼びます（呼ばなくても、局が変わると忘れます）。
 

@@ -14,6 +14,7 @@ use std::collections::{HashMap, VecDeque};
 
 use riichienv_core::action::{Action, ActionType, Phase};
 use riichienv_core::hand_evaluator::HandEvaluator;
+use riichienv_core::observation::Observation;
 use riichienv_core::rule::GameRule;
 use riichienv_core::state::GameState;
 use riichienv_core::state::legal_actions::GameStateLegalActions;
@@ -21,6 +22,7 @@ use serde_json::{Map, Value, json};
 
 use crate::arena::{Bot, GameSlot};
 use crate::suzume::SeatMemo;
+use crate::suzume::a1::Explained;
 
 /// A tile kind: 0..34 the tile types (red fives excluded), 34 / 35 / 36 the red 5m / 5p / 5s.
 type Kind = u8;
@@ -1001,10 +1003,8 @@ pub fn legal_actions(p: &Value) -> Result<Vec<Value>, String> {
     legal_mjai(&b.slot, seat)
 }
 
-/// `seat_options` for one position: `{"legal", "choice", "choice_index", "basis", "scores"}` and, for a set with
-/// P / M / F experts, `"pmf"` (docs/play_out_spec.md section 5). An A1 bot's (suzume's) decision gives the scores
-/// (`suzume::a1::decide_explained`): per legal action the log-probability of its option in the decision, null for an
-/// action no model scored; another bot's gives none (`"scores": null`, `"basis"`: the bot's kind).
+/// `seat_options` for one position (`options_json`): an A1 bot's (suzume's) decision gives the scores
+/// (`suzume::a1::decide_explained`), another bot's none.
 pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
     let (events, seat) = position_parts(p)?;
     let seat = seat.ok_or("seat_options needs the seat")?;
@@ -1029,9 +1029,23 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
     } else {
         to_mjai(&a, drawn)
     };
+    let kind = match bot {
+        Bot::Rulebot(_) => "rulebot",
+        Bot::Suzume(_) => "suzume_rules",
+        Bot::Tsumogiri => "tsumogiri_bot",
+        Bot::A1(_) => "a1",
+    };
+    Ok(options_json(&entries, choice, explained.as_ref(), kind))
+}
+
+/// The fields of one decision (docs/play_out_spec.md section 5): `legal` (the entries' mjai forms), `choice`,
+/// `choice_index`, `basis` and `scores` (per legal action the log-probability of its option in the decision, null for
+/// an action no model scored; the whole list null for a rule's decision) and, for a set with P / M / F experts,
+/// `pmf`. Without `explained` (a bot other than A1) the basis is `bot` and there are no scores.
+pub(crate) fn options_json(entries: &[(Value, Action, bool)], choice: Value, explained: Option<&Explained>, bot: &str) -> Value {
     let legal: Vec<Value> = entries.iter().map(|(m, _, _)| m.clone()).collect();
     let choice_index = legal.iter().position(|m| *m == choice);
-    let (basis, scores, pmf) = match &explained {
+    let (basis, scores, pmf) = match explained {
         Some(e) => {
             let scores = (!e.scored.is_empty()).then(|| {
                 entries
@@ -1041,21 +1055,65 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
             });
             (e.basis, json!(scores), e.pmf)
         }
-        None => {
-            let kind = match bot {
-                Bot::Rulebot(_) => "rulebot",
-                Bot::Suzume(_) => "suzume_rules",
-                Bot::Tsumogiri => "tsumogiri_bot",
-                Bot::A1(_) => unreachable!("an A1 bot is explained"),
-            };
-            (kind, Value::Null, None)
-        }
+        None => (bot, Value::Null, None),
     };
     let mut out = json!({"legal": legal, "choice": choice, "choice_index": choice_index, "basis": basis, "scores": scores});
     if let Some(p) = pmf {
         out["pmf"] = json!(p);
     }
-    Ok(out)
+    out
+}
+
+/// The legal actions of an observation as `legal_entries` gives them (each with its engine action and whether it
+/// declares riichi), a riichi spelled out per declaring discard by the engine's rule for the discard after it: each
+/// legal discard after which the hand is tenpai.
+pub(crate) fn observation_entries(obs: &Observation) -> Vec<(Value, Action, bool)> {
+    let legal = obs.legal_actions_method();
+    let drawn = obs.drawn_tile;
+    let seat = usize::from(obs.player_id);
+    let hand: Vec<u8> = obs.hands[seat].iter().map(|&t| t as u8).collect();
+    let mut out: Vec<(Value, Action, bool)> = Vec::new();
+    let mut push = |m: Value, a: Action, declaring: bool| {
+        if !out.iter().any(|(x, _, _)| *x == m) {
+            out.push((m, a, declaring));
+        }
+    };
+    for a in &legal {
+        if a.action_type == ActionType::Riichi {
+            for d in legal.iter().filter(|d| d.action_type == ActionType::Discard) {
+                let mut rest = hand.clone();
+                if let Some(k) = d.tile.and_then(|t| rest.iter().position(|&x| x == t)) {
+                    rest.remove(k);
+                }
+                if HandEvaluator::new(rest, obs.melds[seat].clone()).is_tenpai() {
+                    let mut m = to_mjai(d, drawn);
+                    m["type"] = json!("reach");
+                    push(m, d.clone(), true);
+                }
+            }
+        } else {
+            push(to_mjai(a, drawn), a.clone(), false);
+        }
+    }
+    out
+}
+
+/// An A1 seat's choice on its observation, with `options_json`'s fields; a riichi is the `reach` with the discard the
+/// decision chose with it (kept in `memo` for the discard after the declaration, as in a game).
+pub(crate) fn a1_choose(obs: &Observation, events: &[Value], a1: &crate::suzume::a1::A1Config, memo: &mut crate::suzume::SeatMemo)
+        -> Result<Value, String> {
+    let e = crate::suzume::a1::decide_explained(obs, events, a1, memo)?;
+    let entries = observation_entries(obs);
+    let choice = if e.action.action_type == ActionType::Riichi {
+        let tile = memo.riichi_tile.ok_or("a riichi without its tile")?;
+        let d = crate::suzume::a1::riichi_discard(&obs.legal_actions_method(), tile).ok_or("the riichi tile is not a legal discard")?;
+        let mut m = to_mjai(&d, obs.drawn_tile);
+        m["type"] = json!("reach");
+        m
+    } else {
+        to_mjai(&e.action, obs.drawn_tile)
+    };
+    Ok(options_json(&entries, choice, Some(&e), "a1"))
 }
 
 /// One play-out from a rebuilt position: `seat`'s next decisions forced by `forced` (mjai actions), the rest by

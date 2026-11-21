@@ -508,9 +508,11 @@ fn observation_with_wall(
 /// One suzume seat played outside the arena: the bot and its kyoku memo.
 ///
 /// `decide` is `decide_one("suzume", ...)` with the memo kept between the
-/// seat's decisions (the riichi tile, the push / fold history), as the arena
-/// keeps it per seat; the memo starts over when the kyoku's `start_kyoku`
-/// line changes.
+/// seat's decisions, as the arena keeps it per seat (`suzume::SeatMemo`: the
+/// riichi tile chosen with a declaration, the solve caches and, for `pf=1`
+/// sets, the push / fold history); the memo starts over when the kyoku's
+/// `start_kyoku` line changes. `choose` (an A1 seat) is the same decision
+/// with its scores, a riichi with its discard.
 #[pyclass(module = "yamawake._core")]
 struct SuzumeSeat {
     cfg: crate::suzume::SuzumeConfig,
@@ -560,6 +562,29 @@ impl SuzumeSeat {
             })
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), rule))
+    }
+
+    /// An A1 seat's choice with its scores, as JSON (`playout::a1_choose`: `seat_options`' fields,
+    /// docs/play_out_spec.md section 5): a riichi is the `reach` with its discard, in one call.
+    fn choose(&mut self, py: Python<'_>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<String> {
+        let Some(a1) = self.a1 else {
+            return Err(pyo3::exceptions::PyValueError::new_err("choose needs an A1 set (suzume, suzume-rla225 or an A1 directory)"));
+        };
+        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
+        if start.is_some() && start != self.kyoku {
+            self.memo.clear();
+            self.kyoku = start;
+        }
+        let memo = &mut self.memo;
+        py.allow_threads(|| -> Result<_, String> {
+            let events: Vec<serde_json::Value> = kyoku_events
+                .iter()
+                .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
+                .collect::<Result<_, _>>()?;
+            let obs = observation_with_wall(&obs_b64, &events)?;
+            crate::playout::a1_choose(&obs, &events, &a1, memo).map(|v| v.to_string())
+        })
+        .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// An A1 seat's P / M / F state probabilities on this decision (`a1::state_probs`; the memo kept as

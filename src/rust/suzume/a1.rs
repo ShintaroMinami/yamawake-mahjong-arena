@@ -750,6 +750,11 @@ fn option_matches(kind: &str, id: u16, a: &Action) -> bool {
     }
 }
 
+/// The discard `option_action` plays for the riichi tile `(t, red)` (`SeatMemo::riichi_tile`) among `legal`.
+pub fn riichi_discard(legal: &[Action], (t, r): (u8, bool)) -> Option<Action> {
+    option_action(legal, "discard", if r { 34 + u16::from(t / 9) } else { u16::from(t) })
+}
+
 /// The index in `scored` (`Explained::scored`) of the option legal action `a` plays; `declaring`: `a` is the discard
 /// that declares riichi (the riichi option of its tile). Both copies of a tile held and drawn play the same option.
 pub fn option_index(scored: &[((&'static str, u16), f64)], a: &Action, declaring: bool) -> Option<usize> {
@@ -918,7 +923,13 @@ pub fn decide_explained(
             return Ok(ruled(a.clone(), basis));
         }
     }
-    if let Some((t, r)) = memo.riichi_tile.take() {
+    // The tile chosen with this seat's riichi serves only the discard right after its declaration (the last event is
+    // the seat's own `reach`); any other decision drops it (a riichi chosen but not declared, e.g. a move played from
+    // outside in its place, 2026-11-22).
+    let declared = kyoku_events
+        .last()
+        .is_some_and(|e| e["type"] == "reach" && e["actor"].as_u64() == Some(u64::from(obs.player_id)));
+    if let Some((t, r)) = memo.riichi_tile.take().filter(|_| declared) {
         let id = if r { 34 + u16::from(t / 9) } else { u16::from(t) };
         if let Some(a) = option_action(&legal, "discard", id) {
             return Ok(ruled(a, "riichi_tile"));

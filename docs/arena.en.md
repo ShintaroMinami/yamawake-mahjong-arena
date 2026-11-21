@@ -255,9 +255,12 @@ player = SuzumePlayer("suzume")                 # any suzume player name (suzume
 action = player.act(obs, kyoku_events)          # one of obs.legal_actions() (rv.Action)
 reply = player.act_mjai(obs, kyoku_events)      # the same action in mjai form (with tsumogiri)
 player.last_rule                                # name of the routine that chose the action (a1 for suzume)
+r = player.choose(obs, kyoku_events)            # the action and a score per legal action, in one call (a riichi with its tile)
 ```
 
 - **Same moves as in the arena**: the decisions use the same Rust code as suzume inside the arena. What it remembers during a kyoku (such as the riichi declaration tile) is also kept per seat, as in the arena, and forgotten at a new `start_kyoku`.
+- **One decision with scores**: `choose` (an A1 set; since 0.16.0) returns the fields of `seat_options` (`legal`, `choice`, `choice_index`, `basis`, `scores`, and `pmf` for a set with P / M / F experts; their meaning is in section 5 of [`play_out_spec.md`](play_out_spec.md), in Japanese). A riichi is one move, up to the tile it discards (`{"type": "reach", "pai": ..., "tsumogiri": ...}`): ask once before the declaration, then play the declaration and that discard. Asked again with `act` right after the declaration, the player discards the same tile.
+- **A riichi not declared**: when suzume chose riichi but another discard was played in its place, the remembered riichi tile is dropped at its next decision (since 0.16.0; before, the next discard could be that tile).
 - **Tiles left in the wall**: the Python version of riichienv's `Observation` lacks the number of tiles left in the wall (`drawable_count`) and the seat that discarded last (`last_discarder`). These two are derived from the events passed in (70 − the number of draws, and the seat of the last `dahai`).
 - **New hanchan**: when starting a new hanchan in the same seat, call `player.reset()` (even without it, the player forgets when the kyoku changes).
 
