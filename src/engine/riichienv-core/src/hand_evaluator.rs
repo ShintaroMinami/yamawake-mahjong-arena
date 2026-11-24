@@ -130,10 +130,9 @@ impl HandEvaluator {
             is_menzen: self.melds.iter().all(|m| !m.opened),
         };
         // A hand that does not win has no division and no yaku: han 0.
-        let res = yaku::calculate_yaku(&hand_14, &self.melds, &ctx, win_tile_34);
-        let has_yaku = res.yaku_ids.iter().any(|&id| id != yaku::ID_DORA && id != yaku::ID_AKADORA && id != yaku::ID_URADORA);
-        let is_win = (has_yaku || res.yakuman_count > 0) && res.han >= 1;
-        (is_win && res.han != 0).then_some((res.han as u32, res.fu as u32, res.yakuman_count > 0))
+        let (han, fu, yakuman_count, has_yaku) = yaku::calculate_verdict(&hand_14, &self.melds, &ctx, win_tile_34);
+        let is_win = (has_yaku || yakuman_count > 0) && han >= 1;
+        (is_win && han != 0).then_some((han as u32, fu as u32, yakuman_count > 0))
     }
 
     pub fn calc(

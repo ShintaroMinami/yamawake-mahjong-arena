@@ -1,7 +1,7 @@
 //! suzume outside the arena, from Rust: the crate's public entry.
 //!
 //! A [`Suzume`] is a bot: a built-in A1 set (`suzume`, `suzume-rla225`) or an A1 model directory, with its
-//! options. [`Suzume::choose`] is one decision on an empty memo: the move with suzume's score of every legal
+//! options. [`Suzume::choose`] is one decision as on an empty memo: the move with suzume's score of every legal
 //! action, a riichi as one move with the discard declared with it ([`Choice`]). [`SuzumeSeat`] plays one seat
 //! through a kyoku, keeping the seat's memo between decisions as the arena keeps it. The Python
 //! `yamawake.external.SuzumePlayer` goes through these same functions, so its moves and scores are these.
@@ -23,6 +23,8 @@
 //! let a = seat.decide(&obs, &kyoku_events)?;
 //! # Ok(()) }
 //! ```
+
+use std::cell::RefCell;
 
 use riichienv_core::action::Action;
 use riichienv_core::observation::Observation;
@@ -128,7 +130,8 @@ impl Suzume {
         Self { a1 }
     }
 
-    /// One decision on an empty memo, with its scores: what a new [`SuzumeSeat`] chooses.
+    /// One decision as on an empty memo, with its scores: what a new [`SuzumeSeat`] chooses. The DP's evaluator
+    /// verdicts are kept on the calling thread across calls (exact; `KEPT`).
     ///
     /// `obs` is the seat's observation; `kyoku_events` the kyoku's mjai events as the seat saw them, from its
     /// `start_kyoku` (others' draws may be masked).
@@ -136,16 +139,43 @@ impl Suzume {
     /// # Errors
     /// No legal action, or events the decision cannot read.
     pub fn choose(&self, obs: &Observation, kyoku_events: &[Value]) -> Result<Choice, String> {
-        crate::playout::a1_choice(obs, kyoku_events, &self.a1, &mut SeatMemo::default())
+        with_kept(|m| crate::playout::a1_choice(obs, kyoku_events, &self.a1, m))
     }
 
-    /// One decision on an empty memo, the move only ([`Choice::action`] without the scores).
+    /// One decision as on an empty memo, the move only ([`Choice::action`] without the scores).
     ///
     /// # Errors
     /// As [`Suzume::choose`].
     pub fn decide(&self, obs: &Observation, kyoku_events: &[Value]) -> Result<Action, String> {
-        crate::suzume::a1::decide(obs, kyoku_events, &self.a1, &mut SeatMemo::default())
+        with_kept(|m| crate::suzume::a1::decide(obs, kyoku_events, &self.a1, m))
     }
+}
+
+thread_local! {
+    /// The exact caches of a `SeatMemo` (the DP's evaluator verdicts) kept across this thread's `Suzume::choose` /
+    /// `decide` calls (2026-11-25). A verdict's key holds its whole scoring context (winds, dora indicators, melds;
+    /// `score::EvalCache`), so any seat, kyoku or game may share them, and a decision made with them is the decision
+    /// an empty memo makes. The rest of the memo (the riichi tile, the push / fold history) and the DP's solves start
+    /// empty on every call.
+    static KEPT: RefCell<SeatMemo> = RefCell::new(SeatMemo::default());
+}
+
+/// The verdicts `KEPT` holds before it starts over (about 9 MB at the most; rulebot's own cache keeps 2^20,
+/// `rulebot::sp_adapter`).
+const KEPT_VERDICTS: usize = 1 << 17;
+
+/// `f` on this thread's kept caches (`KEPT`), or on an empty memo when they are in use (a call made from inside
+/// another).
+fn with_kept<R>(f: impl FnOnce(&mut SeatMemo) -> R) -> R {
+    KEPT.with(|kept| match kept.try_borrow_mut() {
+        Ok(mut m) => {
+            m.keep_caches();
+            m.solves.clear();
+            m.eval.bound(KEPT_VERDICTS);
+            f(&mut m)
+        }
+        Err(_) => f(&mut SeatMemo::default()),
+    })
 }
 
 /// One seat of suzume through a game: the bot and the seat's kyoku memo (the tile chosen with a riichi, for the

@@ -5,7 +5,7 @@
 Apache-2.0 (`riichienv-core/LICENSE`, taken from the riichienv 0.4.8 wheel;
 the crate ships no license file of its own). yamawake-mahjong-arena links it statically.
 
-The fork changes nine files (`riichienv-core.patch`, against the crates.io
+The fork changes ten files (`riichienv-core.patch`, against the crates.io
 source, made with `diff -u` per file with `a/` and `b/` labels). It adds
 `shanten::HandShanten` (marked "yamawake patch"): a hand's Nyanten suit keys
 and chiitoitsu/kokushi tallies, giving the shanten with one tile added or
@@ -15,7 +15,10 @@ removed by rehashing one suit, or with every tile at once
 users it adds `HandEvaluator::verdict`, what `calc` says of a win (han, fu,
 yakuman) without building the score and the yaku list, removes a division
 search `calc` did not use, and stops `calculate_yaku` filling `yaku_names`,
-which nothing read (the han, fu and yaku ids are unchanged); its hand-level
+which nothing read (the han, fu and yaku ids are unchanged); `verdict` runs
+`calculate_yaku` without allocating (the divisions, their mentsu and the yaku
+ids held in fixed arrays, `agari::find_divisions_inline`: the same search in
+the same order, 2026-11-25); its hand-level
 checks (tanyao, the flushes, honroutou, the all-honor / all-terminal /
 all-green yakuman) read one bit mask of the tile types taken per evaluation
 instead of a pass over the counts each (the same results, pinned by a

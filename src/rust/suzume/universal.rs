@@ -57,6 +57,7 @@ use riichienv_core::action::ActionType;
 
 use crate::eval::feat::tiles::{aka_slot, is_aka_tid};
 use crate::eval::hash::pack;
+use crate::eval::shanten::keeping;
 use crate::suzume::config::DRAWABLE_AT_START;
 use crate::suzume::params::params;
 use crate::suzume::ctx::{Ctx, DiscardCand};
@@ -382,11 +383,18 @@ impl Shared {
         f(&mut self.scorers.borrow_mut()[i].1)
     }
 
-    /// A 13-tile hand's waits (`waits::waits_of`) when it is tenpai,
-    /// `None` when it is not.
-    fn tenpai_waits(&self, ctx: &Ctx, h: &[u8; 34]) -> Option<u64> {
-        let tenpai = ctx.tables().shanten(h) == 0;
-        tenpai.then(|| waits_of(ctx, h))
+    /// The held tile types `x` other than `t` whose discard leaves the 14-tile `h14` tenpai (bit `x`): when `h14`
+    /// is at shanten 0, the discards that keep it (`shanten::keeping`, kept per thread); else each one's shanten.
+    fn tenpai_discards(ctx: &Ctx, h14: &[u8; 34], t: usize) -> u64 {
+        let held = (0..34).filter(|&x| x != t && h14[x] > 0).fold(0u64, |m, x| m | 1 << x);
+        match keeping(h14) {
+            (0, keep) => keep & held,
+            _ => (0..34).filter(|&x| held >> x & 1 == 1 && {
+                let mut h = *h14;
+                h[x] -= 1;
+                ctx.tables().shanten(&h) == 0
+            }).fold(0u64, |m, x| m | 1 << x),
+        }
     }
 
     /// Some wait of the tenpai hand `h` (red fives `ak`) rons with a yaku
@@ -419,13 +427,14 @@ impl Shared {
             let mut unseen2 = unseen;
             unseen2[t] -= 1;
             let (mut a, mut y) = (false, false);
-            for x in (0..34).filter(|&x| x != t && h14[x] > 0) {
+            let tenpai = Self::tenpai_discards(ctx, &h14, t);
+            for x in (0..34).filter(|&x| tenpai >> x & 1 == 1) {
                 if a && y {
                     break;
                 }
                 let mut h = h14;
                 h[x] -= 1;
-                let Some(waits) = self.tenpai_waits(ctx, &h) else { continue };
+                let waits = waits_of(ctx, &h);
                 a = true;
                 if (0..34).any(|w| waits >> w & 1 == 1 && own[w]) {
                     continue;
@@ -457,13 +466,14 @@ impl Shared {
             let mut unseen2 = unseen;
             unseen2[t] -= 1;
             let (mut y, mut wd) = (false, false);
-            for x in (0..34).filter(|&x| x != t && h14[x] > 0) {
+            let tenpai = Self::tenpai_discards(ctx, &h14, t);
+            for x in (0..34).filter(|&x| tenpai >> x & 1 == 1) {
                 if y && wd {
                     break;
                 }
                 let mut h = h14;
                 h[x] -= 1;
-                let Some(waits) = self.tenpai_waits(ctx, &h) else { continue };
+                let waits = waits_of(ctx, &h);
                 if (0..34).any(|w| waits >> w & 1 == 1 && own[w]) {
                     continue;
                 }

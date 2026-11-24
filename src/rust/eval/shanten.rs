@@ -52,13 +52,32 @@ thread_local! {
     }));
 }
 
+/// The slot of `key` (the same in every kind's table).
+#[inline]
+fn slot_of(key: u128) -> usize {
+    // Both halves through a multiply: hands a few tiles apart (one decision's) spread like random keys. Folding
+    // the halves first (`lo.rotate_left(5) ^ hi`) maps tile types 23 apart onto the same bits, so such hands
+    // shared slots (12% of one decision's keys at 2^16 slots, a random hash 0.3%).
+    let mixed = (key as u64 ^ ((key >> 64) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    (mixed >> (64 - FACTS_BITS)) as usize
+}
+
+/// What `kind`'s table holds for `key`, if its slot holds that key (no
+/// computing on a miss).
+#[inline]
+pub fn facts_peek(kind: Facts, key: u128) -> Option<(i8, u64)> {
+    FACTS.with_borrow(|m| {
+        let s = &m[kind as usize][slot_of(key)];
+        (s.key == key).then_some((s.shanten, s.mask))
+    })
+}
+
 /// `f(hand)`, kept per thread under `kind` (exact: `f` must depend on the
 /// counts alone; a slot holds its whole key). `key`: the hand's `hash::pack`.
 #[inline]
 pub fn facts_packed(kind: Facts, key: u128, hand: &Counts, f: impl FnOnce(&Counts) -> (i8, u64)) -> (i8, u64) {
     let k = kind as usize;
-    let mixed = (key as u64).rotate_left(5) ^ (key >> 64) as u64;
-    let i = (mixed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - FACTS_BITS)) as usize;
+    let i = slot_of(key);
     let hit = FACTS.with_borrow(|m| {
         let s = &m[k][i];
         (s.key == key).then_some((s.shanten, s.mask))

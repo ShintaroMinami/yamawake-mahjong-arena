@@ -642,9 +642,15 @@ impl<'a> Solver<'a> {
             // once (one ura distribution for both).
             let tenpai_ron = s == 0 && ron_on;
             if tenpai_ron {
+                // A furiten node gets no ron (`ron_terms`), so its branches score the tsumo only.
+                let furiten = self.is_furiten(crate::eval::hash::pack(&hand), &hand);
                 let mut scores = std::mem::take(&mut self.scores);
                 scores.clear();
-                scores.extend(branches.iter().map(|&(t, _, is_aka)| self.scorer.score4_pair(&hand, &akas, t, is_aka, &unseen)));
+                if furiten {
+                    scores.extend(branches.iter().map(|&(t, _, is_aka)| (self.scorer.score4(&hand, &akas, t, is_aka, &unseen), None)));
+                } else {
+                    scores.extend(branches.iter().map(|&(t, _, is_aka)| self.scorer.score4_pair(&hand, &akas, t, is_aka, &unseen)));
+                }
                 self.scores = scores;
             }
             let surv = tenpai_ron

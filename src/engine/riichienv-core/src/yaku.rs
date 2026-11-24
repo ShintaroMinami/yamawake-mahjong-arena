@@ -1,7 +1,7 @@
 #[cfg(feature = "python")]
 use pyo3::prelude::*;
 
-use crate::agari::{self, Division, Mentsu};
+use crate::agari::{self, Body, Div, Mentsu};
 use crate::types::{Hand, Meld};
 
 // ---------------------------------------------------------------------------
@@ -283,10 +283,66 @@ impl Kinds {
     }
 }
 
+/// The yaku ids of one candidate, inline (each id is pushed at most once per candidate, and there
+/// are fewer than 64 ids).
+#[derive(Clone, Copy)]
+struct Ids {
+    a: [u8; 64],
+    n: u8,
+}
+
+impl Ids {
+    #[inline]
+    fn push(&mut self, id: u32) {
+        self.a[self.n as usize] = id as u8;
+        self.n += 1;
+    }
+
+    #[inline]
+    fn iter(&self) -> impl Iterator<Item = u32> + '_ {
+        self.a[..self.n as usize].iter().map(|&x| u32::from(x))
+    }
+}
+
+/// `YakuResult` without allocation (the candidates of `calculate_yaku`).
+#[derive(Clone, Copy)]
+struct Cand {
+    han: u8,
+    fu: u8,
+    yaku_ids: Ids,
+    yakuman_count: u8,
+}
+
+impl Default for Cand {
+    fn default() -> Self {
+        Cand { han: 0, fu: 0, yaku_ids: Ids { a: [0; 64], n: 0 }, yakuman_count: 0 }
+    }
+}
+
 pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: u8) -> YakuResult {
+    let c = calculate_cand(hand, melds, ctx, win_tile);
+    YakuResult {
+        han: c.han,
+        fu: c.fu,
+        yaku_ids: c.yaku_ids.iter().collect(),
+        yaku_names: Vec::new(),
+        yakuman_count: c.yakuman_count,
+    }
+}
+
+/// `calculate_yaku`'s (han, fu, yakuman_count) and whether a yaku other than dora, red fives and
+/// ura is present, without allocating.
+pub fn calculate_verdict(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: u8) -> (u8, u8, u8, bool) {
+    let c = calculate_cand(hand, melds, ctx, win_tile);
+    let has_yaku = c.yaku_ids.iter().any(|id| id != ID_DORA && id != ID_AKADORA && id != ID_URADORA);
+    (c.han, c.fu, c.yakuman_count, has_yaku)
+}
+
+fn calculate_cand(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: u8) -> Cand {
     let kinds = Kinds::of(hand, melds);
-    let divisions = agari::find_divisions(hand);
-    let mut best_res = YakuResult::default();
+    let divisions = agari::find_divisions_inline(hand);
+    let divisions = divisions.as_slice();
+    let mut best_res = Cand::default();
 
     if divisions.is_empty() {
         if agari::is_kokushi(hand) {
@@ -329,9 +385,9 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
                 kinds,
                 melds,
                 ctx,
-                &Division {
+                &Div {
                     head: 0,
-                    body: Vec::new(),
+                    body: Body::EMPTY,
                 },
                 None,
                 win_tile,
@@ -342,32 +398,36 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
         return best_res;
     }
 
-    for div in &divisions {
-        let mut win_group_indices = Vec::new();
+    for div in divisions {
+        let mut wg_buf = [None; 9];
+        let mut n_wg = 0;
         if div.head == win_tile {
-            win_group_indices.push(None);
+            wg_buf[n_wg] = None;
+            n_wg += 1;
         }
         for (idx, m) in div.body.iter().enumerate() {
             match m {
                 Mentsu::Koutsu(t) => {
                     if *t == win_tile {
-                        win_group_indices.push(Some(idx));
+                        wg_buf[n_wg] = Some(idx);
+                        n_wg += 1;
                     }
                 }
                 Mentsu::Shuntsu(t) => {
                     if win_tile >= *t && win_tile <= *t + 2 {
-                        win_group_indices.push(Some(idx));
+                        wg_buf[n_wg] = Some(idx);
+                        n_wg += 1;
                     }
                 }
             }
         }
 
-        if win_group_indices.is_empty() {
+        if n_wg == 0 {
             continue;
         }
 
-        for wg_idx in win_group_indices {
-            let mut res = YakuResult::default();
+        for &wg_idx in &wg_buf[..n_wg] {
+            let mut res = Cand::default();
 
             apply_yakuman(&mut res, hand, kinds, melds, ctx, div, wg_idx, win_tile);
             if res.han >= 13 {
@@ -516,12 +576,15 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
 
             // Iipeiko / Ryanpeikou (Closed only)
             if ctx.is_menzen {
-                let mut shuntsu_tiles = Vec::new();
+                let mut st_buf = [0u8; 8];
+                let mut n_st = 0;
                 for m in &div.body {
                     if let Mentsu::Shuntsu(t) = m {
-                        shuntsu_tiles.push(*t);
+                        st_buf[n_st] = *t;
+                        n_st += 1;
                     }
                 }
+                let shuntsu_tiles = &mut st_buf[..n_st];
                 shuntsu_tiles.sort();
                 let mut identical_pairs = 0;
                 let mut i = 0;
@@ -589,7 +652,7 @@ pub fn calculate_yaku(hand: &Hand, melds: &[Meld], ctx: &YakuContext, win_tile: 
 }
 
 fn calculate_fu_with_waiting(
-    div: &Division,
+    div: &Div,
     melds: &[Meld],
     ctx: &YakuContext,
     wg_idx: Option<usize>,
@@ -672,7 +735,7 @@ fn calculate_fu_with_waiting(
 }
 
 fn check_pinfu(
-    div: &Division,
+    div: &Div,
     melds: &[Meld],
     ctx: &YakuContext,
     wg_idx: Option<usize>,
@@ -723,7 +786,7 @@ fn is_honroutou(k: Kinds) -> bool {
     k.all & !TERMINALS == 0
 }
 
-fn is_junchan(div: &Division, melds: &[Meld]) -> bool {
+fn is_junchan(div: &Div, melds: &[Meld]) -> bool {
     if !is_number_terminal(div.head) {
         return false;
     }
@@ -749,7 +812,7 @@ fn is_junchan(div: &Division, melds: &[Meld]) -> bool {
     true
 }
 
-fn is_chantai(div: &Division, melds: &[Meld]) -> bool {
+fn is_chantai(div: &Div, melds: &[Meld]) -> bool {
     if !is_terminal(div.head) {
         return false;
     }
@@ -800,7 +863,7 @@ fn is_chinitsu(k: Kinds) -> bool {
     k.all & HONORS == 0 && k.suits() == 1
 }
 
-fn apply_static_yaku(res: &mut YakuResult, ctx: &YakuContext) {
+fn apply_static_yaku(res: &mut Cand, ctx: &YakuContext) {
     // Riichi
     if ctx.is_reach && !ctx.is_daburu_reach {
         res.han += 1;
@@ -851,12 +914,12 @@ fn apply_static_yaku(res: &mut YakuResult, ctx: &YakuContext) {
 
 #[allow(clippy::too_many_arguments)]
 fn apply_yakuman(
-    res: &mut YakuResult,
+    res: &mut Cand,
     hand: &Hand,
     kinds: Kinds,
     melds: &[Meld],
     ctx: &YakuContext,
-    div: &Division,
+    div: &Div,
     wg_idx: Option<usize>,
     win_tile: u8,
 ) {
@@ -1062,7 +1125,7 @@ fn is_chuuren_9_wait(hand: &Hand, win_tile: u8) -> bool {
     }
 }
 
-fn check_ittsu(div: &Division, melds: &[Meld]) -> bool {
+fn check_ittsu(div: &Div, melds: &[Meld]) -> bool {
     for suit_offset in [0, 9, 18] {
         let mut has_123 = false;
         let mut has_456 = false;
@@ -1102,7 +1165,7 @@ fn check_ittsu(div: &Division, melds: &[Meld]) -> bool {
     false
 }
 
-fn is_sanshoku_doujun(div: &Division, melds: &[Meld]) -> bool {
+fn is_sanshoku_doujun(div: &Div, melds: &[Meld]) -> bool {
     for i in 0..7 {
         let mut has_man = false;
         let mut has_pin = false;
@@ -1145,7 +1208,7 @@ fn is_tanyao(k: Kinds) -> bool {
     k.all & TERMINALS == 0
 }
 
-fn is_sanshoku_doukou(div: &Division, melds: &[Meld]) -> bool {
+fn is_sanshoku_doukou(div: &Div, melds: &[Meld]) -> bool {
     for i in 0..9 {
         let mut has_man = false;
         let mut has_pin = false;

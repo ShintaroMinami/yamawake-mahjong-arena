@@ -333,7 +333,7 @@ let mut seat = SuzumeSeat::new(bot);                          // 1 局を通し�
   - 合法手ごとのエンジンの手（`legal[i].action`。立直は宣言で切る牌）。
   - 打つ手 `action`（`decide` と同じ）。
   - 立直のときに宣言の後で切る牌 `riichi_tile`。宣言の後にその席が打つ牌と一致します。
-- **並列**：`Suzume` は `Copy` で、`Send` と `Sync` です。1 つの `Suzume` を、rayon などの多くのスレッドから同時に呼べます。
+- **並列**：`Suzume` は `Copy` で、`Send` と `Sync` です。1 つの `Suzume` を、rayon などの多くのスレッドから同時に呼べます。`choose` と `decide` は、和了の判定の結果をスレッドごとに残して次の呼び出しでも使います（2026-11-25 から。1 スレッドあたり最大約 9 MB）。判定の鍵には場風・ドラ表示牌・副露まで含まれるので、どの席・局・対局の判断が使っても、結果は空の memo で判断したときと同じです。
 - **spec**：`<組>[:KEY=VALUE...]` です。組は `suzume`、`suzume-rla225`、または A1 のモデルのディレクトリです。キーは `aggression`、`call_shift`、`riichi_shift`、`win`、`call`、`mlp`（`f64` か `f32`、[suzume.md](suzume.md)）です。スタイルの目標値（`call_rate` など）は Python で調整値に換算するものなので、受け取りません。換算した調整値を渡してください。
 - **Python との一致**：[`tests/external/choose_cases.json`](../tests/external/choose_cases.json) に、Python のプレイヤーの判断を 54 局面記録しています。3 つの spec で、打牌・立直・鳴き・槓・和了・見送りを含みます。この記録と同じ答えになることを、Python 側は [`test_choose_cases.py`](../tests/external/test_choose_cases.py) で、Rust 側は [`tests/external.rs`](../tests/external.rs)（`cargo test`）で確かめています。打ち方を意図して変えたときは、`uv run python tests/external/choose_cases.py` で記録し直します。
 

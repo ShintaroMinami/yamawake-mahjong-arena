@@ -10,7 +10,7 @@
 use riichienv_core::shanten::calc_shanten_from_counts;
 
 use crate::eval::hash::pack;
-use crate::eval::shanten::{Facts, HandShanten, facts_packed, keeping_packed};
+use crate::eval::shanten::{Facts, HandShanten, facts_packed, facts_peek, keeping_packed};
 
 /// The terminal and honor tile types (kokushi).
 const ORPHANS: [usize; 13] = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
@@ -65,8 +65,17 @@ fn pack_bit(t: usize) -> u128 {
 }
 
 /// The shanten and the improving draws of a 3n+1 hand, kept per thread (`key`: its `pack`).
+///
+/// On a hand of seven kinds or more the DP's improving draws (`dp::improving`) probe the same tile types as
+/// `probe_mask`, so they are the same function there: a value the DP already keeps (`Facts::DpImproving`) is
+/// read back instead of computed.
 fn improving(key: u128, hand: &[u8; 34]) -> (i8, u64) {
     facts_packed(Facts::Improving, key, hand, |hand| {
+        if hand.iter().filter(|&&c| c > 0).count() >= 7
+            && let Some(v) = facts_peek(Facts::DpImproving, key)
+        {
+            return v;
+        }
         let hs = HandShanten::new(hand);
         let base = hs.shanten();
         (base, hs.lowering_draws(probe_mask(hand, base)))

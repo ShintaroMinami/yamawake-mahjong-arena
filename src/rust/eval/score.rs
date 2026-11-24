@@ -501,15 +501,28 @@ impl Scorer {
         let han = eval_han + self.meld_dora_han;
         match ura {
             Some((dist, combos)) => {
+                // Each share `ways / combos` and each points value once (the same operations, the
+                // same order of the sums: bit-identical).
+                let top = dist.iter().rposition(|&w| w > 0.0).map_or(0, |h| h + 1);
+                let mut share = [0.0f64; URA_LEN];
+                for h in 0..top {
+                    if dist[h] > 0.0 {
+                        share[h] = dist[h] / combos;
+                    }
+                }
+                let mut pts = [0.0f64; URA_LEN + 3];
+                for (k, p) in pts.iter_mut().enumerate().take(top + 3) {
+                    *p = self.pts(han + k as u32, fu, tsumo);
+                }
                 let mut out = [0.0f64; 4];
-                for x in 0..4u32 {
+                for x in 0..4usize {
                     let mut ev = 0.0;
-                    for (h, &ways) in dist.iter().enumerate() {
-                        if ways > 0.0 {
-                            ev += ways / combos * self.pts(han + x + h as u32, fu, tsumo);
+                    for h in 0..top {
+                        if dist[h] > 0.0 {
+                            ev += share[h] * pts[x + h];
                         }
                     }
-                    out[x as usize] = ev;
+                    out[x] = ev;
                 }
                 out
             }

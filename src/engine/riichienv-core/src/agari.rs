@@ -243,3 +243,111 @@ fn decompose(hand: &mut Hand, start_idx: usize) -> bool {
 
     false
 }
+
+/// The mentsu of one division held inline (no allocation). A concealed part of at most 14 tiles
+/// holds at most 4 mentsu; the capacity leaves room for any hand of up to 26 tiles.
+#[derive(Debug, Clone, Copy)]
+pub struct Body {
+    m: [Mentsu; 8],
+    n: u8,
+}
+
+impl Body {
+    pub const EMPTY: Body = Body { m: [Mentsu::Koutsu(0); 8], n: 0 };
+
+    #[inline]
+    fn push(&mut self, x: Mentsu) {
+        self.m[self.n as usize] = x;
+        self.n += 1;
+    }
+
+    #[inline]
+    fn pop(&mut self) {
+        self.n -= 1;
+    }
+}
+
+impl std::ops::Deref for Body {
+    type Target = [Mentsu];
+    #[inline]
+    fn deref(&self) -> &[Mentsu] {
+        &self.m[..self.n as usize]
+    }
+}
+
+impl<'a> IntoIterator for &'a Body {
+    type Item = &'a Mentsu;
+    type IntoIter = std::slice::Iter<'a, Mentsu>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.m[..self.n as usize].iter()
+    }
+}
+
+/// `Division` with its body inline.
+#[derive(Debug, Clone, Copy)]
+pub struct Div {
+    pub head: u8,
+    pub body: Body,
+}
+
+/// The divisions of `find_divisions`, in the same order, held inline. A 14-tile hand has at most 5.
+pub struct Divs {
+    d: [Div; Divs::CAP],
+    n: usize,
+}
+
+impl Divs {
+    const CAP: usize = 16;
+
+    #[inline]
+    pub fn as_slice(&self) -> &[Div] {
+        &self.d[..self.n]
+    }
+}
+
+/// `find_divisions` without allocation (same divisions, same order).
+pub fn find_divisions_inline(hand: &Hand) -> Divs {
+    let mut out = Divs { d: [Div { head: 0, body: Body::EMPTY }; Divs::CAP], n: 0 };
+    let mut h = hand.counts;
+    for i in 0..TILE_MAX {
+        if h[i] >= 2 {
+            h[i] -= 2;
+            let mut cur = Body::EMPTY;
+            decompose_inline(&mut h, 0, i as u8, &mut cur, &mut out);
+            h[i] += 2;
+        }
+    }
+    out
+}
+
+fn decompose_inline(c: &mut [u8; TILE_MAX], start_idx: usize, head: u8, cur: &mut Body, out: &mut Divs) {
+    let mut i = start_idx;
+    while i < TILE_MAX && c[i] == 0 {
+        i += 1;
+    }
+    if i == TILE_MAX {
+        assert!(out.n < Divs::CAP, "more than {} divisions", Divs::CAP);
+        out.d[out.n] = Div { head, body: *cur };
+        out.n += 1;
+        return;
+    }
+    if c[i] >= 3 {
+        c[i] -= 3;
+        cur.push(Mentsu::Koutsu(i as u8));
+        decompose_inline(c, i, head, cur, out);
+        cur.pop();
+        c[i] += 3;
+    }
+    if i < 27 && i % 9 <= 6 && c[i + 1] > 0 && c[i + 2] > 0 {
+        c[i] -= 1;
+        c[i + 1] -= 1;
+        c[i + 2] -= 1;
+        cur.push(Mentsu::Shuntsu(i as u8));
+        decompose_inline(c, i, head, cur, out);
+        cur.pop();
+        c[i] += 1;
+        c[i + 1] += 1;
+        c[i + 2] += 1;
+    }
+}
