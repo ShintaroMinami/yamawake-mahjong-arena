@@ -39,7 +39,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--out FILE` | 結果の集計を jsonl に追記する |
 | `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
 | `--record-logs DIR` | 全対局の牌譜を mjai 形式（gzip）で書き出す |
-| `--record-format mjai\|records` | `--record-logs` の形式。`records` は配列に詰めた 1 つのディレクトリ（[`records.md`](records.md)。新しいか空のディレクトリに書く） |
+| `--record-format mjai\|records` | `--record-logs` の形式（0.17.0 から）。`records` は配列に詰めた 1 つのディレクトリ（[`records.md`](records.md)。新しいか空のディレクトリに書く） |
 | `--no-stats` | 和了率などの統計を出さない（統計は牌譜から集計するので、約 3% 遅くなる） |
 | `--flight N` | 同時に進める対局の数（既定 256） |
 
@@ -55,7 +55,7 @@ Play per kyoku の副露率・立直率は全局を分母とした値です。�
 
 ポイントは 25,000 点持ち 30,000 点返し、順位点 +90 / +45 / 0 / −135、オカ 20 の精算です（`rules.DEFAULT_RULE`）。
 
-`--game-rule`（`run_match(game_rule=...)`）は、役と対局の進行のルールを選びます。精算（上のポイント）はどちらでも同じです。
+`--game-rule`（`run_match(game_rule=...)`、0.17.0 から）は、役と対局の進行のルールを選びます。0.17.0 から、既定（`tenhou`）の進行は天鳳と同じになり、終局時に残った供託は 1 位が取ります（それまでは誰も取らなかった）。精算（上のポイント）はどちらでも同じです。
 
 | ルール | 中身 |
 |---|---|

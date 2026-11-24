@@ -39,7 +39,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--out FILE` | appends a summary of the results to a jsonl file |
 | `--save-scores FILE` | writes each game's final scores and seat order to an npz file |
 | `--record-logs DIR` | writes the game logs of all games in mjai format (gzip) |
-| `--record-format mjai\|records` | the format of `--record-logs`: `records` writes one directory of arrays ([`records.md`](records.md), Japanese; to a new or empty directory) |
+| `--record-format mjai\|records` | the format of `--record-logs` (since 0.17.0): `records` writes one directory of arrays ([`records.md`](records.md), Japanese; to a new or empty directory) |
 | `--no-stats` | skips statistics such as the win rate (they are computed from the game logs, which makes the run about 3% slower) |
 | `--flight N` | number of games run concurrently (default 256) |
 
@@ -55,7 +55,7 @@ The call and riichi rates in Play per kyoku use all kyoku as the denominator. Th
 
 Points are settled with 25,000 starting points, a 30,000 return, rank points of +90 / +45 / 0 / −135, and an oka of 20 (`rules.DEFAULT_RULE`).
 
-`--game-rule` (`run_match(game_rule=...)`) chooses the rule for the yaku and the game flow. The settlement (the points above) is the same under both.
+`--game-rule` (`run_match(game_rule=...)`, since 0.17.0) chooses the rule for the yaku and the game flow. Since 0.17.0 the default (`tenhou`) game flow is Tenhou's, and the riichi sticks left at the end go to first place (before, to nobody). The settlement (the points above) is the same under both.
 
 | Rule | Contents |
 |---|---|

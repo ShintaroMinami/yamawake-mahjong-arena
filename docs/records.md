@@ -8,7 +8,7 @@ yamawake が正式な定義を持ち、他のリポジトリ（tide、mjrelnet �
 - 圧縮しないので、`np.load(mmap_mode="r")` で任意の半荘・局へ直接読みに行けます。
 - 他の値から決まるものは持ちません。オフセットも持たず、件数から読み込み時に累積和で求めます。そのため、2 つのディレクトリは配列をつなぐだけで連結できます（`players.json` の添字だけ付け替える）。
 
-読み書きは `yamawake.records` です。
+読み書きは `yamawake.records` です（0.17.0 から）。
 
 ``` python
 from yamawake.records import Records, RecordWriter
