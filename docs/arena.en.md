@@ -39,6 +39,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--out FILE` | appends a summary of the results to a jsonl file |
 | `--save-scores FILE` | writes each game's final scores and seat order to an npz file |
 | `--record-logs DIR` | writes the game logs of all games in mjai format (gzip) |
+| `--record-format mjai\|records` | the format of `--record-logs`: `records` writes one directory of arrays ([`records.md`](records.md), Japanese; to a new or empty directory) |
 | `--no-stats` | skips statistics such as the win rate (they are computed from the game logs, which makes the run about 3% slower) |
 | `--flight N` | number of games run concurrently (default 256) |
 
@@ -308,7 +309,7 @@ r = player.choose(obs, kyoku_events)            # the action and a score per leg
 
 ### handstats
 
-Prints statistics for the player with the given name from the game logs written by `--record-logs`. With `--vs`, two runs played on the same walls are paired by kyoku and by hanchan and compared.
+Prints statistics for the player with the given name from the game logs written by `--record-logs` (records or mjai). The final scores give the riichi sticks left at the end to first place, as the engine does. With `--vs`, two runs played on the same walls are paired by kyoku and by hanchan and compared.
 
 ``` bash
 python -m yamawake.handstats LOGDIR --name suzume
@@ -319,13 +320,10 @@ The statistics include the rank distribution, ready-hand rate and hand value, th
 
 ### tenhou6
 
-Converts mjai game logs to the format read by Tenhou's game log viewer (tenhou.net/6 JSON).
+Converts game logs to the format read by Tenhou's game log viewer (tenhou.net/6 JSON).
 
 ``` python
-from yamawake.tenhou6 import convert_file, dump
-dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")
+from yamawake.tenhou6 import convert_file, convert_records, dump
+dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")     # one mjai file
+dump(convert_records("records/", 0), "out/game.json")                 # game 0 of a records directory
 ```
-
-## 8. Limitations
-
-- Deposits left over at the end of a game are handled as riichienv handles them. The final scores in `handstats` are computed without giving the leftover deposits to anyone.

@@ -208,7 +208,7 @@
  
          let np: u8 = NP as u8;
  
-@@ -1616,10 +1669,35 @@
+@@ -1616,7 +1669,32 @@
              2 | 5 => self.round_wind == 1 && self.oya == np - 1,
              _ => false,
          };
@@ -219,9 +219,9 @@
 +            is_draw && self.last_draw_abortive && self.rule.abortive_draw_plays_on;
 +        let dealer_ends = dealer_is_top && dealer_score >= 30000 && !abortive_plays_on;
 +        if oya_won && is_last_regular_round && dealer_ends {
-             self._process_end_game();
-             return;
-         }
++            self._process_end_game();
++            return;
++        }
 +        // yamawake patch: with `extension_renchan_plays_on` (Tenhou) a kept
 +        // deal in the extension round ends the game only as in the all-last;
 +        // with `extension_multi_ron_renchan_plays_on` (MJSoul) so does one
@@ -239,12 +239,9 @@
 +            && (self.rule.extension_renchan_plays_on
 +                || (self.rule.extension_multi_ron_renchan_plays_on && multi_ron_with_dealer));
 +        if kept_in_extension && dealer_ends {
-+            self._process_end_game();
-+            return;
-+        }
- 
-         let mut next_honba = self.honba;
-         let mut next_oya = self.oya;
+             self._process_end_game();
+             return;
+         }
 @@ -1645,14 +1723,20 @@
              1 | 4 => {
                  // TODO: Delete 4, 5, 3
@@ -358,19 +355,22 @@
          self.is_done = true;
          if !self.skip_mjai_logging {
              let mut ek = serde_json::Map::new();
-@@ -2161,3 +2286,13 @@
+@@ -2161,3 +2286,16 @@
          }
      }
  }
 +
 +/// yamawake patch: a `hora` event also carries the win's han, fu, yaku ids
-+/// and whether it is a yakuman (as scored here), so a reader need not score
-+/// the hand again.
++/// (ascending, so the log is the same however the yaku were found) and
++/// whether it is a yakuman (as scored here), so a reader need not score the
++/// hand again.
 +fn insert_win(ev: &mut serde_json::Map<String, Value>, win: &crate::types::WinResult) {
++    let mut yaku = win.yaku.clone();
++    yaku.sort_unstable();
 +    ev.insert("han".to_string(), Value::Number(win.han.into()));
 +    ev.insert("yakuman".to_string(), Value::Bool(win.yakuman));
 +    ev.insert("fu".to_string(), Value::Number(win.fu.into()));
-+    ev.insert("yaku".to_string(), serde_json::to_value(&win.yaku).expect("valid JSON"));
++    ev.insert("yaku".to_string(), serde_json::to_value(&yaku).expect("valid JSON"));
 +}
 --- a/src/state/legal_actions.rs
 +++ b/src/state/legal_actions.rs

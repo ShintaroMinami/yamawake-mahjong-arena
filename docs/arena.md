@@ -39,6 +39,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--out FILE` | 結果の集計を jsonl に追記する |
 | `--save-scores FILE` | 対局ごとの最終点と席の並びを npz に書く |
 | `--record-logs DIR` | 全対局の牌譜を mjai 形式（gzip）で書き出す |
+| `--record-format mjai\|records` | `--record-logs` の形式。`records` は配列に詰めた 1 つのディレクトリ（[`records.md`](records.md)。新しいか空のディレクトリに書く） |
 | `--no-stats` | 和了率などの統計を出さない（統計は牌譜から集計するので、約 3% 遅くなる） |
 | `--flight N` | 同時に進める対局の数（既定 256） |
 
@@ -308,7 +309,7 @@ r = player.choose(obs, kyoku_events)            # 手と、合法な手ごとの
 
 ### handstats
 
-`--record-logs` の牌譜から、指定した名前のプレイヤーの統計を出します。`--vs` を付けると、同じ牌山で打った 2 つの実行を局ごと・半荘ごとに対にして比べます。
+`--record-logs` の牌譜（records でも mjai でも）から、指定した名前のプレイヤーの統計を出します。最終の点数は、エンジンと同じく、残った供託を 1 位に渡して求めます。`--vs` を付けると、同じ牌山で打った 2 つの実行を局ごと・半荘ごとに対にして比べます。
 
 ``` bash
 python -m yamawake.handstats LOGDIR --name suzume
@@ -319,13 +320,10 @@ python -m yamawake.handstats LOGDIR --name suzume --vs OTHER --vs-name rulebot -
 
 ### tenhou6
 
-mjai の牌譜を、天鳳の牌譜ビューアが読む形式（tenhou.net/6 の JSON）に変換します。
+牌譜を、天鳳の牌譜ビューアが読む形式（tenhou.net/6 の JSON）に変換します。
 
 ``` python
-from yamawake.tenhou6 import convert_file, dump
-dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")
+from yamawake.tenhou6 import convert_file, convert_records, dump
+dump(convert_file("logs/arena-0-000000.json.gz"), "out/game.json")     # mjai の 1 ファイル
+dump(convert_records("records/", 0), "out/game.json")                 # records の半荘 0
 ```
-
-## 8. 制限
-
-- 対局の最後に残った供託の扱いは、riichienv に従います。`handstats` の最終の点数は、残った供託を誰にも渡さずに計算します。

@@ -4,8 +4,8 @@
     python -m yamawake.handstats LOGDIR --name suzume --vs OTHER --vs-name rulebot \\
         --json out.json
 
-Reads the gzipped mjai games `--record-logs` writes (`arena-<wall_base>-NNNNNN
-.json.gz`) and, for every kyoku of every seat whose player name (`start_game`) is
+Reads the games `--record-logs` writes -- a records directory or gzipped mjai
+files (`arena-<wall_base>-NNNNNN.json.gz`), the same ids either way -- and, for every kyoku of every seat whose player name (`start_game`) is
 `--name`, measures how fast the hand got to tenpai, what it was worth there,
 how it riichi'd, called, won and dealt in, and how each hanchan ended. Post
 hoc only: nothing about the arena changes.
@@ -98,6 +98,7 @@ from riichienv._riichienv import Conditions, HandEvaluator, Meld, MeldType, Wind
 
 from yamawake.context import LIVE_WALL
 from yamawake.playstats import ratio
+from yamawake.records import read_games
 from yamawake.tenhou6 import load_mjai
 
 MAX_TURN = 18                       # the tenpai-rate curve runs over turns 1..MAX_TURN
@@ -383,8 +384,10 @@ def parse_game(path: str | Path, name: str) -> list[KyokuStat]:
 
 
 def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
-    events = load_mjai(path)
-    game = path.name.split(".")[0]
+    return _parse_events(load_mjai(path), path.name.split(".")[0], name)
+
+
+def _parse_events(events: list[dict], game: str, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
     names = events[0].get("names", [])
     measured = [s for s, n in enumerate(names) if n == name]
     out: list[KyokuStat] = []
@@ -607,24 +610,18 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
     return out, games
 
 
-def _files(log_dir: str | Path) -> list[Path]:
-    files = sorted(Path(log_dir).glob("*.json.gz"))
-    if not files:
-        raise FileNotFoundError(f"no *.json.gz logs in {log_dir}")
-    return files
-
-
 def collect(log_dir: str | Path, name: str) -> list[KyokuStat]:
-    """`parse_game` over every recorded game in a directory (sorted by file)."""
-    return [k for f in _files(log_dir) for k in _parse(f, name)[0]]
+    """`parse_game` over every recorded game in a directory (`records.read_games`: a records
+    directory or `*.json.gz` mjai logs)."""
+    return collect_all(log_dir, name)[0]
 
 
 def collect_all(log_dir: str | Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
-    """Every kyoku and every hanchan result of player `name` in a directory."""
+    """Every kyoku and every hanchan result of player `name` in a directory (as `collect`)."""
     ks: list[KyokuStat] = []
     gs: list[GameStat] = []
-    for f in _files(log_dir):
-        k, g = _parse(f, name)
+    for game, events in read_games(log_dir):
+        k, g = _parse_events(events, game, name)
         ks += k
         gs += g
     return ks, gs
@@ -894,7 +891,7 @@ def main(argv: list[str] | None = None) -> None:
     """`python -m yamawake.handstats LOGDIR --name NAME [--vs DIR --vs-name NAME]`."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("log_dir", help="a --record-logs directory")
+    ap.add_argument("log_dir", help="a --record-logs directory (records or *.json.gz mjai)")
     ap.add_argument("--name", required=True, help="player name to measure (start_game names)")
     ap.add_argument("--vs", default=None, help="a second --record-logs directory, same walls")
     ap.add_argument("--vs-name", default=None, help="player name in --vs (default: --name)")

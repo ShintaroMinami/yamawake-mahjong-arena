@@ -473,7 +473,7 @@ def run_match(players: list, walls: int | None = None,
               out: str | Path | None = None,
               save_scores: str | Path | None = None, progress=None,
               single_kyoku: bool = False, play_stats: bool = False,
-              game_rule: str = "tenhou") -> MatchResult:
+              game_rule: str = "tenhou", record_format: str = "mjai") -> MatchResult:
     """Play `walls` x 4 hanchan (x 2 for a 2v2) and return every slot's standing.
 
     Args:
@@ -506,6 +506,11 @@ def run_match(players: list, walls: int | None = None,
             suzume player also get
             `<id>.suzume.json`: `[mjai log index, seat, deciding rule]` per
             suzume decision.
+        record_format: `"mjai"` (the default, as above) or `"records"`: the
+            games as one records directory (`yamawake.records`,
+            `docs/records.md`) at `record_logs`, which must be new or empty;
+            its meta holds the protocol and the agents, and suzume's
+            decisions go to `suzume_traces.json` (per game, as above).
         out: Append the result (without the raw arrays) to this jsonl.
         save_scores: Write the raw `scores` and `seat_of_slot` to this `.npz`.
             The jsonl keeps aggregates only, so without this any later question
@@ -545,6 +550,11 @@ def run_match(players: list, walls: int | None = None,
     if single_kyoku:
         game_mode = SINGLE_KYOKU
     rule = rule or DEFAULT_RULE
+    if record_format not in ("mjai", "records"):
+        raise ValueError(f"record_format is mjai or records, got {record_format!r}")
+    if record_format == "records" and record_logs is not None and Path(record_logs).exists() \
+            and any(Path(record_logs).iterdir()):
+        raise FileExistsError(f"{record_logs} is not empty")       # before playing, not after
 
     plan = match_plan(players, walls, wall_base, wall_seed, wall_start, rotate)
     agents, walls, rotations, cycle = plan.agents, plan.protocol["walls"], plan.rotations, plan.seat_cycle
@@ -597,7 +607,9 @@ def run_match(players: list, walls: int | None = None,
                          {**{k: np.concatenate([c[k] for c in counts]) for k in counts[0]},
                           **dict(zip(A1_OPTION_KEYS, np.array(options, dtype=np.int64).transpose(2, 0, 1)))}
                          if play_stats else None, timing, cpu_seconds)
-    if record_logs is not None:
+    if record_logs is not None and record_format == "records":
+        _write_records(Path(record_logs), logs, scores, seat_of_slot, players, result, traces)
+    elif record_logs is not None:
         _write_logs(Path(record_logs), logs, seat_of_slot, players, plan.wall_tag, traces)
     if save_scores is not None:
         Path(save_scores).parent.mkdir(parents=True, exist_ok=True)
@@ -645,16 +657,35 @@ def _kyoku_outcomes(logs: list[list[str]]) -> dict[str, np.ndarray]:
     return {"win": win, "deal_in": deal_in}
 
 
+def _seat_names(players: list, seat_of_slot: np.ndarray) -> list[list[str]]:
+    """Per game, the players' names by seat."""
+    names = [s.describe().get("name", f"slot{j}") for j, s in enumerate(players)]
+    out = []
+    for row in seat_of_slot:
+        by_seat = [""] * 4
+        for j in range(4):
+            by_seat[int(row[j])] = names[j]
+        out.append(by_seat)
+    return out
+
+
+def _write_records(out_dir: Path, logs: list[list[str]], scores: np.ndarray, seat_of_slot: np.ndarray,
+                   players: list, result: MatchResult, traces: list | None = None) -> None:
+    """Write the games as one records directory (`yamawake.records`)."""
+    from yamawake.records import RecordWriter      # not at import: `python -m yamawake.records` runs it
+    w = RecordWriter()
+    for log, final, names in zip(logs, scores, _seat_names(players, seat_of_slot)):
+        w.add_game([json.loads(line) for line in log], scores=[int(s) for s in final], names=names)
+    w.save(out_dir, {"source": {"run_match": result.protocol, "agents": result.agents}})
+    if traces is not None:
+        (out_dir / "suzume_traces.json").write_text(json.dumps([[list(t) for t in tr] for tr in traces]))
+
+
 def _write_logs(out_dir: Path, logs: list[list[str]], seat_of_slot: np.ndarray,
                 players: list, wall_base: int | str, traces: list | None = None) -> None:
     """Write the games as gzipped mjai, with the players' names in `start_game`."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    names = [s.describe().get("name", f"slot{j}") for j, s in enumerate(players)]
-    for g, log in enumerate(logs):
-        by_seat = [""] * 4
-        for j in range(4):
-            seat = int(seat_of_slot[g, j])
-            by_seat[seat] = names[j]
+    for g, (log, by_seat) in enumerate(zip(logs, _seat_names(players, seat_of_slot))):
         log = list(log)
         log[0] = json.dumps({"type": "start_game", "names": by_seat})
         log_id = f"arena-{wall_base}-{g:06d}"

@@ -5,8 +5,9 @@ format). That is the right thing to train on and the wrong thing to *watch*:
 to look at a hand you want the tenhou replay viewer, which reads the
 "tenhou.net/6" JSON dialect. This module is the bridge.
 
-    from yamawake.tenhou6 import convert_file, dump
+    from yamawake.tenhou6 import convert_file, convert_records, dump
     dump(convert_file("game.json.gz"), "game.json")
+    dump(convert_records("records/", 0), "game.json")     # game 0 of a records directory
 
 Then open https://tenhou.net/6/ and paste the file, or serve it and use
 `https://tenhou.net/6/#json={...}`.
@@ -334,6 +335,16 @@ def convert_file(path: str | Path, **kwargs) -> dict:
     """Convert one mjai log file; `ref` defaults to its name."""
     kwargs.setdefault("ref", Path(path).name.split(".")[0])
     return to_tenhou6(load_mjai(path), **kwargs)
+
+
+def convert_records(path: str | Path, game: int, **kwargs) -> dict:
+    """Convert game `game` of a records directory (`yamawake.records`); `ref` defaults to its id
+    and the final scores to the recorded ones."""
+    from yamawake.records import Records
+    r = Records(path)
+    kwargs.setdefault("ref", r.game_id(game))
+    kwargs.setdefault("final_scores", r.scores(game))
+    return to_tenhou6(r.events(game), **kwargs)
 
 
 def dump(obj: dict, path: str | Path) -> Path:

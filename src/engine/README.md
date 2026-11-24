@@ -44,8 +44,8 @@ It also fills in what a consumer would otherwise rebuild from the events
   `last_discarder` (the seat of `last_discard`); `last_discard` itself is
   fixed to hold the tile (stock 0.4.8 read the stored seat as the tile). Both
   new fields default when absent, so the stock wheel still reads the JSON.
-- `hora` events carry the win's `han`, `fu`, `yaku` (ids) and `yakuman`, as
-  scored by the engine.
+- `hora` events carry the win's `han`, `fu`, `yaku` (ids, ascending) and
+  `yakuman`, as scored by the engine.
 
 And it makes the game flow follow Tenhou's and Mahjong Soul's ranked rules
 where stock does not (marked "yamawake patch"; tested in `src/tests.rs`,

@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> None:
                          "to add new ones")
     ap.add_argument("--flight", type=int, default=256)
     ap.add_argument("--record-logs", default=None, help="write the games as a corpus")
+    ap.add_argument("--record-format", choices=("mjai", "records"), default="mjai",
+                    help="--record-logs as gzipped mjai files (default) or one records directory "
+                         "(docs/records.md)")
     ap.add_argument("--out", default=None, help="append the result to this jsonl")
     ap.add_argument("--save-scores", default=None,
                     help="write the raw per-game scores to this .npz, so a later "
@@ -184,7 +187,7 @@ def main(argv: list[str] | None = None) -> None:
                        save_scores=args.save_scores, progress=progress,
                        single_kyoku=args.single_kyoku, play_stats=not args.no_stats,
                        rotate=not args.no_rotate, split_wall=not args.no_split,
-                       game_rule=args.game_rule)
+                       game_rule=args.game_rule, record_format=args.record_format)
     progress.close()
     print(report(result), flush=True)
 

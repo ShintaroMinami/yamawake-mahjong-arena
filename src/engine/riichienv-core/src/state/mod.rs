@@ -2288,11 +2288,14 @@ impl GameState {
 }
 
 /// yamawake patch: a `hora` event also carries the win's han, fu, yaku ids
-/// and whether it is a yakuman (as scored here), so a reader need not score
-/// the hand again.
+/// (ascending, so the log is the same however the yaku were found) and
+/// whether it is a yakuman (as scored here), so a reader need not score the
+/// hand again.
 fn insert_win(ev: &mut serde_json::Map<String, Value>, win: &crate::types::WinResult) {
+    let mut yaku = win.yaku.clone();
+    yaku.sort_unstable();
     ev.insert("han".to_string(), Value::Number(win.han.into()));
     ev.insert("yakuman".to_string(), Value::Bool(win.yakuman));
     ev.insert("fu".to_string(), Value::Number(win.fu.into()));
-    ev.insert("yaku".to_string(), serde_json::to_value(&win.yaku).expect("valid JSON"));
+    ev.insert("yaku".to_string(), serde_json::to_value(&yaku).expect("valid JSON"));
 }
