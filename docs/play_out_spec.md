@@ -285,7 +285,7 @@ pytest のテスト（`tests/playout/test_playout.py`）は、このうち arena
 |---|---|
 | 1（実装済み） | 局面の組み立て（普通の牌山と分割牌山、サンプルの指定と乱数の埋め）、`legal_actions`、`seat_options`（ボットの選択）、`play_out`（強制する手の列、席ごとの打ち手） |
 | 2 | `seat_options` の候補ごとの点数（実装済み、0.16.0）。必要があれば `play_out` の `until="hanchan"`（半荘の終わりまで打つ。次局からの牌山は乱数か牌山表で与える） |
-| 3 | 局の途中から始める対局ループ `SelfPlayLoop.from_positions`：同じ局面とサンプルから始め、一部の席を Python のプレイヤー（tide の NN など）が collect / apply の形で打つ |
+| 3 | 局の途中から始める対局ループ `SelfPlayLoop.from_positions`：同じ局面とサンプルから始め、一部の席を Python のプレイヤー（tide の NN など）が collect / apply の形で打つ。走っている対局を判断の時点で分岐させる用途は、`SelfPlayLoop.fork`（0.19.0、[arena.md](arena.md) 5 節）で実装済み |
 
 ## 10. tide 側の回答の記録
 

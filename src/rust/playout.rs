@@ -1168,10 +1168,24 @@ fn roll_on(slot: &mut GameSlot, b: &Built, seat: Option<u8>, forced: &[Value], b
         }
         slot.step(&acts)?;
     }
-    let st = &slot.state;
+    let mut out = kyoku_result(&slot.state, slot.kyoku_events(), k0, &b.scores, record);
+    out["forced"] = json!(n_forced);
+    out["n_decisions"] = json!(n_decisions);
+    if samples {
+        out["sample"] = b.sample.clone();
+        out["hands"] = b.hands.clone();
+    }
+    Ok(out)
+}
+
+/// The result of a kyoku played to its end on state `st` from event `k0` of the kyoku's `events` (the scores
+/// `scores0` there):
+/// `end`, `delta`, `scores`, `kyotaku`, `honba`, `renchan`, `hora`, `ryukyoku` and, with `record`, the events from
+/// `k0` on (`docs/play_out_spec.md` section 3). `play_out` and the loop's forks (`arena::LockstepLoop::fork`) share it.
+pub fn kyoku_result(st: &GameState, events: &[Value], k0: usize, scores0: &[i32; 4], record: bool) -> Value {
     let scores: Vec<i32> = (0..4).map(|i| st.players[i].score).collect();
-    let delta: Vec<i32> = (0..4).map(|i| scores[i] - b.scores[i]).collect();
-    let tail = &slot.kyoku_events()[k0..];
+    let delta: Vec<i32> = (0..4).map(|i| scores[i] - scores0[i]).collect();
+    let tail = &events[k0..];
     let horas: Vec<Value> = tail
         .iter()
         .filter(|e| e["type"] == "hora")
@@ -1205,12 +1219,10 @@ fn roll_on(slot: &mut GameSlot, b: &Built, seat: Option<u8>, forced: &[Value], b
         "renchan": st.pending_oya_won,
         "hora": horas,
         "ryukyoku": ryukyoku,
-        "forced": n_forced,
-        "n_decisions": n_decisions,
     });
     if record {
         // A rinshan draw is marked: it follows its kan by the same seat (dora events aside).
-        let all = slot.kyoku_events();
+        let all = events;
         let events: Vec<Value> = (k0..all.len())
             .map(|i| {
                 let mut e = all[i].clone();
@@ -1227,11 +1239,7 @@ fn roll_on(slot: &mut GameSlot, b: &Built, seat: Option<u8>, forced: &[Value], b
             .collect();
         out["events"] = Value::Array(events);
     }
-    if samples {
-        out["sample"] = b.sample.clone();
-        out["hands"] = b.hands.clone();
-    }
-    Ok(out)
+    out
 }
 
 /// The forced action lists of a position: each entry an mjai dict (one action) or a list of them.

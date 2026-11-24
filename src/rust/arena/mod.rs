@@ -14,13 +14,19 @@
 //!     event history, never via the consumed-once `obs.new_events()`;
 //!   - `reacting_to` mirrors the live rule: the log's last event is a
 //!     dahai/kakan by another actor.
+//!
+//! A game can be forked at a pending decision (`LockstepLoop::fork`,
+//! 2026-11-25): each fork is a new game of the loop with the parent's whole
+//! engine state, which plays one given move and then the rest of its kyoku
+//! through the same collect() / apply(); its result is read with
+//! `fork_result` and its index freed with `release`.
 
 use std::collections::HashMap;
 
 use riichienv_core::action::{Action, ActionType, Phase};
 use riichienv_core::rule::GameRule;
 use riichienv_core::state::GameState;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::suzume::{SuzumeConfig, SeatMemo};
 use crate::rulebot::config::RulebotConfig;
@@ -66,6 +72,31 @@ pub struct GameSlot {
     /// Wall-clock time of all this game's work in the loop (nanoseconds):
     /// engine steps, observations, events and the in-loop bots.
     pub work_nanos: u64,
+    /// Decisions fixed before the next collect() asks anyone: a fork's own
+    /// move and the in-loop decisions of its tick (`branch_off`); the next
+    /// tick takes them.
+    held: HashMap<u8, Action>,
+    /// For a fork of the loop: where it left its parent (`branch_off`).
+    pub branch: Option<Branch>,
+    /// Released (`LockstepLoop::release`): it takes no more decisions and
+    /// its index serves the next fork.
+    released: bool,
+    /// A fork without in-loop bots (`branch_off`): its new events stay as
+    /// mjai lines, parsed only for its result (`kyoku_events` holds the two
+    /// events before its fork point).
+    lean: bool,
+}
+
+/// Where a fork of the loop left its parent game (`LockstepLoop::fork`).
+#[derive(Clone, Debug)]
+pub struct Branch {
+    /// The parent game, the seat whose decision was forked and the fork's move there.
+    pub parent: usize,
+    pub seat: u8,
+    pub action: Action,
+    /// The fork's kyoku events before its move (its result's events start here) and the scores then.
+    pub k0: usize,
+    pub scores0: [i32; 4],
 }
 
 impl GameSlot {
@@ -107,6 +138,10 @@ impl GameSlot {
             bot_decisions: [0; 4],
             bot_nanos: [0; 4],
             work_nanos: 0,
+            held: HashMap::new(),
+            branch: None,
+            released: false,
+            lean: false,
         };
         slot.drain_events()?;
         Ok(slot)
@@ -132,7 +167,92 @@ impl GameSlot {
             bot_decisions: [0; 4],
             bot_nanos: [0; 4],
             work_nanos: 0,
+            held: HashMap::new(),
+            branch: None,
+            released: false,
+            lean: false,
         }
+    }
+
+    /// A fork of this game at its current tick (`LockstepLoop::fork`): the engine state with every hidden tile
+    /// (hands, live wall or per-seat queues, dead wall, dora and ura indicators), the tick's in-loop decisions and
+    /// `action` for `seat` held for its first tick, and each seat's suzume decision state (`SeatMemo::decisions`).
+    /// It stops at its kyoku's end (`defer_next_round`). To keep a fork small it holds no log before the fork point
+    /// but each seat's unread lines (the read positions moved to match), no wall table (it deals no next kyoku), and
+    /// the kyoku's parsed events only when `history` (its in-loop bots read them; else the last two, which mark a
+    /// rinshan draw after a kan).
+    pub fn branch_off(&mut self, parent: usize, seat: u8, action: Action, history: bool) -> Result<GameSlot, String> {
+        let kyoku_events = if history {
+            self.kyoku_events.clone()
+        } else {
+            let all = self.events_now()?;
+            all[all.len().saturating_sub(2)..].to_vec()
+        };
+        // Clone the state without its logs and wall table, then copy the unread lines.
+        let st = &mut self.state;
+        let kept = (std::mem::take(&mut st.mjai_log), std::mem::take(&mut st.mjai_log_per_player), st.wall_table.take());
+        let mut state = st.clone();
+        (st.mjai_log, st.mjai_log_per_player, st.wall_table) = kept;
+        for i in 0..4 {
+            state.mjai_log_per_player[i] = st.mjai_log_per_player[i][st.player_event_counts[i]..].to_vec();
+            state.player_event_counts[i] = 0;
+            state.kyoku_start_event_counts[i] = 0;
+        }
+        state.mjai_log = st.mjai_log[self.event_cursor..].to_vec();
+        state.defer_next_round = true;
+        let mut held = self.auto_actions.clone();
+        held.insert(seat, action.clone());
+        let scores0 = std::array::from_fn(|i| self.state.players[i].score);
+        Ok(GameSlot {
+            state,
+            event_cursor: 0,
+            auto_actions: HashMap::new(),
+            suzume_trace: Vec::new(),
+            a1_options: [[0; 8]; 4],
+            a1_kyoku_seen: self.a1_kyoku_seen,
+            suzume_memo: std::array::from_fn(|i| self.suzume_memo[i].decisions()),
+            bot_decisions: [0; 4],
+            bot_nanos: [0; 4],
+            work_nanos: 0,
+            held,
+            branch: Some(Branch { parent, seat, action, k0: kyoku_events.len(), scores0 }),
+            kyoku_events,
+            released: false,
+            lean: !history,
+        })
+    }
+
+    /// The kyoku's events (`kyoku_events`), a lean fork's mjai lines parsed and appended.
+    pub fn events_now(&self) -> Result<std::borrow::Cow<'_, [Value]>, String> {
+        if !self.lean {
+            return Ok(std::borrow::Cow::Borrowed(&self.kyoku_events));
+        }
+        let mut out = self.kyoku_events.clone();
+        for line in &self.state.mjai_log {
+            out.push(serde_json::from_str(line).map_err(|e| format!("bad mjai line from core: {e}"))?);
+        }
+        Ok(std::borrow::Cow::Owned(out))
+    }
+
+    /// Whether the game takes no more decisions: it is over, released, or a fork whose kyoku has ended.
+    pub fn finished(&self) -> bool {
+        self.released || self.state.is_done || (self.branch.is_some() && self.state.needs_initialize_next_round)
+    }
+
+    /// Release a fork: drop its logs, events and memos (`LockstepLoop::release`).
+    fn retire(&mut self) {
+        self.released = true;
+        self.state.mjai_log = Vec::new();
+        self.state.mjai_log_per_player = Default::default();
+        self.state.player_event_counts = [0; 4];
+        self.state.kyoku_start_event_counts = [0; 4];
+        self.event_cursor = 0;
+        self.kyoku_events = Vec::new();
+        self.suzume_memo = Default::default();
+        self.suzume_trace = Vec::new();
+        self.auto_actions.clear();
+        self.held.clear();
+        self.lean = false;
     }
 
     /// Swap the seats' suzume memos with `memos` (`playout` carries the caches from one play-out to the next).
@@ -153,6 +273,11 @@ impl GameSlot {
     /// Fold the mjai lines appended since the last drain (deal, discards,
     /// calls ...) into the kyoku's event history.
     fn drain_events(&mut self) -> Result<(), String> {
+        if self.lean {
+            // Kept as lines (`events_now`).
+            self.event_cursor = self.state.mjai_log.len();
+            return Ok(());
+        }
         while self.event_cursor < self.state.mjai_log.len() {
             let line = &self.state.mjai_log[self.event_cursor];
             let event: Value = serde_json::from_str(line)
@@ -172,9 +297,9 @@ impl GameSlot {
         Ok(())
     }
 
-    /// The seats that must act now (empty when the game is done).
+    /// The seats that must act now (empty when the game is done; `finished`).
     pub fn actors(&self) -> Vec<u8> {
-        if self.state.is_done {
+        if self.finished() {
             return Vec::new();
         }
         match self.state.phase {
@@ -192,7 +317,20 @@ impl GameSlot {
         if let Some(err) = &self.state.last_error {
             return Err(format!("riichienv-core rejected a step: {err}"));
         }
-        self.drain_events()
+        self.drain_events()?;
+        if self.branch.is_some() {
+            // A fork keeps each seat's unread lines only, and (unless lean) no drained line.
+            let st = &mut self.state;
+            for i in 0..4 {
+                st.mjai_log_per_player[i].drain(..st.player_event_counts[i]);
+                st.player_event_counts[i] = 0;
+            }
+            if !self.lean {
+                st.mjai_log.clear();
+                self.event_cursor = 0;
+            }
+        }
+        Ok(())
     }
 
     /// Decide one rulebot in-loop (`rulebot::decide::decide` on the seat's
@@ -278,6 +416,15 @@ pub struct LockstepLoop {
     /// row at all -- such a game runs to completion in the first collect()
     /// call. Every other seat holds an observation-lane player.
     pub bot_seats: Vec<Vec<(u8, Bot)>>,
+    /// Indices of released forks, for the next forks (`release`).
+    free: Vec<usize>,
+}
+
+/// The legal action of `legal` that the exact spec names (its consume tiles in any order).
+fn legal_action(legal: &[Action], (action_type, tile, consume_tiles): &ActionSpec) -> Option<Action> {
+    let mut want = consume_tiles.clone();
+    want.sort_unstable();
+    legal.iter().find(|a| a.action_type as u8 == *action_type && a.tile == *tile && a.consume_tiles == want).cloned()
 }
 
 /// The table rule by name: `"tenhou"` (Tenhou's yaku and game flow) or
@@ -360,7 +507,7 @@ impl LockstepLoop {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let bot_seats = if bot_seats.is_empty() { vec![Vec::new(); seeds.len()] } else { bot_seats };
-        Ok(Self { slots, pending: Vec::new(), bot_seats })
+        Ok(Self { slots, pending: Vec::new(), bot_seats, free: Vec::new() })
     }
 
     /// Every pending decision across all live games. None = every game is
@@ -384,15 +531,20 @@ impl LockstepLoop {
                 // Advance past ticks whose every actor is a rulebot / suzume
                 // seat; stop at the first tick that needs an external decision
                 // (or at game end) and hold the tick's in-loop decisions for
-                // apply() to merge in.
+                // apply() to merge in. A new fork's first tick starts from its
+                // held decisions (`GameSlot::branch_off`).
+                let mut held = std::mem::take(&mut slot.held);
                 loop {
                     let actors = slot.actors();
                     if actors.is_empty() {
                         return Ok(Vec::new());
                     }
-                    let mut auto: HashMap<u8, Action> = HashMap::new();
+                    let mut auto: HashMap<u8, Action> = std::mem::take(&mut held);
                     let mut external: Vec<u8> = Vec::new();
                     for seat in actors {
+                        if auto.contains_key(&seat) {
+                            continue;
+                        }
                         let t0 = std::time::Instant::now();
                         let action = match bot_seats[gi].iter().find(|(s, _)| *s == seat) {
                             Some((_, bot)) => slot.bot_action(seat, bot)?,
@@ -465,25 +617,10 @@ impl LockstepLoop {
         }
         let mut per_game: HashMap<usize, HashMap<u8, Action>> = HashMap::new();
         let slots = &mut self.slots;
-        for (p, (action_type, tile, consume_tiles)) in self.pending.iter().zip(actions) {
-            let mut want = consume_tiles.clone();
-            want.sort_unstable();
-            let action = p
-                .legal
-                .iter()
-                .find(|a| {
-                    a.action_type as u8 == *action_type
-                        && a.tile == *tile
-                        && a.consume_tiles == want
-                })
-                .cloned()
-                .ok_or_else(|| {
-                    format!(
-                        "action ({action_type}, {tile:?}, {want:?}) is not legal \
-                         for game {} seat {}",
-                        p.game, p.seat
-                    )
-                })?;
+        for (p, spec) in self.pending.iter().zip(actions) {
+            let action = legal_action(&p.legal, spec).ok_or_else(|| {
+                format!("action {spec:?} is not legal for game {} seat {}", p.game, p.seat)
+            })?;
             slots[p.game].count_options(p.seat, &p.legal, &action);
             per_game.entry(p.game).or_default().insert(p.seat, action);
         }
@@ -514,6 +651,97 @@ impl LockstepLoop {
             })
     }
 
+    /// Fork game `game` at the decision of `seat` that the last collect() returned, before apply(): one new game per
+    /// action of `actions` (exact specs, as apply() takes them), their indices returned in order (a released fork's
+    /// index is reused). Each fork holds the parent's whole engine state (`GameSlot::branch_off`), plays its action
+    /// for `seat` and then the rest of its kyoku as a game of the loop: every seat keeps the parent's lane and bot,
+    /// and its decisions come through collect() / apply() with the other games'. Another seat deciding in the same
+    /// tick (a call or a ron on the same discard) is asked again in the fork's first collect(); the tick's in-loop
+    /// decisions carry over. The parent is not changed. A fork depends only on the parent's state, its action and the
+    /// agents' moves; with `split_wall` every seat draws from its own queue, so a call in one fork does not shift
+    /// another seat's draws (sibling forks share every seat's next draws, unless a queue runs dry).
+    pub fn fork(&mut self, game: usize, seat: u8, actions: &[ActionSpec]) -> Result<Vec<usize>, String> {
+        let p = self
+            .pending
+            .iter()
+            .find(|p| p.game == game && p.seat == seat)
+            .ok_or_else(|| format!("game {game} seat {seat} has no decision pending (fork after collect(), before apply())"))?;
+        let moves = actions
+            .iter()
+            .map(|a| legal_action(&p.legal, a).ok_or_else(|| format!("action {a:?} is not legal for game {game} seat {seat}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let history = !self.bot_seats[game].is_empty();
+        let forks: Vec<GameSlot> = moves
+            .into_iter()
+            .map(|a| self.slots[game].branch_off(game, seat, a, history))
+            .collect::<Result<_, _>>()?;
+        let bots = self.bot_seats[game].clone();
+        Ok(forks
+            .into_iter()
+            .map(|f| match self.free.pop() {
+                Some(i) => {
+                    self.slots[i] = f;
+                    self.bot_seats[i] = bots.clone();
+                    i
+                }
+                None => {
+                    self.slots.push(f);
+                    self.bot_seats.push(bots.clone());
+                    self.slots.len() - 1
+                }
+            })
+            .collect())
+    }
+
+    /// The result of fork `game` once its kyoku has ended, `None` while it plays: `playout::kyoku_result` from the
+    /// fork's move on (with `events`, the kyoku's events from that move on), plus `parent`, `seat` and `action` (its
+    /// exact spec).
+    pub fn fork_result(&self, game: usize, events: bool) -> Result<Option<Value>, String> {
+        let slot = self.slots.get(game).ok_or_else(|| format!("no game {game}"))?;
+        let b = slot.branch.as_ref().ok_or_else(|| format!("game {game} is not a fork"))?;
+        if slot.released {
+            return Err(format!("fork {game} was released"));
+        }
+        if !slot.finished() {
+            return Ok(None);
+        }
+        let mut out = crate::playout::kyoku_result(&slot.state, &slot.events_now()?, b.k0, &b.scores0, events);
+        let mut consume = b.action.consume_tiles.clone();
+        consume.sort_unstable();
+        out["parent"] = json!(b.parent);
+        out["seat"] = json!(b.seat);
+        out["action"] = json!([b.action.action_type as u8, b.action.tile, consume]);
+        Ok(Some(out))
+    }
+
+    /// Release forks: they take no more decisions, their memory is dropped and their indices serve the next forks.
+    /// Only forks without a pending decision can be released (a fork that has not finished is abandoned).
+    pub fn release(&mut self, games: &[usize]) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        for &g in games {
+            let slot = self.slots.get(g).ok_or_else(|| format!("no game {g}"))?;
+            if slot.branch.is_none() {
+                return Err(format!("game {g} is not a fork"));
+            }
+            if slot.released || !seen.insert(g) {
+                return Err(format!("fork {g} is already released"));
+            }
+            if self.pending.iter().any(|p| p.game == g) {
+                return Err(format!("fork {g} has a decision pending (release it after apply())"));
+            }
+        }
+        for &g in games {
+            self.slots[g].retire();
+            self.free.push(g);
+        }
+        Ok(())
+    }
+
+    /// Whether every game takes no more decisions (`GameSlot::finished`).
+    pub fn done(&self) -> bool {
+        self.slots.iter().all(GameSlot::finished)
+    }
+
     /// Per-game final scores (only meaningful once a game is done).
     pub fn scores(&self) -> Vec<[i32; 4]> {
         self.slots
@@ -528,3 +756,6 @@ impl LockstepLoop {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests;

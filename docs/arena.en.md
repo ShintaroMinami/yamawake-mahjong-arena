@@ -283,6 +283,27 @@ loop.scores(), loop.mjai_log(0)
 
 `collect()` returns `None` when all games have finished. Before the next `collect()`, answer every row with `apply`. Bots that play inside the loop are placed by seat number with `bot_seats` (`"rulebot"`, or for suzume `"a1"` with the setting `{"a1": "suzume"}`).
 
+### Forking a game
+
+At a decision that `collect()` returned, a game can be forked into several moves, each played to the end of the kyoku (since 0.19.0). The forks are games of the loop: their decisions come through the same `collect()` / `apply()` as the other games'.
+
+``` python
+batch = loop.collect()
+g, s = batch["games"][i], batch["seats"][i]           # the decision to fork (before apply)
+forks = loop.fork(g, s, [spec_a, spec_b, spec_c])    # one game per move; the new games' indices
+loop.apply(specs)                                     # the parent goes on with its own move
+...
+results = loop.fork_results(forks, events=True)      # results of the forks whose kyoku ended (else None)
+```
+
+- **What is copied**: the whole engine state (every hand, the live wall or the per-seat draw queues, the dead wall, dora and ura indicators). Each fork plays the given move and then the rest of the kyoku as an ordinary game; it deals no next kyoku. Every seat keeps its lane and in-loop bot from the parent. The parent is not changed.
+- **Simultaneous decisions**: when several seats decide on the same discard (calls, ron), a fork fixes only the given seat's move. The other seats get the same decision again in the fork's first `collect()`. The in-loop bots' decisions there carry over.
+- **Results**: `fork_results` returns dicts with `play_out`'s result fields (`end`, `delta`, `scores`, `kyotaku`, `honba`, `renchan`, `hora`, `ryukyoku`; [play_out_spec.md](play_out_spec.md) section 3, in Japanese) plus `parent`, `seat` and `action`. `delta` is the change in scores from the fork point. With `events=True`, the kyoku's events from the fork's move on are included.
+- **Release**: by default (`release=True`) `fork_results` releases the forks it returns results for. Released indices are reused by the next forks. A fork abandoned mid-kyoku is released with `loop.release(games)` (a fork with a decision pending cannot be released).
+- **Observations**: a fork's observations continue the parent seat's `new_events()`. If you accumulate events per seat (`SeatTracker`, etc.), start each fork from a copy of the parent's at the fork point. A fork's `mjai_log` holds only lines after the fork point, so take the events with `events=True`.
+- **Common random numbers and determinism**: with `split_wall=True` each seat draws from its own queue, so a call in one fork does not shift the other seats' draws (sibling forks share every seat's next draws; only when heavy calling empties a seat's queue does it borrow from another queue. Rinshan draws and new dora come from the dead wall, so they can differ between forks). A fork's result depends only on the parent's state, the fork's move and the seats' moves.
+- **Size**: a fork takes about 5 KB when made and grows with the events after it.
+
 ## 6. Running suzume in another game environment
 
 To have suzume play one seat in a game run by someone else (a game server or another game environment), use `yamawake.external.SuzumePlayer`. Create one per seat and pass it that seat's riichienv `Observation` and the mjai events of the current kyoku (from `start_kyoku`; other players' draws may stay hidden).

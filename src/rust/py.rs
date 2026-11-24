@@ -261,8 +261,42 @@ impl SelfPlayLoop {
         self.inner.slots.iter().map(|s| s.work_nanos as f64 * 1e-9).collect()
     }
 
+    /// Whether every game takes no more decisions (a fork stops at its kyoku's end; released forks count as done).
     fn done(&self) -> bool {
-        self.inner.slots.iter().all(|s| s.state.is_done)
+        self.inner.done()
+    }
+
+    /// Fork game `game` at the decision of `seat` that the last collect() returned, before apply(): one new game per
+    /// exact (action_type, tile, consume_tiles) in `actions`, their indices returned in order (`LockstepLoop::fork`).
+    /// Each fork plays its action, then the rest of its kyoku through collect() / apply() like any game.
+    fn fork(&mut self, game: usize, seat: u8, actions: Vec<(u8, Option<u8>, Vec<u8>)>) -> PyResult<Vec<usize>> {
+        self.inner.fork(game, seat, &actions).map_err(pyo3::exceptions::PyValueError::new_err)
+    }
+
+    /// Per fork in `games`: its result once its kyoku has ended (a dict: end, delta, scores, kyotaku, honba, renchan,
+    /// hora, ryukyoku, parent, seat, action, and with `events` the kyoku's events from the fork's move on), None while
+    /// it plays. With `release`, the forks with a result are released (`release`).
+    #[pyo3(signature = (games, events=false, release=true))]
+    fn fork_results<'py>(&mut self, py: Python<'py>, games: Vec<usize>, events: bool, release: bool)
+            -> PyResult<Vec<Option<Bound<'py, PyAny>>>> {
+        use pyo3::exceptions::PyValueError;
+        let results = games
+            .iter()
+            .map(|&g| self.inner.fork_result(g, events))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PyValueError::new_err)?;
+        if release {
+            let ended: Vec<usize> = games.iter().zip(&results).filter(|(_, r)| r.is_some()).map(|(&g, _)| g).collect();
+            self.inner.release(&ended).map_err(PyValueError::new_err)?;
+        }
+        let loads = py.import_bound("json")?.getattr("loads")?;
+        results.into_iter().map(|r| r.map(|v| loads.call1((v.to_string(),))).transpose()).collect()
+    }
+
+    /// Release forks: they take no more decisions and their indices serve the next forks (a fork that has not
+    /// finished is abandoned; one with a decision pending cannot be released).
+    fn release(&mut self, games: Vec<usize>) -> PyResult<()> {
+        self.inner.release(&games).map_err(pyo3::exceptions::PyValueError::new_err)
     }
 }
 

@@ -35,13 +35,15 @@ impl Decision<'_> {
                 },
             ));
         }
-        let chi = [
-            (allowed.chi_low, called_tile.next_tile_type(), called_tile.next_tile_type().next_tile_type()),
-            (allowed.chi_mid, called_tile.prev_tile_type(), called_tile.next_tile_type()),
-            (allowed.chi_high, called_tile.prev_tile_type().prev_tile_type(), called_tile.prev_tile_type()),
-        ];
-        for (offered, lo, hi) in chi {
+        // The two other tiles of each chi offered (only those: a tile type below 1m would underflow).
+        let chi = [(allowed.chi_low, 0), (allowed.chi_mid, 1), (allowed.chi_high, 2)];
+        for (offered, k) in chi {
             if offered {
+                let (lo, hi) = match k {
+                    0 => (called_tile.next_tile_type(), called_tile.next_tile_type().next_tile_type()),
+                    1 => (called_tile.prev_tile_type(), called_tile.next_tile_type()),
+                    _ => (called_tile.prev_tile_type().prev_tile_type(), called_tile.prev_tile_type()),
+                };
                 out.push((
                     [lo.tile_type_index(), hi.tile_type_index()],
                     BotAction::Chi {

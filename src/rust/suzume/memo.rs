@@ -43,4 +43,10 @@ impl SeatMemo {
         self.riichi_tile = None;
         self.pf = PfMemo::default();
     }
+
+    /// The decision state alone (`riichi_tile`, `pf`), the exact caches empty: what a fork of the game carries
+    /// (`arena::GameSlot::branch_off`), so that the seat plays on as it would have.
+    pub fn decisions(&self) -> Self {
+        Self { riichi_tile: self.riichi_tile, pf: self.pf.clone(), ..Self::default() }
+    }
 }
