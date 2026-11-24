@@ -22,6 +22,10 @@
 //! The rows of one decision go through together (`pre_rows`, `activate_rows`):
 //! each weight column is read once for all of them, and every row's values
 //! are those of the row alone.
+//!
+//! The same layers in f32 (`pre_rows_f32`, `activate_rows_f32`; the A1
+//! option `mlp=f32`, 2026-11-24) run the same loop on f32 copies of the
+//! weights: faster, the values within f32 rounding of the f64 ones.
 
 use serde_json::Value;
 
@@ -88,6 +92,10 @@ pub struct Hidden {
     /// Each further layer's matrix transposed (its input columns of its
     /// output width).
     deep_t: Vec<Vec<f64>>,
+    /// `w1t` in f32 (`pre_rows_f32`).
+    w1t32: Vec<f32>,
+    /// `deep_t` and the further layers' biases in f32 (`activate_rows_f32`).
+    deep32: Vec<(Vec<f32>, Vec<f32>)>,
 }
 
 /// The start value of `Iterator::sum` over `f64` (kept so that the column
@@ -106,8 +114,12 @@ fn sum_start() -> f64 {
 /// applied to every row before column `j + 1`, so it is read once for all
 /// rows; each row's sums are those of the row alone. The rows with a nonzero
 /// input in a column are found from a bit mask per column (64 rows at a
-/// time), so the skips cost no unpredictable branch per input.
-fn add_columns(acc: &mut [f64], h: usize, wt: &[f64], x: &[f64], n_in: usize) {
+/// time), so the skips cost no unpredictable branch per input. `T` is f64,
+/// or f32 for `Precision::F32` (`pre_rows_f32`; `T::default()` is the zero).
+fn add_columns<T>(acc: &mut [T], h: usize, wt: &[T], x: &[T], n_in: usize)
+where
+    T: Copy + Default + PartialEq + std::ops::Mul<Output = T> + std::ops::AddAssign,
+{
     if n_in == 0 {
         return;
     }
@@ -115,7 +127,7 @@ fn add_columns(acc: &mut [f64], h: usize, wt: &[f64], x: &[f64], n_in: usize) {
         let mut mask = vec![0u64; n_in];
         for (r, xr) in x.chunks_exact(n_in).enumerate() {
             for (m, &v) in mask.iter_mut().zip(xr) {
-                *m |= u64::from(v != 0.0) << r;
+                *m |= u64::from(v != T::default()) << r;
             }
         }
         for (j, (col, &m)) in wt.chunks_exact(h).zip(&mask).enumerate() {
@@ -198,6 +210,34 @@ impl Hidden {
         }
         z
     }
+
+    /// `pre_rows` in f32 from the first input column (`from` = 0): every row
+    /// starts from `base` (the decision's own first-layer terms, `b1`
+    /// included).
+    pub fn pre_rows_f32(&self, base: &[f32], xs: &[f32], n_rows: usize) -> Vec<f32> {
+        let (h, width) = (self.widths[0], xs.len() / n_rows.max(1));
+        let mut acc: Vec<f32> = (0..n_rows).flat_map(|_| base.iter().copied()).collect();
+        add_columns(&mut acc, h, &self.w1t32[..width * h], xs, width);
+        acc
+    }
+
+    /// `activate_rows` in f32.
+    pub fn activate_rows_f32(&self, mut z: Vec<f32>) -> Vec<f32> {
+        for v in &mut z {
+            *v = v.max(0.0);
+        }
+        let mut width = self.widths[0];
+        for (wt, b) in &self.deep32 {
+            let n_rows = z.len() / width;
+            let mut acc: Vec<f32> = (0..n_rows).flat_map(|_| b.iter().copied()).collect();
+            add_columns(&mut acc, b.len(), wt, &z, width);
+            for v in &mut acc {
+                *v = v.max(0.0);
+            }
+            (z, width) = (acc, b.len());
+        }
+        z
+    }
 }
 
 /// A list of equal-length number rows: (rows, columns, the numbers row-major).
@@ -255,8 +295,11 @@ pub fn parse_hidden(v: &Value, n_cols: usize) -> Result<Hidden, String> {
         }
     }
     let w1t = transpose(&w1, hidden, n_cols);
-    let deep_t = deep.iter().zip(&widths).map(|((w, b), &c)| transpose(w, b.len(), c)).collect();
-    Ok(Hidden { n_cols, w1, b1, deep, widths, w1t, deep_t })
+    let deep_t: Vec<Vec<f64>> = deep.iter().zip(&widths).map(|((w, b), &c)| transpose(w, b.len(), c)).collect();
+    let f32s = |v: &[f64]| -> Vec<f32> { v.iter().map(|&x| x as f32).collect() };
+    let w1t32 = f32s(&w1t);
+    let deep32 = deep_t.iter().zip(&deep).map(|(wt, (_, b))| (f32s(wt), f32s(b))).collect();
+    Ok(Hidden { n_cols, w1, b1, deep, widths, w1t, deep_t, w1t32, deep32 })
 }
 
 #[cfg(test)]
@@ -317,5 +360,13 @@ mod tests {
         assert!(got.iter().any(|&g| g > 0.0));
         let one: Vec<f64> = xs.iter().flat_map(|x| net.activate(net.pre_dense(x))).collect();
         assert_eq!(one, want);
+        // The f32 layers (`Precision::F32`) on the same rows: within f32 rounding of the f64 values.
+        let flat32: Vec<f32> = flat.iter().map(|&x| x as f32).collect();
+        let b32: Vec<f32> = net.b1.iter().map(|&b| b as f32).collect();
+        let got32 = net.activate_rows_f32(net.pre_rows_f32(&b32, &flat32, xs.len()));
+        assert_eq!(got32.len(), want.len());
+        for (g, w) in got32.iter().zip(&want) {
+            assert!((f64::from(*g) - w).abs() <= 1e-5 * (1.0 + w.abs()), "{g} vs {w}");
+        }
     }
 }

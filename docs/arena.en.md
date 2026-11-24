@@ -334,7 +334,7 @@ let mut seat = SuzumeSeat::new(bot);                          // to play one sea
   - The move to play, `action` (the same as `decide`).
   - For a riichi, the tile discarded after the declaration, `riichi_tile`. It is the tile the seat discards after the declaration.
 - **Threads**: `Suzume` is `Copy`, `Send` and `Sync`. Many threads (rayon, etc.) can call one `Suzume` at once.
-- **Spec**: `<set>[:KEY=VALUE...]`. The set is `suzume`, `suzume-rla225` or an A1 model directory. The keys are `aggression`, `call_shift`, `riichi_shift`, `win` and `call`. The style targets (`call_rate`, etc.) are converted into options in Python, so they are not accepted here; pass the options they convert to.
+- **Spec**: `<set>[:KEY=VALUE...]`. The set is `suzume`, `suzume-rla225` or an A1 model directory. The keys are `aggression`, `call_shift`, `riichi_shift`, `win`, `call` and `mlp` (`f64` or `f32`, [suzume.en.md](suzume.en.md)). The style targets (`call_rate`, etc.) are converted into options in Python, so they are not accepted here; pass the options they convert to.
 - **Same as Python**: [`tests/external/choose_cases.json`](../tests/external/choose_cases.json) records 54 decisions of the Python player. It covers three specs, with discards, riichi, calls, kans, wins and passes. [`test_choose_cases.py`](../tests/external/test_choose_cases.py) checks that the Python player gives the recorded answers, and [`tests/external.rs`](../tests/external.rs) (`cargo test`) that the Rust entry does. After an intended change of play, re-record with `uv run python tests/external/choose_cases.py`.
 
 ## 7. Game logs

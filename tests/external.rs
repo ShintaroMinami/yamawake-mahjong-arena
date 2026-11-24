@@ -173,10 +173,44 @@ fn a_riichi_tile_is_the_discard_after_the_declaration() {
     assert!(riichi >= 3, "{riichi} riichi in {decisions} decisions");
 }
 
+/// `mlp=f32`: the scores stay within f32 rounding of f64's, and every choice that f64's scores make by a clear margin
+/// is the same.
+#[test]
+fn f32_networks_play_as_f64_but_near_ties() {
+    let data = cases();
+    let (mut checked, mut scored) = (0, 0);
+    for &(spec, obs, events, _) in &each_case(&data) {
+        let (a, b) = (Suzume::from_spec(spec).unwrap(), Suzume::from_spec(&format!("{spec}:mlp=f32")).unwrap());
+        let obs = observation_from_base64(obs, events).unwrap();
+        let (ca, cb) = (a.choose(&obs, events).unwrap(), b.choose(&obs, events).unwrap());
+        assert_eq!(ca.legal, cb.legal);
+        let (Some(sa), Some(sb)) = (&ca.scores, &cb.scores) else {
+            assert_eq!(ca, cb, "{spec}: a rule's decision");
+            continue;
+        };
+        scored += 1;
+        for (x, y) in sa.iter().zip(sb) {
+            match (x, y) {
+                (Some(x), Some(y)) => assert!((x - y).abs() < 1e-4, "{spec}: score {x} vs {y}"),
+                (None, None) => {}
+                _ => panic!("{spec}: scores {sa:?} vs {sb:?}"),
+            }
+        }
+        let mut top: Vec<f64> = sa.iter().flatten().copied().collect();
+        top.sort_by(|x, y| y.total_cmp(x));
+        if top.len() < 2 || top[0] - top[1] > 1e-3 {
+            assert_eq!((ca.choice_index, &ca.action), (cb.choice_index, &cb.action), "{spec}");
+            checked += 1;
+        }
+    }
+    assert!(scored >= 30 && checked >= scored - 2, "{checked} of {scored}");
+}
+
 #[test]
 fn specs_take_the_python_players_options() {
     assert_eq!(Suzume::builtin_sets().collect::<Vec<_>>(), ["suzume", "suzume-rla225"]);
     assert!(Suzume::from_spec("suzume:aggression=0.5:call_shift=0.3:riichi_shift=-0.2:win=0:call=1").is_ok());
+    assert!(Suzume::from_spec("suzume-rla225:mlp=f32").is_ok() && Suzume::from_spec("suzume:mlp=F64").is_ok());
     assert!(Suzume::new("suzume", [("aggression", "-1"), ("call", "false")]).is_ok());
     for (spec, err) in [
         ("suzume:aggression=2", "not in [-1, 1]"),
@@ -184,6 +218,7 @@ fn specs_take_the_python_players_options() {
         ("suzume:call=2", "not 0 or 1"),
         ("suzume:kan=0", "takes only"),
         ("suzume:aggression", "not KEY=VALUE"),
+        ("suzume:mlp=f16", "not f64 or f32"),
         ("suzume-rla225:aggression=0.5", "without push / fold"),
     ] {
         let e = Suzume::from_spec(spec).unwrap_err();

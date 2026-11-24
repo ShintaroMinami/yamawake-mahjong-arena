@@ -105,6 +105,8 @@ struct Model {
     sit: Option<Sit>,
     mean: Vec<f64>,
     std: Vec<f64>,
+    /// `1 / std` (`scores_f32`).
+    inv_std: Vec<f64>,
     net: Hidden,
     w2: Vec<f64>,
     b2: f64,
@@ -119,13 +121,15 @@ impl Model {
         let n_own = inputs.len() + states.len();
         let sit = parse_sit(&v, n_own).map_err(at)?;
         let n_sit = sit.as_ref().map_or(0, |s| s.mean.len());
+        let std = nums(&v, &["std"]).map_err(at)?;
         let md = Self {
             cols: positions(&inputs, a1_names()).map_err(at)?,
             net: parse_hidden(&v, n_own + n_sit).map_err(at)?,
             sit,
             states,
             mean: nums(&v, &["mean"]).map_err(at)?,
-            std: nums(&v, &["std"]).map_err(at)?,
+            inv_std: std.iter().map(|s| 1.0 / s).collect(),
+            std,
             w2: nums(&v, &["w2"]).map_err(at)?,
             b2: num(&v, &["b2"]).map_err(at)?,
         };
@@ -143,9 +147,12 @@ impl Model {
 
     /// The score of each row, the situation of view `v` added when the model reads it (the rows go through the
     /// network together, `Hidden::pre_rows`; each score is the row's alone).
-    fn scores(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> Vec<f64> {
+    fn scores(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView, mlp: Precision) -> Vec<f64> {
         let sit = self.sit.as_ref().map_or_else(Vec::new, |s| s.bias(&self.net, v));
         let si = self.state_index(state, opp);
+        if mlp == Precision::F32 {
+            return self.scores_f32(rows, &sit, si);
+        }
         let n_in = self.cols.len();
         let x: Vec<f64> = rows
             .iter()
@@ -164,9 +171,33 @@ impl Model {
         h.chunks_exact(self.net.out_width()).map(|hr| self.b2 + self.w2.iter().zip(hr).map(|(w, h)| w * h).sum::<f64>()).collect()
     }
 
+    /// `scores` with the hidden layers in f32 (`Precision::F32`), the situation share `sit` and the state one-hot
+    /// index `si` given: the decision's own first-layer terms (`b1`, `sit`, the state column) are summed in f64 and
+    /// rounded once, each input is standardized in f64 (times `1 / std`) and rounded, and the head (`w2`, `b2`) is in
+    /// f64.
+    fn scores_f32(&self, rows: &[[f64; N_ROW]], sit: &[f64], si: Option<usize>) -> Vec<f64> {
+        let n_in = self.cols.len();
+        let base: Vec<f32> = (0..self.net.widths[0])
+            .map(|k| {
+                let state = si.map_or(0.0, |si| self.net.w1_row(k)[n_in + si]);
+                (self.net.b1[k] + sit.get(k).copied().unwrap_or(0.0) + state) as f32
+            })
+            .collect();
+        let mut x = Vec::with_capacity(rows.len() * n_in);
+        for row in rows {
+            for ((&c, &m), &r) in self.cols.iter().zip(&self.mean).zip(&self.inv_std) {
+                x.push(((row[c] - m) * r) as f32);
+            }
+        }
+        let h = self.net.activate_rows_f32(self.net.pre_rows_f32(&base, &x, rows.len()));
+        h.chunks_exact(self.net.out_width())
+            .map(|hr| self.b2 + self.w2.iter().zip(hr).map(|(w, &h)| w * f64::from(h)).sum::<f64>())
+            .collect()
+    }
+
     /// The index of the best row (the first on a tie) and the rows' scores.
-    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> (usize, Vec<f64>) {
-        let s = self.scores(rows, state, opp, v);
+    fn best(&self, rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView, mlp: Precision) -> (usize, Vec<f64>) {
+        let s = self.scores(rows, state, opp, v, mlp);
         (argmax(&s), s)
     }
 
@@ -181,9 +212,9 @@ impl Model {
     /// within that group (2026-10-23). Also the final scores compared (`styled_choice`).
     #[allow(clippy::too_many_arguments)]
     fn best_styled(&self, ends: [Option<&Model>; 2], aggression: f64, rows: &[[f64; N_ROW]], state: &str, opp: bool,
-                   v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>) -> (usize, Vec<f64>) {
-        let s = self.scores(rows, state, opp, v);
-        let end = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0).map(|m| m.scores(rows, state, opp, v));
+                   v: &MjView, riichi: Option<&[bool]>, bias: Option<&[f64]>, mlp: Precision) -> (usize, Vec<f64>) {
+        let s = self.scores(rows, state, opp, v, mlp);
+        let end = ends[usize::from(aggression > 0.0)].filter(|_| aggression != 0.0).map(|m| m.scores(rows, state, opp, v, mlp));
         styled_choice(&s, end.as_deref(), aggression.abs(), riichi, bias)
     }
 }
@@ -221,8 +252,9 @@ fn argmax(x: &[f64]) -> usize {
 }
 
 /// The scores of the P / M / F experts `ex` on `rows`.
-fn expert_scores(ex: &[Model; 3], rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView) -> [Vec<f64>; 3] {
-    std::array::from_fn(|s| ex[s].scores(rows, state, opp, v))
+fn expert_scores(ex: &[Model; 3], rows: &[[f64; N_ROW]], state: &str, opp: bool, v: &MjView, mlp: Precision)
+        -> [Vec<f64>; 3] {
+    std::array::from_fn(|s| ex[s].scores(rows, state, opp, v, mlp))
 }
 
 /// The best row of the P / M / F experts' scores `sc` (`expert_scores`) mixed by the state probabilities `p`:
@@ -421,7 +453,7 @@ pub fn state_inputs(ctx: &Ctx, md: &A1Models, kyoku_events: &[Value]) -> Result<
     let r = decision_rows(ctx, md, &rv);
     let sc = r.as_ref().and_then(|r| {
         let ex = r.pk.and_then(|k| md.pmf[k].as_deref())?;
-        Some(expert_scores(ex, &r.rows, &r.u.state.0, opp, ctx.view))
+        Some(expert_scores(ex, &r.rows, &r.u.state.0, opp, ctx.view, Precision::F64))
     });
     Ok(inputs_on(ctx, &rv, r.as_ref().zip(sc.as_ref())))
 }
@@ -629,6 +661,31 @@ pub struct A1Config {
     /// The play limits (no win, no calls; `arena::Limits`): `decide` plays as if the engine had not offered the
     /// actions they take away.
     pub limits: crate::arena::Limits,
+    /// The arithmetic of the A1 networks (option `mlp`, 2026-11-24).
+    pub mlp: Precision,
+}
+
+/// The arithmetic of the A1 networks' hidden layers (`A1Config::mlp`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Precision {
+    /// f64, bit for bit the networks as fitted (the default).
+    #[default]
+    F64,
+    /// f32 (`Model::scores_f32`): faster; the scores differ from f64 by rounding, so a near tie can go the other way.
+    F32,
+}
+
+impl std::str::FromStr for Precision {
+    type Err = String;
+
+    /// `"f64"` or `"f32"` (any case).
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "f64" => Ok(Self::F64),
+            "f32" => Ok(Self::F32),
+            other => Err(format!("mlp {other}: not f64 or f32")),
+        }
+    }
 }
 
 /// Per shift (call, riichi): the score offset per unit below and above 0 (2026-10-25, from a sweep of the raw
@@ -648,7 +705,7 @@ impl A1Config {
         let models = A1Models::builtin(name)?;
         let cfg = SuzumeConfig { pf: false, fold: false, models: super::params::features_set(), ..SuzumeConfig::default() };
         Some(Self { cfg, models, pmf_fixed: None, aggression: 0.0, call_shift: 0.0, riichi_shift: 0.0, call_offset: 0.0,
-                    riichi_offset: 0.0, limits: crate::arena::Limits::default() })
+                    riichi_offset: 0.0, limits: crate::arena::Limits::default(), mlp: Precision::F64 })
     }
 
     /// The bot of a directory set's `models` on the features-set config `cfg`, the mixture weights fixed by
@@ -677,7 +734,7 @@ impl A1Config {
         }
         let (call_offset, riichi_offset) = (style_offset(call_shift, STYLE_SCALES[0]), style_offset(riichi_shift, STYLE_SCALES[1]));
         Ok(Self { cfg, models, pmf_fixed, aggression, call_shift, riichi_shift, call_offset, riichi_offset,
-                  limits: crate::arena::Limits::default() })
+                  limits: crate::arena::Limits::default(), mlp: Precision::F64 })
     }
 }
 
@@ -949,7 +1006,7 @@ pub fn decide_explained(
         let ex = r.pk.and_then(|k| md.pmf[k].as_deref());
         let (best, logp, grouped, pmf) = match ex {
             Some(ex) if a1.pmf_fixed.is_some() || md.state.is_some() => {
-                let sc = expert_scores(ex, &r.rows, &r.u.state.0, opp, &view);
+                let sc = expert_scores(ex, &r.rows, &r.u.state.0, opp, &view, a1.mlp);
                 let p = match (a1.pmf_fixed, &md.state) {
                     (Some(p), _) => Some(p),
                     (None, Some(st)) => inputs_on(&ctx, &rv, Some((&r, &sc))).map(|x| probs_of(st, &x, &rv)),
@@ -961,7 +1018,7 @@ pub fn decide_explained(
                         (best, pi.iter().map(|x| x.ln()).collect(), false, Some(p))
                     }
                     None => {
-                        let (best, s) = r.model.best(&r.rows, &r.u.state.0, opp, &view);
+                        let (best, s) = r.model.best(&r.rows, &r.u.state.0, opp, &view, a1.mlp);
                         (best, log_softmax(&s), false, None)
                     }
                 }
@@ -981,7 +1038,8 @@ pub fn decide_explained(
                     .collect();
                 let (best, t) = r.model.best_styled(r.ends, a1.aggression, &r.rows, &r.u.state.0, opp, &view,
                                                     riichi.contains(&true).then_some(&riichi[..]),
-                                                    (a1.call_offset != 0.0 || a1.riichi_offset != 0.0).then_some(&bias[..]));
+                                                    (a1.call_offset != 0.0 || a1.riichi_offset != 0.0).then_some(&bias[..]),
+                                                    a1.mlp);
                 (best, log_softmax(&t), argmax(&t) != best, None)
             }
         };
@@ -1011,7 +1069,8 @@ pub fn decide_explained(
                         row
                     })
                     .collect();
-                let (best, t) = md.kan.best_styled(md.end_models(5), a1.aggression, &rows, &k.state.0, opp, &view, None, None);
+                let (best, t) =
+                    md.kan.best_styled(md.end_models(5), a1.aggression, &rows, &k.state.0, opp, &view, None, None, a1.mlp);
                 kan_scores = Some((k.options.clone(), log_softmax(&t)));
                 if best > 0 {
                     let (kind, id) = k.options[best];

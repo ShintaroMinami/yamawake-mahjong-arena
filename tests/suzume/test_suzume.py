@@ -97,6 +97,12 @@ def test_seat_spec_and_options():
             build_agent(f"{name}:win=2")
     k = build_agent("suzume:aggression=-0.5:riichi_shift=1.25", call_shift="0.5")
     assert k.config == {"a1": "suzume", "aggression": "-0.5", "riichi_shift": "1.25", "call_shift": "0.5"}
+    # The networks' arithmetic (mlp): f64 (the default) or f32, also next to style coordinates and from --opt.
+    assert build_agent("suzume-rla225:mlp=F32").config == {"a1": "suzume-rla225", "mlp": "f32"}
+    assert build_agent("suzume", mlp="f32").config == {"a1": "suzume", "mlp": "f32"}
+    assert build_agent("suzume:call_rate=0.3:mlp=f32").config["mlp"] == "f32"
+    with pytest.raises(ValueError):
+        build_agent("suzume:mlp=f16")
 
 
 def test_rule_list(capsys):

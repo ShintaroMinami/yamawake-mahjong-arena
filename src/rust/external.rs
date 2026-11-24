@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use crate::arena::Limits;
 use crate::suzume::SeatMemo;
-use crate::suzume::a1::{A1Config, A1Models, BUILTIN};
+use crate::suzume::a1::{A1Config, A1Models, BUILTIN, Precision};
 
 /// One legal move of a decision ([`Choice::legal`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -97,8 +97,8 @@ impl Suzume {
 
     /// The bot of `set` (a built-in set's name, or an A1 model directory) with `options`, as the Python player's
     /// config: `aggression` (push / fold, in [-1, 1]), `call_shift` / `riichi_shift` (numbers), `win` / `call`
-    /// (0 / 1, the play limits); a directory set also takes `pmf_fixed` and the suzume options of its features
-    /// set. Each value is read as its text.
+    /// (0 / 1, the play limits), `mlp` (`f64`, the default, or `f32`: the networks' arithmetic); a directory set
+    /// also takes `pmf_fixed` and the suzume options of its features set. Each value is read as its text.
     ///
     /// # Errors
     /// An unknown set or option, or a value out of range.
@@ -108,7 +108,7 @@ impl Suzume {
         a1_config(set, options).map(|a1| Self { a1 })
     }
 
-    /// The bot of a player spec, `<set>[:KEY=VALUE...]` (e.g. `suzume`, `suzume:aggression=0.3:call=0`), with
+    /// The bot of a player spec, `<set>[:KEY=VALUE...]` (e.g. `suzume`, `suzume:aggression=0.3:call=0`, `suzume:mlp=f32`), with
     /// [`Suzume::new`]'s options. The style targets of the Python spec (calibrated in Python) are not taken: give
     /// the options they calibrate to.
     ///
@@ -247,10 +247,11 @@ pub(crate) fn a1_config(set: &str, mut options: Vec<(String, String)>) -> Result
             };
         }
     }
+    let mlp = take(&mut options, "mlp").map(|v| v.parse::<Precision>()).transpose()?.unwrap_or_default();
     let a1 = match A1Config::builtin(set) {
         Some(c) => {
             if !options.is_empty() {
-                return Err(format!("{set} takes only aggression / call_shift / riichi_shift / win / call"));
+                return Err(format!("{set} takes only aggression / call_shift / riichi_shift / win / call / mlp"));
             }
             A1Config::new(c.cfg, c.models, None, aggression, call_shift, riichi_shift)?
         }
@@ -261,5 +262,5 @@ pub(crate) fn a1_config(set: &str, mut options: Vec<(String, String)>) -> Result
             A1Config::new(cfg, models, pmf.as_deref(), aggression, call_shift, riichi_shift)?
         }
     };
-    Ok(A1Config { limits, ..a1 })
+    Ok(A1Config { limits, mlp, ..a1 })
 }

@@ -25,8 +25,8 @@ An observation agent may also carry the two context hooks of `context.py`:
 Player specs (`build_agent`): `tsumogiri` (in Rust), `tsumogiri-python` (the
 same moves through the observation lane), `rulebot[:KEY=VALUE...]`,
 `rulebot:kobalab[:KEY=VALUE...]` (`PLAY_LIMITS`),
-`suzume[:KEY=VALUE...]` (the default set; `STYLE_OPTIONS` or `STYLE_TARGETS`, and `PLAY_LIMITS`) and
-`suzume-rla225[:KEY=VALUE...]` (`SUZUME_SETS`; `STYLE_OPTIONS`, `PLAY_LIMITS`),
+`suzume[:KEY=VALUE...]` (the default set; `STYLE_OPTIONS` or `STYLE_TARGETS`, `PLAY_LIMITS` and `MLP_OPTIONS`) and
+`suzume-rla225[:KEY=VALUE...]` (`SUZUME_SETS`; `STYLE_OPTIONS`, `PLAY_LIMITS`, `MLP_OPTIONS`),
 the legacy sets `legacy-suzume-mlp3[:KEY=VALUE[:KEY=VALUE...]]` (e.g.
 `legacy-suzume-mlp3:call=0`; also `legacy-suzume-mlp3-flat`, `legacy-suzume-mlp3-avoid4`,
 `legacy-suzume-mlp1`, `legacy-suzume-mlp1-flat`, `LEGACY_SETS`), plus
@@ -161,6 +161,9 @@ MODEL_SETS = (*SUZUME_SETS, *LEGACY_SETS)
 #: models, which only `suzume` has) and `call_shift` / `riichi_shift` (-1 .. 1; scaled score offsets,
 #: `src/rust/suzume/a1.rs`, `A1Config`).
 STYLE_OPTIONS = ("aggression", "call_shift", "riichi_shift")
+#: The arithmetic of an A1 set's networks (2026-11-24, `src/rust/suzume/a1.rs`, `Precision`): `mlp` is `f64` (the
+#: default, the networks as fitted) or `f32` (faster; a near tie can go the other way).
+MLP_OPTIONS = ("mlp",)
 #: The style coordinates `suzume` also takes in their place (2026-10-31, `yamawake.style`): call_rate, riichi_rate,
 #: push_z (`STYLE_TARGETS`); calibrated into `STYLE_OPTIONS` when the agent is built, a coordinate left out at
 #: default suzume's value.
@@ -178,7 +181,7 @@ class SuzumeAgent:
     def __init__(self, config: dict | None = None, name: str = "suzume", models: str = "suzume") -> None:
         """Args: config: option dict: for a legacy set the suzume options
         (`yamawake.suzume` lists them; an unknown knob raises ValueError here),
-        for an A1 set `STYLE_OPTIONS` (checked when the bot is built) and `PLAY_LIMITS`; name: its label;
+        for an A1 set `STYLE_OPTIONS` (checked when the bot is built), `PLAY_LIMITS` and `MLP_OPTIONS`; name: its label;
         models: the model set (`MODEL_SETS`), or `dir:<path>` for a legacy-layout
         set read from a directory (for fitting new models;
         `src/rust/suzume/params.rs`, `load_dir`)."""
@@ -191,15 +194,18 @@ class SuzumeAgent:
         self.style = None
         if models in SUZUME_SETS:
             config = dict(config or {})
-            allowed = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS
+            allowed = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS + MLP_OPTIONS
             bad = [k for k in config if k not in allowed]
             if bad:
                 raise ValueError(f"{models} takes only {', '.join(allowed)} (got {', '.join(bad)}); the legacy sets "
                                  "take the suzume options")
             limits = {k: play_limit(k, config.pop(k)) for k in PLAY_LIMITS if k in config}
+            mlp = {k: str(config.pop(k)).strip().lower() for k in MLP_OPTIONS if k in config}
+            if mlp.get("mlp", "f64") not in ("f64", "f32"):
+                raise ValueError(f"mlp {mlp['mlp']}: not f64 or f32")
             if any(k in config for k in STYLE_TARGETS):
                 config = self._calibrate(config)
-            self.lane, self.config = LANE_A1, {"a1": models, **config, **limits}
+            self.lane, self.config = LANE_A1, {"a1": models, **config, **limits, **mlp}
             return
         self.lane = LANE_SUZUME
         self.config = {**(config or {}), "models": models}
@@ -366,12 +372,12 @@ def _rulebot(spec: str, **_) -> RulebotAgent:
 
 def _suzume(spec: str, **options) -> SuzumeAgent:
     """`<model set>[:KEY=VALUE...]` (`MODEL_SETS`); `--opt` options that are
-    the set's options (suzume options, or `STYLE_OPTIONS` and `PLAY_LIMITS` for an A1 set) apply too
+    the set's options (suzume options, or `STYLE_OPTIONS`, `PLAY_LIMITS` and `MLP_OPTIONS` for an A1 set) apply too
     (the spec's own pairs win)."""
     from yamawake.suzume import KNOBS
     models, *pairs = spec.split(":")
     if models in SUZUME_SETS:
-        keys = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS
+        keys = STYLE_OPTIONS + (STYLE_TARGETS if models == STYLE_TARGET_SET else ()) + PLAY_LIMITS + MLP_OPTIONS
     else:
         keys = KNOBS
     config = {k: v for k, v in options.items() if k in keys}

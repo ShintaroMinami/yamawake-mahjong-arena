@@ -54,6 +54,11 @@ agent = SuzumeAgent({"aggression": 0.5, "call_shift": 0.5})
 - `call_shift` / `riichi_shift`: add the value times a multiplier to the score of that option. When combined with `aggression`, this is added to the score after mixing, so it shifts the choice by the same amount regardless of the `aggression` value. The multipliers differ by sign: `call_shift` uses 2.5 for negative values and 3.4 for positive values, and `riichi_shift` 4.5 for negative values and 3.5 for positive values. They were set from games against default `suzume` (standard walls 0–1999) so that, at ±1, the odds of calling (declaring riichi) in decisions where a call (riichi) is available are multiplied by about e^1.5 (1/e^1.5) for `call_shift` and by about e³ (1/e³) for `riichi_shift`.
 - The three can be combined. Only `suzume` has them (specifying them for `suzume-rla225` raises an error).
 - Both `suzume` and `suzume-rla225` also take the win and call limits `win` / `call` (0: never wins / never calls; default 1; since 2026-11-19, [README](../README.en.md#win-and-call-limits)). Before deciding, the bot drops tsumo and ron (`win`) or chi, pon and open kan (`call`) from the legal actions; the models choose among the rest.
+- Both sets also take the MLP arithmetic `mlp` (since 2026-11-24). The default `f64` computes the networks as fitted and plays as before. `f32` computes the hidden layers in single precision, which is faster. The scores change by rounding (about 1e-5 in log-probability), so a near tie can go the other way (3 of 2,462 self-play decisions).
+
+  ``` bash
+  uv run yamawake-arena --mode 2v2 --players suzume:mlp=f32 suzume
+  ```
 
 #### Specifying a style by coordinates (calibration)
 
