@@ -35,6 +35,7 @@ uv run yamawake-arena --players rulebot rulebot:kobalab rulebot rulebot \
 | `--single-kyoku` | plays only East 1 in every game (see below) |
 | `--no-rotate` | plays only one hanchan per wall, without rotating the seats (see below) |
 | `--no-split` | does not use split walls: all seats draw from one wall, as in ordinary mahjong (see below) |
+| `--game-rule tenhou\|mjsoul` | the table rule; Tenhou's by default (see below) |
 | `--out FILE` | appends a summary of the results to a jsonl file |
 | `--save-scores FILE` | writes each game's final scores and seat order to an npz file |
 | `--record-logs DIR` | writes the game logs of all games in mjai format (gzip) |
@@ -52,6 +53,33 @@ Progress is shown as a bar on standard error, and the results go to standard out
 The call and riichi rates in Play per kyoku use all kyoku as the denominator. The style coordinates `call_rate` and `riichi_rate` ([`suzume.en.md`](suzume.en.md)) use the kyoku in which a call or riichi was available, so their values differ.
 
 Points are settled with 25,000 starting points, a 30,000 return, rank points of +90 / +45 / 0 / −135, and an oka of 20 (`rules.DEFAULT_RULE`).
+
+`--game-rule` (`run_match(game_rule=...)`) chooses the rule for the yaku and the game flow. The settlement (the points above) is the same under both.
+
+| Rule | Contents |
+|---|---|
+| `tenhou` (default) | Tenhou's ranked games |
+| `mjsoul` | Mahjong Soul's ranked games (four players, East-South) |
+
+The two rules differ as follows.
+
+| Item | `tenhou` | `mjsoul` |
+|---|---|---|
+| Double yakuman (thirteen-wait kokushi, single-wait suuankou, pure chuuren, daisuushii) | no | yes |
+| Triple ron | abortive draw | a triple win (the winner nearest the discarder takes the honba and the riichi sticks) |
+| Kokushi robbing a closed kan | no | yes |
+| Pao on a composite yakuman (daisangen, daisuushii) | liable for all of it | only for the pao yakuman |
+| A kept deal in the West round | ends the game only with the dealer on top with 30,000 or more | anyone's 30,000 ends the game (except a deal kept by a double or triple ron that includes the dealer) |
+
+The two share the following.
+
+- In the all-last, a dealer win or a dealer tenpai at the draw ends the game with the dealer on top with 30,000 or more.
+- An abortive draw (nine terminals and so on) in the all-last plays on even with the dealer on top.
+- A nagashi mangan keeps the deal when the dealer is tenpai.
+- With nobody at 30,000 at the end of South 4 the game goes into the West round, and it ends with West 4 at the latest.
+- The riichi sticks left at the end of the game go to first place (on a tie, the seat nearer the first dealer).
+
+The `tenhou` game flow was checked by playing 20,000 evenly spaced Tenhou game logs (Houou table, East-South with red fives, 2016 to 2020) again move by move on walls built from the logs (every move, every kyoku's start, the dora and the final scores agree). `mjsoul` follows Mahjong Soul's official rules (<https://mahjongsoul.com/news/46>). They do not state what an abortive draw does in the all-last; since the automatic stop covers only a dealer win and a dealer tenpai, the game plays on.
 
 With `--single-kyoku`, everyone starts with 25,000 points at 0 honba and plays the same wall as East 1 of a hanchan, and the game ends after that one kyoku. It is meant for comparing hand building without the influence of the score situation, and reports the kyoku balance and the win and deal-in rates.
 

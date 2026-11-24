@@ -205,7 +205,8 @@ fn full_games_complete_and_switches_hold() {
     let seats: Vec<Vec<(u8, crate::arena::Bot)>> = (0..seeds.len())
         .map(|_| (0..4).map(|s| (s, crate::arena::Bot::Suzume(configs[usize::from(s)]))).collect())
         .collect();
-    let mut lp = crate::arena::LockstepLoop::new(&seeds, 1, seats, Vec::new(), false).unwrap();
+    let mut lp = crate::arena::LockstepLoop::new(&seeds, 1, seats, Vec::new(), false,
+        riichienv_core::rule::GameRule::default_tenhou()).unwrap();
     assert!(lp.collect().unwrap().is_none(), "every seat is in-loop");
     let mut seen: HashSet<(&str, u64)> = HashSet::new();
     for slot in &lp.slots {

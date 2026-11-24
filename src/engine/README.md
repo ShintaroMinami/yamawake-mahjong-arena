@@ -5,7 +5,7 @@
 Apache-2.0 (`riichienv-core/LICENSE`, taken from the riichienv 0.4.8 wheel;
 the crate ships no license file of its own). yamawake-mahjong-arena links it statically.
 
-The fork changes seven files (`riichienv-core.patch`, against the crates.io
+The fork changes nine files (`riichienv-core.patch`, against the crates.io
 source, made with `diff -u` per file with `a/` and `b/` labels). It adds
 `shanten::HandShanten` (marked "yamawake patch"): a hand's Nyanten suit keys
 and chiitoitsu/kokushi tallies, giving the shanten with one tile added or
@@ -46,6 +46,29 @@ It also fills in what a consumer would otherwise rebuild from the events
   new fields default when absent, so the stock wheel still reads the JSON.
 - `hora` events carry the win's `han`, `fu`, `yaku` (ids) and `yakuman`, as
   scored by the engine.
+
+And it makes the game flow follow Tenhou's and Mahjong Soul's ranked rules
+where stock does not (marked "yamawake patch"; tested in `src/tests.rs`,
+`game_flow_tests`):
+
+- Five `GameRule` flags, all off giving the stock flow:
+  `abortive_draw_plays_on` (an abortive draw in the all-last never ends the
+  game by the dealer's lead), `nagashi_renchan_on_tenpai` (a nagashi mangan
+  keeps the deal when the dealer is tenpai, not when the dealer made it),
+  `extension_renchan_plays_on` (a kept deal in the West round ends the game
+  only with the dealer on top with 30,000 or more, not on anyone's 30,000),
+  `extension_multi_ron_renchan_plays_on` (the same for a deal kept by a
+  multiple ron that includes the dealer) and `leftover_sticks_to_top` (the
+  riichi sticks left at the end of a game of rounds go to first place).
+  `default_tenhou()` turns all five on, `default_mjsoul()` all but
+  `extension_renchan_plays_on`.
+- Under either preset: a triple-ron abortive draw on a riichi declaration
+  tile leaves that riichi unaccepted (no stick), and a `ryukyoku`'s `deltas`
+  are its payments only (stock kept the riichi sticks in them unless noten
+  payments overwrote them).
+
+With these, 20,000 evenly spaced Tenhou Houou logs (2016-2020) play again move
+for move on walls built from the logs (`docs/arena.md`).
 
 Everything else is unchanged. The Python side uses the stock `riichienv==0.4.8`
 wheel: observations cross from this core to the wheel serialized (base64), so

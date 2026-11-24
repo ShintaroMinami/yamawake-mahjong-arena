@@ -15,6 +15,10 @@ from dataclasses import dataclass
 import numpy as np
 
 TENHOU_UMA = (90.0, 45.0, 0.0, -135.0)
+#: The table rules the engine plays by (`run_match(game_rule=...)`): the yaku
+#: and the game flow of Tenhou (the default) or of Mahjong Soul. They differ
+#: from the settlement (`UmaRule`), which is chosen apart.
+GAME_RULES = ("tenhou", "mjsoul")
 
 
 def rank_of(scores: list[int]) -> np.ndarray:

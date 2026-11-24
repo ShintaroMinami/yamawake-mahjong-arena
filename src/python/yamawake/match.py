@@ -472,7 +472,8 @@ def run_match(players: list, walls: int | None = None,
               record_logs: str | Path | None = None,
               out: str | Path | None = None,
               save_scores: str | Path | None = None, progress=None,
-              single_kyoku: bool = False, play_stats: bool = False) -> MatchResult:
+              single_kyoku: bool = False, play_stats: bool = False,
+              game_rule: str = "tenhou") -> MatchResult:
     """Play `walls` x 4 hanchan (x 2 for a 2v2) and return every slot's standing.
 
     Args:
@@ -528,6 +529,9 @@ def run_match(players: list, walls: int | None = None,
         progress: Optional `progress(games_done, games_total, decisions)`,
             called as the games advance (`driver.play_games`); nothing is
             printed without it.
+        game_rule: The table rule the games are played by, `"tenhou"`
+            (default) or `"mjsoul"` (`rules.GAME_RULES`); recorded as the
+            protocol's `game_rule`. The settlement is `rule` either way.
 
     Returns:
         A `MatchResult`.
@@ -561,7 +565,7 @@ def run_match(players: list, walls: int | None = None,
                               want_logs=record_logs is not None or single_kyoku,
                               progress=progress, traces=traces, timing=timing,
                               on_logs=(lambda ls: counts.append(play_counts(ls))) if play_stats else None,
-                              a1_options=options)
+                              a1_options=options, game_rule=game_rule)
     seconds, cpu_seconds = time.time() - t0, time.process_time() - c0
 
     scores = np.array(scores, dtype=np.int64)                 # (games, 4) by SEAT
@@ -579,7 +583,8 @@ def run_match(players: list, walls: int | None = None,
         slots.append(SlotResult(j, players[j].describe().get("name", f"slot{j}"),
                                 float(rank.mean()), se, float(pt.mean()), se_pt))
 
-    protocol = {**plan.protocol, "split_wall": split_wall, "game_mode": game_mode, "rule": rule_label(rule)}
+    protocol = {**plan.protocol, "split_wall": split_wall, "game_mode": game_mode, "rule": rule_label(rule),
+                "game_rule": game_rule}
     if not rotate:
         protocol.update(rotate=False, seat_cycle=cycle)
     kyoku = None

@@ -53,7 +53,7 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
                progress: Callable[[int, int, int], None] | None = None,
                traces: list | None = None, timing: list | None = None,
                on_logs: Callable[[list[list[str]]], None] | None = None,
-               a1_options: list | None = None
+               a1_options: list | None = None, game_rule: str = "tenhou"
                ) -> tuple[list[list[int]], list[list[str]]]:
     """Play every game to the end.
 
@@ -89,6 +89,8 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
         a1_options: If a list, one entry per game is appended to it: per seat,
             the [riichi legal, riichi taken, call legal, call taken] counts of
             whatever plays it, over decisions, then over kyoku.
+        game_rule: The table rule, `"tenhou"` (default) or `"mjsoul"`
+            (`rules.GAME_RULES`).
 
     Returns:
         `(scores, logs)`: final points per game (4 each), and the logs (empty
@@ -111,7 +113,7 @@ def play_games(seeds: list[int], seat_maps: list[tuple[int, ...]], agents: list,
         loop = SelfPlayLoop(
             seeds[lo:hi], game_mode, bot_seats,
             wall_tables=None if wall_blobs is None else wall_blobs[lo:hi],
-            split_wall=split_wall)
+            split_wall=split_wall, game_rule=game_rule)
         # One tracker per (game, seat) on the observation lane: the core hands
         # out each seat's new events once, and never again.
         trackers = {(g, s): SeatTracker(getattr(agents[m[s]], "reducer_factory", None))

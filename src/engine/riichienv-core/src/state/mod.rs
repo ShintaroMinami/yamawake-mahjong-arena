@@ -39,6 +39,10 @@ pub struct GameState {
     pub needs_initialize_next_round: bool,
     pub pending_oya_won: bool,
     pub pending_is_draw: bool,
+    /// yamawake patch: the last ryukyoku was an abortive draw (not the
+    /// exhaustive draw or a nagashi mangan); `_initialize_next_round`
+    /// reads it for `GameRule::abortive_draw_plays_on`.
+    pub last_draw_abortive: bool,
 
     pub riichi_sticks: u32,
     pub phase: Phase,
@@ -134,6 +138,7 @@ impl GameState {
             needs_initialize_next_round: false,
             pending_oya_won: false,
             pending_is_draw: false,
+            last_draw_abortive: false,
             riichi_sticks: 0,
             phase: Phase::WaitAct,
             active_players: Vec::new(),
@@ -970,6 +975,9 @@ impl GameState {
             if !ron_claims.is_empty() {
                 // Sanchaho: all non-discarders ron → abortive draw
                 if ron_claims.len() >= NP - 1 && self.rule.sanchaho_is_draw {
+                    // yamawake patch: the riichi whose declaration tile the
+                    // three claimed does not stand (no stick), as on Tenhou.
+                    self.riichi_pending_acceptance = None;
                     self._trigger_ryukyoku("sanchaho");
                     return;
                 }
@@ -1661,7 +1669,32 @@ impl GameState {
             2 | 5 => self.round_wind == 1 && self.oya == np - 1,
             _ => false,
         };
-        if oya_won && is_last_regular_round && dealer_is_top && dealer_score >= 30000 {
+        // yamawake patch: with `abortive_draw_plays_on` (Tenhou) an abortive
+        // draw keeps the deal but never ends the game by the dealer's lead.
+        let abortive_plays_on =
+            is_draw && self.last_draw_abortive && self.rule.abortive_draw_plays_on;
+        let dealer_ends = dealer_is_top && dealer_score >= 30000 && !abortive_plays_on;
+        if oya_won && is_last_regular_round && dealer_ends {
+            self._process_end_game();
+            return;
+        }
+        // yamawake patch: with `extension_renchan_plays_on` (Tenhou) a kept
+        // deal in the extension round ends the game only as in the all-last;
+        // with `extension_multi_ron_renchan_plays_on` (MJSoul) so does one
+        // kept by a multiple ron that includes the dealer.
+        let extension = match self.game_mode {
+            1 | 4 => 1,
+            2 | 5 => 2,
+            _ => u8::MAX,
+        };
+        let multi_ron_with_dealer = !is_draw
+            && self.win_results.len() >= 2
+            && self.win_results.contains_key(&self.oya);
+        let kept_in_extension = oya_won
+            && self.round_wind >= extension
+            && (self.rule.extension_renchan_plays_on
+                || (self.rule.extension_multi_ron_renchan_plays_on && multi_ron_with_dealer));
+        if kept_in_extension && dealer_ends {
             self._process_end_game();
             return;
         }
@@ -1690,14 +1723,20 @@ impl GameState {
             1 | 4 => {
                 // TODO: Delete 4, 5, 3
                 let max_score = self.players.iter().map(|p| p.score).max().unwrap_or(0);
-                if next_round_wind >= 1 && (max_score >= 30000 || next_round_wind > 1) {
+                if !kept_in_extension
+                    && next_round_wind >= 1
+                    && (max_score >= 30000 || next_round_wind > 1)
+                {
                     self._process_end_game();
                     return;
                 }
             }
             2 | 5 => {
                 let max_score = self.players.iter().map(|p| p.score).max().unwrap_or(0);
-                if next_round_wind >= 2 && (max_score >= 30000 || next_round_wind > 2) {
+                if !kept_in_extension
+                    && next_round_wind >= 2
+                    && (max_score >= 30000 || next_round_wind > 2)
+                {
                     self._process_end_game();
                     return;
                 }
@@ -1904,6 +1943,12 @@ impl GameState {
 
     pub fn _trigger_ryukyoku(&mut self, reason: &str) {
         self._accept_riichi();
+        // yamawake patch: the ryukyoku's deltas are its payments only, never
+        // the riichi sticks (stock kept a stick in them unless noten
+        // payments overwrote it).
+        for p in self.players.iter_mut() {
+            p.score_delta = 0;
+        }
 
         let np = NP;
         let mut tenpai = vec![false; np];
@@ -2006,10 +2051,17 @@ impl GameState {
         let is_renchan = if final_reason == "exhaustive_draw" {
             tenpai[self.oya as usize]
         } else if final_reason == "nagashimangan" {
-            nagashi_winners.contains(&self.oya)
+            // yamawake patch: `nagashi_renchan_on_tenpai` (Tenhou).
+            if self.rule.nagashi_renchan_on_tenpai {
+                tenpai[self.oya as usize]
+            } else {
+                nagashi_winners.contains(&self.oya)
+            }
         } else {
             true
         };
+        self.last_draw_abortive =
+            final_reason != "exhaustive_draw" && final_reason != "nagashimangan";
 
         if !self.skip_mjai_logging {
             let mut ev = serde_json::Map::new();
@@ -2128,6 +2180,20 @@ impl GameState {
     }
 
     pub(crate) fn _process_end_game(&mut self) {
+        // yamawake patch: `leftover_sticks_to_top` (Tenhou) hands the sticks
+        // left on the table to first place (the earlier seat on a tie) at the
+        // end of a game of rounds; the one-kyoku modes keep the kyoku's own
+        // result.
+        if self.rule.leftover_sticks_to_top
+            && matches!(self.game_mode, 1 | 2 | 4 | 5)
+            && self.riichi_sticks > 0
+        {
+            let top = (0..NP)
+                .max_by_key(|&s| (self.players[s].score, std::cmp::Reverse(s)))
+                .expect("four seats");
+            self.players[top].score += 1000 * self.riichi_sticks as i32;
+            self.riichi_sticks = 0;
+        }
         self.is_done = true;
         if !self.skip_mjai_logging {
             let mut ek = serde_json::Map::new();

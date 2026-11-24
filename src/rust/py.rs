@@ -138,13 +138,14 @@ struct SelfPlayLoop {
 #[pymethods]
 impl SelfPlayLoop {
     #[new]
-    #[pyo3(signature = (seeds, game_mode=2, bot_seats=None, wall_tables=None, split_wall=false))]
+    #[pyo3(signature = (seeds, game_mode=2, bot_seats=None, wall_tables=None, split_wall=false, game_rule="tenhou"))]
     fn new(
         seeds: Vec<u64>,
         game_mode: u8,
         bot_seats: Option<Vec<Vec<(u8, String, Bound<'_, PyDict>)>>>,
         wall_tables: Option<Vec<Vec<u8>>>,
         split_wall: bool,
+        game_rule: &str,
     ) -> PyResult<Self> {
         use pyo3::exceptions::PyValueError;
         // Per game: [(seat, "rulebot" / "suzume", config dict), ...]: the
@@ -168,7 +169,8 @@ impl SelfPlayLoop {
             .into_iter()
             .map(|blob| parse_wall_table(&blob).map_err(PyValueError::new_err))
             .collect::<PyResult<Vec<_>>>()?;
-        let inner = crate::arena::LockstepLoop::new(&seeds, game_mode, bot_seats, wall_tables, split_wall)
+        let rule = crate::arena::game_rule(game_rule).map_err(PyValueError::new_err)?;
+        let inner = crate::arena::LockstepLoop::new(&seeds, game_mode, bot_seats, wall_tables, split_wall, rule)
         .map_err(PyValueError::new_err)?;
         Ok(Self { inner })
     }

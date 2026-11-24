@@ -145,6 +145,7 @@ By default the arena plays to the benchmark specification for comparing strength
 | Wall randomness: which walls are used | `wall_base` | `--wall-base` | `0` (standard walls) |
 
 - The standard walls are generated in order from `wall_base` 0, and a run uses the first `walls` of them (1,000 by default). The walls are not stored but generated from their numbers when needed, so there is no upper limit on their number. `FRESH` (`fresh` on the command line) draws new walls, and an integer reproduces the walls generated from that value. The `wall_base` used is shown on the first line of the result table.
+- The rule for the yaku and the game flow is chosen with `game_rule` (`--game-rule` on the command line): Tenhou's (`"tenhou"`, the default) or Mahjong Soul's (`"mjsoul"`) ([docs/arena.en.md](docs/arena.en.md)).
 - **Benchmark (default)**: `rotate=True`, `split_wall=True`, `wall_base=0`. Everyone plays the same walls under the same conditions, so differences in results come only from the players' choices. As long as the standard walls are used, results from different runs are compared on the same walls.
 - **Ordinary random walls**: pass `rotate=False`, `split_wall=False`, `wall_base=FRESH`. With split walls, calls do not shift the draws, so the flow of draws differs from ordinary mahjong. To see results or play statistics as ordinary mahjong, switch all three.
 

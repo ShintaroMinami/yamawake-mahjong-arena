@@ -64,8 +64,9 @@ hoc only: nothing about the arena changes.
   again (the last kyoku of a game is left out).
 - **Hanchan.** The seat's final rank (ties to the lower seat, as the arena
   ranks) and score: the last `start_kyoku` scores plus the riichi deposits
-  and deltas after it (riichi sticks left on the table at the end are not
-  given out). Bust: a final score below 0.
+  and deltas after it, the riichi sticks left on the table at the end going
+  to first place (the earlier seat on a tie), as the engine settles them
+  under either game rule. Bust: a final score below 0.
 
 ## Paired comparison
 
@@ -394,6 +395,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
     doras: list[str] = []
     oya = round_wind = draws = 0
     scores = [25000] * 4
+    sticks = 0                          # riichi sticks on the table
     any_call = False                    # a call or kan so far this kyoku
     riichi_seen = False                 # some seat's riichi accepted this kyoku
     last_discard: tuple[int, str] | None = None
@@ -470,6 +472,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
         if t == "start_kyoku":
             oya, round_wind = e["oya"], ROUND_WIND[e["bakaze"]]
             scores = list(e["scores"])
+            sticks = e["kyotaku"]
             for seat, st in prev_oya.items():
                 st.renchan = oya == seat
             prev_oya = {}
@@ -517,6 +520,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
             s.double_riichi = s.draws == 1 and not any_call
             riichi_seen = True
             scores[actor] -= 1000
+            sticks += 1
             if s.stat is not None:
                 s.stat.delta -= 1000
         elif t in ("chi", "pon", "daiminkan"):
@@ -554,6 +558,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
         elif t == "hora":
             d = e["deltas"]
             target = e["target"]
+            sticks = 0
             for seat in range(4):
                 scores[seat] += d[seat]
                 st = seats[seat].stat
@@ -597,6 +602,7 @@ def _parse(path: Path, name: str) -> tuple[list[KyokuStat], list[GameStat]]:
         if st.closed_at_tenpai:
             st.dama = not st.riichi
     order = sorted(range(4), key=lambda x: (-scores[x], x))
+    scores[order[0]] += 1000 * sticks
     games = [GameStat(game, seat, order.index(seat) + 1, scores[seat]) for seat in measured]
     return out, games
 

@@ -2342,3 +2342,181 @@ mod unit_tests {
         );
     }
 }
+
+/// yamawake patch: the game flow of the Tenhou and MJSoul presets against riichienv's stock flow
+/// (every `GameRule` game-flow flag off), and the ryukyoku's deltas without the riichi sticks.
+#[cfg(test)]
+mod game_flow_tests {
+    use crate::rule::GameRule;
+    use crate::state::GameState;
+    use crate::types::WinResult;
+    use serde_json::Value;
+
+    /// 123m 456m 789m 123p + 4p: tenpai (a 4p tanki wait).
+    const TENPAI: [u8; 13] = [0, 4, 8, 12, 16 + 1, 20, 24, 28, 32, 36, 40, 44, 48];
+    /// 1m 4m 7m 1p 4p 7p 1s 4s 7s E S W N: far from tenpai.
+    const NOTEN: [u8; 13] = [1, 13, 25, 37, 49, 61, 73, 85, 97, 109, 113, 117, 121];
+
+    /// The stock flow: MJSoul's yaku with every game-flow flag off.
+    fn stock() -> GameRule {
+        GameRule {
+            abortive_draw_plays_on: false,
+            nagashi_renchan_on_tenpai: false,
+            extension_renchan_plays_on: false,
+            extension_multi_ron_renchan_plays_on: false,
+            leftover_sticks_to_top: false,
+            ..GameRule::default_mjsoul()
+        }
+    }
+
+    /// A hanchan at `round_wind` / `oya` (honba 0) with these scores and dealer tenpai or not.
+    fn at(rule: GameRule, round_wind: u8, oya: u8, scores: [i32; 4], dealer_tenpai: bool) -> GameState {
+        let mut st = GameState::new(2, false, Some(1), 0, rule);
+        st._initialize_round(oya, round_wind, 0, 0, None, Some(scores.to_vec()));
+        for s in 0..4 {
+            st.players[s].hand = if s == oya as usize && dealer_tenpai { TENPAI.to_vec() } else { NOTEN.to_vec() };
+            st.players[s].nagashi_eligible = false;
+        }
+        st
+    }
+
+    fn last_ryukyoku(st: &GameState) -> Value {
+        st.mjai_log
+            .iter()
+            .rev()
+            .find_map(|s| {
+                let ev: Value = serde_json::from_str(s).ok()?;
+                (ev["type"] == "ryukyoku").then_some(ev)
+            })
+            .expect("a ryukyoku")
+    }
+
+    fn scores(st: &GameState) -> Vec<i32> {
+        st.players.iter().map(|p| p.score).collect()
+    }
+
+    #[test]
+    fn abortive_draw_in_the_all_last_with_the_dealer_on_top() {
+        let top = [20000, 20000, 20000, 40000];
+        for rule in [GameRule::default_tenhou(), GameRule::default_mjsoul()] {
+            let mut st = at(rule, 1, 3, top, false);
+            st._trigger_ryukyoku("kyushu_kyuhai");
+            assert!(!st.is_done, "Tenhou and MJSoul play on");
+            assert_eq!((st.round_wind, st.oya, st.honba), (1, 3, 1));
+        }
+        let mut st = at(stock(), 1, 3, top, false);
+        st._trigger_ryukyoku("kyushu_kyuhai");
+        assert!(st.is_done, "the stock flow ends the game");
+
+        // A tenpai dealer on top ends the game under all three (the dealer keeps the deal).
+        for rule in [GameRule::default_tenhou(), GameRule::default_mjsoul(), stock()] {
+            let mut st = at(rule, 1, 3, top, true);
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert!(st.is_done);
+        }
+    }
+
+    #[test]
+    fn nagashi_mangan_keeps_the_deal_of_a_tenpai_dealer() {
+        let even = [25000; 4];
+        // A non-dealer's nagashi with the dealer tenpai: Tenhou and MJSoul keep the deal, stock passes it.
+        for (rule, oya_after) in [(GameRule::default_tenhou(), 0), (GameRule::default_mjsoul(), 0), (stock(), 1)] {
+            let mut st = at(rule, 0, 0, even, true);
+            st.players[2].nagashi_eligible = true;
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert_eq!(last_ryukyoku(&st)["reason"], "nagashimangan");
+            assert_eq!((st.oya, st.honba), (oya_after, 1));
+        }
+        // The dealer's own nagashi, the dealer noten: Tenhou and MJSoul pass the deal, stock keeps it.
+        for (rule, oya_after) in [(GameRule::default_tenhou(), 1), (GameRule::default_mjsoul(), 1), (stock(), 0)] {
+            let mut st = at(rule, 0, 0, even, false);
+            st.players[0].nagashi_eligible = true;
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert_eq!(st.oya, oya_after);
+        }
+    }
+
+    #[test]
+    fn kept_deal_in_the_west_round() {
+        // West 1, the dealer tenpai but not on top, a non-dealer past 30,000.
+        let scores = [20000, 31000, 25000, 24000];
+        let mut st = at(GameRule::default_tenhou(), 2, 0, scores, true);
+        st._trigger_ryukyoku("exhaustive_draw");
+        assert!(!st.is_done, "Tenhou plays on");
+        assert_eq!((st.round_wind, st.oya, st.honba), (2, 0, 1));
+        for rule in [GameRule::default_mjsoul(), stock()] {
+            let mut st = at(rule, 2, 0, scores, true);
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert!(st.is_done, "MJSoul and the stock flow end the game");
+        }
+
+        // The dealer on top past 30,000 ends it under all three; passing the deal ends it too.
+        for rule in [GameRule::default_tenhou(), GameRule::default_mjsoul(), stock()] {
+            let mut st = at(rule, 2, 0, [31000, 25000, 24000, 20000], true);
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert!(st.is_done);
+            let mut st = at(rule, 2, 0, scores, false);
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert!(st.is_done);
+        }
+    }
+
+    #[test]
+    fn west_round_double_ron_with_the_dealer() {
+        // West 1 after a double ron of the dealer (seat 0) and seat 1, seat 1 past 30,000.
+        let win = WinResult::new(true, false, 1000, 0, 0, vec![1], 1, 30, None, true);
+        for (rule, done) in [(GameRule::default_tenhou(), false), (GameRule::default_mjsoul(), false), (stock(), true)] {
+            let mut st = at(rule, 2, 0, [24000, 32000, 24000, 20000], false);
+            st.win_results.insert(0, win.clone());
+            st.win_results.insert(1, win.clone());
+            st._initialize_next_round(true, false);
+            assert_eq!(st.is_done, done);
+        }
+        // A single dealer win there ends the game under MJSoul (anyone's 30,000).
+        let mut st = at(GameRule::default_mjsoul(), 2, 0, [24000, 32000, 24000, 20000], false);
+        st.win_results.insert(0, win.clone());
+        st._initialize_next_round(true, false);
+        assert!(st.is_done);
+    }
+
+    #[test]
+    fn ryukyoku_deltas_leave_out_the_riichi_sticks() {
+        for (reason, tenpai) in [("exhaustive_draw", false), ("exhaustive_draw", true), ("suucha_riichi", false)] {
+            let mut st = at(GameRule::default_tenhou(), 0, 0, [25000; 4], tenpai);
+            st.riichi_pending_acceptance = Some(1);
+            st._trigger_ryukyoku(reason);
+            let deltas: Vec<i32> = serde_json::from_value(last_ryukyoku(&st)["deltas"].clone()).unwrap();
+            let want = if tenpai { vec![3000, -1000, -1000, -1000] } else { vec![0; 4] };
+            assert_eq!(deltas, want, "{reason}, dealer tenpai {tenpai}");
+            assert_eq!(st.riichi_sticks, 1);
+        }
+    }
+
+    #[test]
+    fn leftover_sticks_go_to_first_place() {
+        // South 4, the dealer noten, two sticks on the table, a tie for first (seats 1 and 2).
+        let start = [20000, 31000, 31000, 16000];
+        for (rule, want) in [
+            (GameRule::default_tenhou(), [20000, 33000, 31000, 16000]),
+            (GameRule::default_mjsoul(), [20000, 33000, 31000, 16000]),
+            (stock(), start),
+        ] {
+            let mut st = at(rule, 1, 3, start, false);
+            st.riichi_sticks = 2;
+            st._trigger_ryukyoku("exhaustive_draw");
+            assert!(st.is_done);
+            assert_eq!(scores(&st), want.to_vec());
+        }
+        // The one-kyoku mode keeps the kyoku's own result.
+        let mut st = GameState::new(0, false, Some(1), 0, GameRule::default_tenhou());
+        st._initialize_round(0, 0, 0, 0, None, Some(vec![25000; 4]));
+        for s in 0..4 {
+            st.players[s].hand = NOTEN.to_vec();
+            st.players[s].nagashi_eligible = false;
+        }
+        st.riichi_pending_acceptance = Some(2);
+        st._trigger_ryukyoku("exhaustive_draw");
+        assert!(st.is_done);
+        assert_eq!(scores(&st), vec![25000, 25000, 24000, 25000]);
+    }
+}

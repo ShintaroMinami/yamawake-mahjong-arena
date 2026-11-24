@@ -52,6 +52,7 @@ import time
 from yamawake.agents import IN_LOOP_LANES, build_agent
 from yamawake.match import lineup, run_match
 from yamawake.report import report
+from yamawake.rules import GAME_RULES
 
 
 def _opts(pairs: list[str]) -> dict[str, str]:
@@ -150,6 +151,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-split", action="store_true",
                     help="all seats draw from one wall, as in ordinary mahjong, instead of "
                          "per-seat draw queues (calls then shift the draws)")
+    ap.add_argument("--game-rule", choices=GAME_RULES, default="tenhou",
+                    help="the table rule: Tenhou's (default) or Mahjong Soul's yaku and game flow")
     args = ap.parse_args(argv)
 
     if args.mode:
@@ -180,7 +183,8 @@ def main(argv: list[str] | None = None) -> None:
                        out=args.out,
                        save_scores=args.save_scores, progress=progress,
                        single_kyoku=args.single_kyoku, play_stats=not args.no_stats,
-                       rotate=not args.no_rotate, split_wall=not args.no_split)
+                       rotate=not args.no_rotate, split_wall=not args.no_split,
+                       game_rule=args.game_rule)
     progress.close()
     print(report(result), flush=True)
 

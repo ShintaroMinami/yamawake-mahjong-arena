@@ -280,6 +280,16 @@ pub struct LockstepLoop {
     pub bot_seats: Vec<Vec<(u8, Bot)>>,
 }
 
+/// The table rule by name: `"tenhou"` (Tenhou's yaku and game flow) or
+/// `"mjsoul"` (Mahjong Soul's yaku; the engine's stock game flow).
+pub fn game_rule(name: &str) -> Result<GameRule, String> {
+    match name {
+        "tenhou" => Ok(GameRule::default_tenhou()),
+        "mjsoul" => Ok(GameRule::default_mjsoul()),
+        _ => Err(format!("unknown game rule {name:?} (tenhou or mjsoul)")),
+    }
+}
+
 /// The play limits an in-loop bot (rulebot, A1) can take, both off by default (2026-11-19): with `win` false it
 /// never declares tsumo or ron; with `call` false it never calls chi, pon or daiminkan (ankan stays). The bot
 /// decides as if the engine had not offered those actions.
@@ -332,6 +342,7 @@ impl LockstepLoop {
         bot_seats: Vec<Vec<(u8, Bot)>>,
         wall_tables: Vec<Option<HashMap<(u8, u8), Vec<u8>>>>,
         split_wall: bool,
+        rule: GameRule,
     ) -> Result<Self, String> {
         if !bot_seats.is_empty() && bot_seats.len() != seeds.len() {
             return Err("bot_seats must be empty or one entry per game".into());
@@ -345,7 +356,7 @@ impl LockstepLoop {
             .iter()
             .zip(wall_tables)
             .map(|(&s, wt)| {
-                GameSlot::new(game_mode, s, GameRule::default_tenhou(), wt, split_wall)
+                GameSlot::new(game_mode, s, rule, wt, split_wall)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let bot_seats = if bot_seats.is_empty() { vec![Vec::new(); seeds.len()] } else { bot_seats };

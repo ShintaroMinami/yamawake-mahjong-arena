@@ -253,3 +253,13 @@ def test_wall_seed_excludes_wall_base_and_wall_start_needs_a_seed():
         run_match(players, walls=1, wall_seed=1, wall_base=5)
     with pytest.raises(ValueError, match="needs wall_seed"):
         run_match(players, walls=1, wall_start=3)
+
+
+def test_the_game_rule_is_tenhou_by_default_and_recorded(one_vs_three):
+    r, _ = one_vs_three
+    assert r.protocol["game_rule"] == "tenhou"
+    rb = RulebotAgent()
+    m = run_match([rb, rb, rb, rb], walls=2, game_rule="mjsoul")
+    assert m.protocol["game_rule"] == "mjsoul" and m.games == 8
+    with pytest.raises(ValueError, match="unknown game rule"):
+        play_games([1], [(0, 0, 0, 0)], [rb], game_rule="tenhou-ish")
