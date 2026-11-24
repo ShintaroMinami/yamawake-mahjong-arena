@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::eval::dp::{Akas, Counts, Input, Solver};
+use crate::external::observation_from_base64;
 
 mod features;
 
@@ -305,64 +306,21 @@ fn flag_from(key: &str, v: &Bound<'_, PyAny>) -> PyResult<bool> {
     }
 }
 
-/// The play limits "win" / "call" of a config dict (`arena::Limits`, each on when not given), taken out of it.
-fn limits_from(config: &Bound<'_, PyDict>) -> PyResult<crate::arena::Limits> {
-    let mut limits = crate::arena::Limits::default();
-    for (key, flag) in [("win", &mut limits.win), ("call", &mut limits.call)] {
-        if let Some(v) = config.get_item(key)? {
-            *flag = flag_from(key, &v)?;
-            config.del_item(key)?;
-        }
-    }
-    Ok(limits)
-}
-
-/// An A1 bot from its config: {"a1": <a built-in set's player name>} (`suzume::a1::BUILTIN`), or {"a1": <A1 model
-/// directory>, optional "pmf_fixed": the P / M / F mixture weights ("P", "M", "F" or "p,m,f"; `a1::parse_pmf`),
-/// the rest: the suzume config of its features set}; both take optional "aggression": push / fold (a number in [-1, 1];
-/// `A1Config::aggression`), "call_shift" / "riichi_shift" (numbers in [-1, 1]; `A1Config`) and the play limits
-/// "win" / "call" (0 / 1; `limits_from`).
+/// An A1 bot from its config: {"a1": <a built-in set's player name or an A1 model directory>, the rest: its options,
+/// each read as its string form} (`external::Suzume::new`).
 fn a1_config_from(config: &Bound<'_, PyDict>) -> PyResult<crate::suzume::a1::A1Config> {
-    use pyo3::exceptions::{PyKeyError, PyValueError};
-    let rest = config.copy()?;
-    let a1: String = rest
+    let a1: String = config
         .get_item("a1")?
-        .ok_or_else(|| PyKeyError::new_err("an a1 bot needs \"a1\": <built-in set or model directory>"))?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("an a1 bot needs \"a1\": <built-in set or model directory>"))?
         .extract()?;
-    rest.del_item("a1")?;
-    let delta: f64 = match rest.get_item("aggression")? {
-        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("aggression {v}: not a number")))?,
-        None => 0.0,
-    };
-    rest.del_item("aggression").ok();
-    let call_shift: f64 = match rest.get_item("call_shift")? {
-        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("call_shift {v}: not a number")))?,
-        None => 0.0,
-    };
-    rest.del_item("call_shift").ok();
-    let riichi_shift: f64 = match rest.get_item("riichi_shift")? {
-        Some(v) => v.str()?.to_string().trim().parse().map_err(|_| PyValueError::new_err(format!("riichi_shift {v}: not a number")))?,
-        None => 0.0,
-    };
-    rest.del_item("riichi_shift").ok();
-    let limits = limits_from(&rest)?;
-    let with_limits = |c: crate::suzume::a1::A1Config| crate::suzume::a1::A1Config { limits, ..c };
-    if let Some(c) = crate::suzume::a1::A1Config::builtin(&a1) {
-        if !rest.is_empty() {
-            return Err(PyValueError::new_err(format!(
-                "{a1} takes only aggression / call_shift / riichi_shift / win / call"
-            )));
+    let mut options = Vec::new();
+    for (k, v) in config.iter() {
+        let key: String = k.extract()?;
+        if key != "a1" {
+            options.push((key, v.str()?.to_string()));
         }
-        return crate::suzume::a1::A1Config::new(c.cfg, c.models, None, delta, call_shift, riichi_shift)
-            .map(with_limits)
-            .map_err(PyValueError::new_err);
     }
-    let pmf: Option<String> = rest.get_item("pmf_fixed")?.map(|v| v.str().map(|s| s.to_string())).transpose()?;
-    rest.del_item("pmf_fixed").ok();
-    let models = crate::suzume::a1::A1Models::load(&a1).map_err(PyValueError::new_err)?;
-    crate::suzume::a1::A1Config::new(suzume_config_from(&rest)?, models, pmf.as_deref(), delta, call_shift, riichi_shift)
-        .map(with_limits)
-        .map_err(PyValueError::new_err)
+    crate::external::a1_config(&a1, options).map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// An suzume config from an option dict (each value read as its string
@@ -425,7 +383,7 @@ fn suzume_config<'py>(py: Python<'py>, knobs: &Bound<'py, PyDict>) -> PyResult<B
 /// "rulebot" or "suzume" with its config dict (a rulebot's knobs; suzume'
 /// options and `models`), the seat's serialized observation, the mjai events
 /// of the kyoku so far (from its `start_kyoku`, one JSON line each; they
-/// also give the live wall, `observation_with_wall`). A suzume bot starts
+/// also give the live wall, `external::observation_from_base64`). A suzume bot starts
 /// from an empty kyoku memo (`SuzumeSeat` keeps one).
 ///
 /// Returns {"action": (action_type, tile, consume_tiles)}, plus "rule" (the
@@ -450,7 +408,7 @@ fn decide_one<'py>(
                 .iter()
                 .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
                 .collect::<Result<_, _>>()?;
-            let obs = observation_with_wall(&obs_b64, &events)?;
+            let obs = observation_from_base64(&obs_b64, &events)?;
             match &bot {
                 Bot::Rulebot(cfg) => {
                     let (a, d) = crate::rulebot::decide::decide(&obs, &events, cfg, debug)?;
@@ -480,59 +438,54 @@ fn decide_one<'py>(
     Ok(out)
 }
 
-/// The live wall at a kyoku's start (riichienv's `drawable_count` then).
-const LIVE_WALL: usize = 70;
-
-/// An observation from its base64 JSON, with the fork's two fields set from
-/// the kyoku's events: a stock riichienv `Observation` (one that went through
-/// Python's riichienv, or an outside server's) has no `drawable_count` and no
-/// `last_discarder`. The live wall is 70 less the kyoku's draws (rinshan
-/// included, as the engine counts them) and the last discarder is the actor
-/// of the kyoku's last `dahai`; both equal the engine's own values.
-fn observation_with_wall(
-    obs_b64: &str,
-    events: &[serde_json::Value],
-) -> Result<riichienv_core::observation::Observation, String> {
-    let mut obs = riichienv_core::observation::Observation::deserialize_from_base64(obs_b64)
-        .map_err(|e| format!("obs deserialize failed: {e:?}"))?;
-    let kind = |e: &serde_json::Value, t: &str| e.get("type").and_then(serde_json::Value::as_str) == Some(t);
-    let draws = events.iter().filter(|e| kind(e, "tsumo")).count();
-    obs.drawable_count = LIVE_WALL.saturating_sub(draws) as u8;
-    obs.last_discarder = events
-        .iter()
-        .rev()
-        .find(|e| kind(e, "dahai"))
-        .and_then(|e| e.get("actor")?.as_u64())
-        .map(|a| a as u8);
-    Ok(obs)
-}
-
 /// One suzume seat played outside the arena: the bot and its kyoku memo.
 ///
 /// `decide` is `decide_one("suzume", ...)` with the memo kept between the
 /// seat's decisions, as the arena keeps it per seat (`suzume::SeatMemo`: the
 /// riichi tile chosen with a declaration, the solve caches and, for `pf=1`
 /// sets, the push / fold history); the memo starts over when the kyoku's
-/// `start_kyoku` line changes. `choose` (an A1 seat) is the same decision
-/// with its scores, a riichi with its discard.
+/// `start_kyoku` changes. `choose` (an A1 seat) is the same decision with its
+/// scores, a riichi with its discard. An A1 seat is the Rust entry's
+/// `external::SuzumeSeat`, so Python and Rust callers get the same moves.
 #[pyclass(module = "yamawake._core")]
 struct SuzumeSeat {
-    cfg: crate::suzume::SuzumeConfig,
-    /// An A1 bot (a config with `"a1"`, `a1_config_from`): it decides instead of `cfg`.
-    a1: Option<crate::suzume::a1::A1Config>,
-    memo: crate::suzume::SeatMemo,
-    kyoku: Option<String>,
+    seat: Seat,
+}
+
+enum Seat {
+    /// An A1 set (a config with `"a1"`, `a1_config_from`).
+    A1(crate::external::SuzumeSeat),
+    /// A legacy set: its config, kyoku memo and the `start_kyoku` line of that kyoku.
+    Legacy { cfg: crate::suzume::SuzumeConfig, memo: crate::suzume::SeatMemo, kyoku: Option<String> },
+}
+
+/// A kyoku's mjai lines parsed.
+fn events_of(lines: &[String]) -> Result<Vec<serde_json::Value>, String> {
+    lines.iter().map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}"))).collect()
+}
+
+impl SuzumeSeat {
+    /// The A1 seat, or `what` needs one.
+    fn a1(&mut self, what: &str) -> PyResult<&mut crate::external::SuzumeSeat> {
+        match &mut self.seat {
+            Seat::A1(s) => Ok(s),
+            Seat::Legacy { .. } => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{what} needs an A1 set (suzume, suzume-rla225 or an A1 directory)"
+            ))),
+        }
+    }
 }
 
 #[pymethods]
 impl SuzumeSeat {
     #[new]
     fn new(config: &Bound<'_, PyDict>) -> PyResult<Self> {
-        if config.contains("a1")? {
-            let a1 = a1_config_from(config)?;
-            return Ok(Self { cfg: a1.cfg, a1: Some(a1), memo: Default::default(), kyoku: None });
-        }
-        Ok(Self { cfg: suzume_config_from(config)?, a1: None, memo: Default::default(), kyoku: None })
+        let seat = if config.contains("a1")? {
+            Seat::A1(crate::external::SuzumeSeat::new(crate::external::Suzume::of(a1_config_from(config)?)))
+        } else {
+            Seat::Legacy { cfg: suzume_config_from(config)?, memo: Default::default(), kyoku: None }
+        };
+        Ok(Self { seat })
     }
 
     /// `(action_type, tile, consume_tiles, rule)` for the seat's observation
@@ -543,48 +496,36 @@ impl SuzumeSeat {
         obs_b64: String,
         kyoku_events: Vec<String>,
     ) -> PyResult<(u8, Option<u8>, Vec<u8>, &'static str)> {
-        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
-        if start.is_some() && start != self.kyoku {
-            self.memo.clear();
-            self.kyoku = start;
-        }
-        let (cfg, a1, memo) = (&self.cfg, &self.a1, &mut self.memo);
+        let seat = &mut self.seat;
         let (action, rule) = py
             .allow_threads(|| -> Result<_, String> {
-                let events: Vec<serde_json::Value> = kyoku_events
-                    .iter()
-                    .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
-                    .collect::<Result<_, _>>()?;
-                let obs = observation_with_wall(&obs_b64, &events)?;
-                match a1 {
-                    Some(a1) => Ok((crate::suzume::a1::decide(&obs, &events, a1, memo)?, "a1")),
-                    None => crate::suzume::decide_observation(&obs, &events, cfg, memo)
-                        .map(|(a, r)| (a, crate::suzume::decider_name(r))),
+                let events = events_of(&kyoku_events)?;
+                let obs = observation_from_base64(&obs_b64, &events)?;
+                match seat {
+                    Seat::A1(s) => Ok((s.decide(&obs, &events)?, "a1")),
+                    Seat::Legacy { cfg, memo, kyoku } => {
+                        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
+                        if start.is_some() && start != *kyoku {
+                            memo.clear();
+                            *kyoku = start;
+                        }
+                        crate::suzume::decide_observation(&obs, &events, cfg, memo)
+                            .map(|(a, r)| (a, crate::suzume::decider_name(r)))
+                    }
                 }
             })
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
         Ok((action.action_type as u8, action.tile, action.consume_tiles.clone(), rule))
     }
 
-    /// An A1 seat's choice with its scores, as JSON (`playout::a1_choose`: `seat_options`' fields,
+    /// An A1 seat's choice with its scores, as JSON (`external::Choice::to_json`: `seat_options`' fields,
     /// docs/play_out_spec.md section 5): a riichi is the `reach` with its discard, in one call.
     fn choose(&mut self, py: Python<'_>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<String> {
-        let Some(a1) = self.a1 else {
-            return Err(pyo3::exceptions::PyValueError::new_err("choose needs an A1 set (suzume, suzume-rla225 or an A1 directory)"));
-        };
-        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
-        if start.is_some() && start != self.kyoku {
-            self.memo.clear();
-            self.kyoku = start;
-        }
-        let memo = &mut self.memo;
+        let seat = self.a1("choose")?;
         py.allow_threads(|| -> Result<_, String> {
-            let events: Vec<serde_json::Value> = kyoku_events
-                .iter()
-                .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
-                .collect::<Result<_, _>>()?;
-            let obs = observation_with_wall(&obs_b64, &events)?;
-            crate::playout::a1_choose(&obs, &events, &a1, memo).map(|v| v.to_string())
+            let events = events_of(&kyoku_events)?;
+            let obs = observation_from_base64(&obs_b64, &events)?;
+            seat.choose(&obs, &events).map(|c| c.to_json().to_string())
         })
         .map_err(pyo3::exceptions::PyValueError::new_err)
     }
@@ -592,30 +533,24 @@ impl SuzumeSeat {
     /// An A1 seat's P / M / F state probabilities on this decision (`a1::state_probs`; the memo kept as
     /// `decide` keeps it); None without `state.json` or off an own-turn discard out of riichi.
     fn a1_state_probs(&mut self, py: Python<'_>, obs_b64: String, kyoku_events: Vec<String>) -> PyResult<Option<[f64; 3]>> {
-        let Some(a1) = self.a1 else {
-            return Err(pyo3::exceptions::PyValueError::new_err("not an A1 seat"));
-        };
-        let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
-        if start.is_some() && start != self.kyoku {
-            self.memo.clear();
-            self.kyoku = start;
-        }
-        let memo = &mut self.memo;
+        let seat = self.a1("a1_state_probs")?;
         py.allow_threads(|| -> Result<_, String> {
-            let events: Vec<serde_json::Value> = kyoku_events
-                .iter()
-                .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
-                .collect::<Result<_, _>>()?;
-            let obs = observation_with_wall(&obs_b64, &events)?;
-            crate::suzume::a1::state_probs(&obs, &events, &a1, memo)
+            let events = events_of(&kyoku_events)?;
+            let obs = observation_from_base64(&obs_b64, &events)?;
+            seat.state_probs(&obs, &events)
         })
         .map_err(pyo3::exceptions::PyValueError::new_err)
     }
 
     /// Forget the kyoku memo (the next decision starts a fresh kyoku).
     fn reset(&mut self) {
-        self.memo.clear();
-        self.kyoku = None;
+        match &mut self.seat {
+            Seat::A1(s) => s.reset(),
+            Seat::Legacy { memo, kyoku, .. } => {
+                memo.clear();
+                *kyoku = None;
+            }
+        }
     }
 }
 

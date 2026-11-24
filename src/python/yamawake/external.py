@@ -16,7 +16,9 @@ fold history, which the A1 sets such as `suzume` do not use) and starts it
 over at every new `start_kyoku`, so it plays the moves the in-loop bot plays.
 The decision itself is the in-loop bot's, in Rust (`_core.SuzumeSeat`).
 `choose` gives the move with a score per legal action in one call, a riichi
-with its discard (`docs/play_out_spec.md` section 5).
+with its discard (`docs/play_out_spec.md` section 5). An A1 seat goes through
+the crate's Rust entry (`yamawake::external`, `docs/arena.md` section 6), so a
+Rust caller gets the same moves and scores.
 
 `SuzumeObservationAgent` is the same player on the arena's observation lane
 (a Python agent, one `SuzumePlayer` per game and seat): it plays the games the

@@ -305,6 +305,38 @@ r = player.choose(obs, kyoku_events)            # the action and a score per leg
 
 `SuzumeObservationAgent` places the same player in the arena as a Python player (one that receives observations). It plays through the same path as in an external environment, and a test confirms that it produces the same games as suzume inside the arena ([`tests/arena/test_external.py`](../tests/arena/test_external.py)).
 
+### From Rust
+
+Since 0.17.1 the same decision can be called from Rust (`yamawake::external`). The Python `SuzumePlayer` goes through it too, so the moves and scores are the same as in Python.
+
+``` toml
+# Cargo.toml: no features (no Python)
+[dependencies]
+yamawake = { git = "https://github.com/ShintaroMinami/yamawake-mahjong-arena", tag = "v0.17.1" }
+```
+
+``` rust
+use yamawake::external::{Suzume, SuzumeSeat, observation_from_base64};
+
+let bot = Suzume::from_spec("suzume")?;                       // written as a player name (suzume:aggression=0.3, etc.)
+let obs = observation_from_base64(&obs_b64, &kyoku_events)?;  // from Python's obs.serialize_to_base64()
+let c = bot.choose(&obs, &kyoku_events)?;                     // the decision of SuzumePlayer("suzume").choose(obs, events)
+c.action                                                      // the move (the engine action act gives; a riichi: the declaration)
+c.riichi_tile                                                 // for a riichi, the tile discarded after the declaration (136 id)
+let a = bot.decide(&obs, &kyoku_events)?;                     // the move only, without scores
+let mut seat = SuzumeSeat::new(bot);                          // to play one seat through a kyoku
+```
+
+- **Dependency**: added without features, it brings in no pyo3. yamawake re-exports its riichienv-core fork and serde_json (`yamawake::riichienv_core`, `yamawake::serde_json`); pass observations and events as their types (`Observation`, parsed `&[Value]`).
+- **`Suzume` and `SuzumeSeat`**: `Suzume::choose` and `Suzume::decide` decide once on an empty memo (as a new `SuzumePlayer` does). `SuzumeSeat` keeps a memo per seat and forgets it at a new `start_kyoku`. After a riichi it discards the tile chosen with the declaration.
+- **The result (`Choice`)**: the fields of Python's `choose`, plus the three below. `to_json()` is the dict Python's `choose` returns.
+  - The engine action of each legal move (`legal[i].action`; for a riichi, the discard declared with it).
+  - The move to play, `action` (the same as `decide`).
+  - For a riichi, the tile discarded after the declaration, `riichi_tile`. It is the tile the seat discards after the declaration.
+- **Threads**: `Suzume` is `Copy`, `Send` and `Sync`. Many threads (rayon, etc.) can call one `Suzume` at once.
+- **Spec**: `<set>[:KEY=VALUE...]`. The set is `suzume`, `suzume-rla225` or an A1 model directory. The keys are `aggression`, `call_shift`, `riichi_shift`, `win` and `call`. The style targets (`call_rate`, etc.) are converted into options in Python, so they are not accepted here; pass the options they convert to.
+- **Same as Python**: [`tests/external/choose_cases.json`](../tests/external/choose_cases.json) records 54 decisions of the Python player. It covers three specs, with discards, riichi, calls, kans, wins and passes. [`test_choose_cases.py`](../tests/external/test_choose_cases.py) checks that the Python player gives the recorded answers, and [`tests/external.rs`](../tests/external.rs) (`cargo test`) that the Rust entry does. After an intended change of play, re-record with `uv run python tests/external/choose_cases.py`.
+
 ## 7. Game logs
 
 ### handstats

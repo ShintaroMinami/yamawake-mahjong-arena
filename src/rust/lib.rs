@@ -10,16 +10,27 @@
 //! - `eval`: hand evaluation the bots share (the single-player DP, its
 //!   scoring, shanten; on riichienv-core, the fork in `src/engine/`).
 //!
-//! The modules are crate-private: the Python extension (`py`) is the only
-//! way in, so the compiler reports any code it no longer reaches. Without
-//! the `extension-module` feature (plain `cargo test`) nothing is reachable
-//! from outside, so dead code is only reported with the feature on.
+//! The ways in are the Python extension (`py`) and, for Rust callers,
+//! `external` (suzume's decisions on an observation, with their scores; the
+//! Python `SuzumePlayer` goes through it too). The other modules are
+//! crate-private, so the compiler reports any code neither reaches. Without
+//! the `extension-module` feature (plain `cargo test`, or a crate using this
+//! one as a library) only `external` is reachable from outside, so dead code
+//! is only reported with the feature on.
+//!
+//! A Rust caller depends on this crate without features (no Python) and
+//! uses the riichienv-core fork and `serde_json` re-exported here, so its
+//! observations and events are the types `external` takes.
 #![cfg_attr(not(feature = "extension-module"), allow(dead_code))]
+
+pub use riichienv_core;
+pub use serde_json;
 
 pub(crate) mod eval;
 pub(crate) mod arena;
 pub(crate) mod rulebot;
 pub(crate) mod suzume;
 pub(crate) mod playout;
+pub mod external;
 #[cfg(feature = "extension-module")]
 mod py;

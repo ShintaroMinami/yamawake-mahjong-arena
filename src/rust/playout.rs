@@ -1020,14 +1020,14 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
         Some(e) => e.action.clone(),
         None => b.slot.bot_action(seat, bot)?,
     };
-    let choice = if a.action_type == ActionType::Riichi {
-        b.slot.step(&HashMap::from([(seat, a)]))?;
+    let (choice, riichi) = if a.action_type == ActionType::Riichi {
+        b.slot.step(&HashMap::from([(seat, a.clone())]))?;
         let d = b.slot.bot_action(seat, bot)?;
         let mut m = to_mjai(&d, drawn);
         m["type"] = json!("reach");
-        m
+        (m, Some(d))
     } else {
-        to_mjai(&a, drawn)
+        (to_mjai(&a, drawn), None)
     };
     let kind = match bot {
         Bot::Rulebot(_) => "rulebot",
@@ -1035,16 +1035,16 @@ pub fn seat_option(p: &Value, bot: &Bot) -> Result<Value, String> {
         Bot::Tsumogiri => "tsumogiri_bot",
         Bot::A1(_) => "a1",
     };
-    Ok(options_json(&entries, choice, explained.as_ref(), kind))
+    Ok(decision_choice(entries, choice, a, riichi, explained.as_ref(), kind).to_json())
 }
 
-/// The fields of one decision (docs/play_out_spec.md section 5): `legal` (the entries' mjai forms), `choice`,
-/// `choice_index`, `basis` and `scores` (per legal action the log-probability of its option in the decision, null for
-/// an action no model scored; the whole list null for a rule's decision) and, for a set with P / M / F experts,
-/// `pmf`. Without `explained` (a bot other than A1) the basis is `bot` and there are no scores.
-pub(crate) fn options_json(entries: &[(Value, Action, bool)], choice: Value, explained: Option<&Explained>, bot: &str) -> Value {
-    let legal: Vec<Value> = entries.iter().map(|(m, _, _)| m.clone()).collect();
-    let choice_index = legal.iter().position(|m| *m == choice);
+/// The fields of one decision (docs/play_out_spec.md section 5; `external::Choice`): the entries as the legal moves,
+/// `choice` (mjai) and its index, `action` (the engine action played now) and the tile of `riichi` (the discard after
+/// a riichi declaration), `basis` and `scores` (per legal action the log-probability of its option in the decision,
+/// None for an action no model scored; None for a rule's decision) and, for a set with P / M / F experts, `pmf`.
+/// Without `explained` (a bot other than A1) the basis is `bot` and there are no scores.
+pub(crate) fn decision_choice(entries: Vec<(Value, Action, bool)>, choice: Value, action: Action, riichi: Option<Action>,
+                              explained: Option<&Explained>, bot: &str) -> crate::external::Choice {
     let (basis, scores, pmf) = match explained {
         Some(e) => {
             let scores = (!e.scored.is_empty()).then(|| {
@@ -1053,15 +1053,15 @@ pub(crate) fn options_json(entries: &[(Value, Action, bool)], choice: Value, exp
                     .map(|(_, a, declaring)| crate::suzume::a1::option_index(&e.scored, a, *declaring).map(|i| e.scored[i].1))
                     .collect::<Vec<_>>()
             });
-            (e.basis, json!(scores), e.pmf)
+            (e.basis.to_string(), scores, e.pmf)
         }
-        None => (bot, Value::Null, None),
+        None => (bot.to_string(), None, None),
     };
-    let mut out = json!({"legal": legal, "choice": choice, "choice_index": choice_index, "basis": basis, "scores": scores});
-    if let Some(p) = pmf {
-        out["pmf"] = json!(p);
-    }
-    out
+    let legal: Vec<crate::external::Move> =
+        entries.into_iter().map(|(mjai, action, riichi)| crate::external::Move { mjai, action, riichi }).collect();
+    let choice_index = legal.iter().position(|m| m.mjai == choice);
+    let riichi_tile = riichi.and_then(|d| d.tile);
+    crate::external::Choice { legal, choice, choice_index, action, riichi_tile, basis, scores, pmf }
 }
 
 /// The legal actions of an observation as `legal_entries` gives them (each with its engine action and whether it
@@ -1098,22 +1098,24 @@ pub(crate) fn observation_entries(obs: &Observation) -> Vec<(Value, Action, bool
     out
 }
 
-/// An A1 seat's choice on its observation, with `options_json`'s fields; a riichi is the `reach` with the discard the
-/// decision chose with it (kept in `memo` for the discard after the declaration, as in a game).
-pub(crate) fn a1_choose(obs: &Observation, events: &[Value], a1: &crate::suzume::a1::A1Config, memo: &mut crate::suzume::SeatMemo)
-        -> Result<Value, String> {
+/// An A1 seat's choice on its observation (`decision_choice`); a riichi is the `reach` with the discard the decision
+/// chose with it (kept in `memo` for the discard after the declaration, as in a game). That discard is the first legal
+/// discard of the chosen tile, as the decision after the declaration picks it (`a1::riichi_discard`): the engine lists
+/// the discards in hand order both before and after the declaration, and the copies of a tile keep tenpai alike.
+pub(crate) fn a1_choice(obs: &Observation, events: &[Value], a1: &crate::suzume::a1::A1Config, memo: &mut crate::suzume::SeatMemo)
+        -> Result<crate::external::Choice, String> {
     let e = crate::suzume::a1::decide_explained(obs, events, a1, memo)?;
     let entries = observation_entries(obs);
-    let choice = if e.action.action_type == ActionType::Riichi {
+    let (choice, riichi) = if e.action.action_type == ActionType::Riichi {
         let tile = memo.riichi_tile.ok_or("a riichi without its tile")?;
         let d = crate::suzume::a1::riichi_discard(&obs.legal_actions_method(), tile).ok_or("the riichi tile is not a legal discard")?;
         let mut m = to_mjai(&d, obs.drawn_tile);
         m["type"] = json!("reach");
-        m
+        (m, Some(d))
     } else {
-        to_mjai(&e.action, obs.drawn_tile)
+        (to_mjai(&e.action, obs.drawn_tile), None)
     };
-    Ok(options_json(&entries, choice, Some(&e), "a1"))
+    Ok(decision_choice(entries, choice, e.action.clone(), riichi, Some(&e), "a1"))
 }
 
 /// One play-out from a rebuilt position: `seat`'s next decisions forced by `forced` (mjai actions), the rest by

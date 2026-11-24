@@ -305,6 +305,38 @@ r = player.choose(obs, kyoku_events)            # 手と、合法な手ごとの
 
 `SuzumeObservationAgent` は、同じプレイヤーを arena の Python のプレイヤー（観測を受け取る側）として置いたものです。外部の環境と同じ経路で打ち、arena の中の suzume と同じ対局になることをテストで確かめています（[`tests/arena/test_external.py`](../tests/arena/test_external.py)）。
 
+### Rust から呼ぶ
+
+0.17.1 から、同じ判断を Rust からも呼べます（`yamawake::external`）。Python の `SuzumePlayer` も中ではこれを通るので、手と点数は Python と同じです。
+
+``` toml
+# Cargo.toml：機能を付けずに入れる（Python は使わない）
+[dependencies]
+yamawake = { git = "https://github.com/ShintaroMinami/yamawake-mahjong-arena", tag = "v0.17.1" }
+```
+
+``` rust
+use yamawake::external::{Suzume, SuzumeSeat, observation_from_base64};
+
+let bot = Suzume::from_spec("suzume")?;                       // プレイヤー名と同じ書き方（suzume:aggression=0.3 など）
+let obs = observation_from_base64(&obs_b64, &kyoku_events)?;  // Python の obs.serialize_to_base64() から
+let c = bot.choose(&obs, &kyoku_events)?;                     // SuzumePlayer("suzume").choose(obs, events) と同じ判断
+c.action                                                      // 打つ手（act と同じエンジンの手。立直は宣言）
+c.riichi_tile                                                 // 立直のとき、宣言の後に切る牌（136 の id）
+let a = bot.decide(&obs, &kyoku_events)?;                     // 点数なしで手だけ
+let mut seat = SuzumeSeat::new(bot);                          // 1 局を通して 1 席を打つとき
+```
+
+- **依存の入れ方**：機能を付けずに入れると、pyo3 は入りません。yamawake は riichienv-core のフォーク版と serde_json を再公開しています（`yamawake::riichienv_core`、`yamawake::serde_json`）。観測と出来事は、これらの型（`Observation`、解析済みの `&[Value]`）で渡します。
+- **`Suzume` と `SuzumeSeat`**：`Suzume::choose` と `Suzume::decide` は、空の memo で 1 回判断します（新しい `SuzumePlayer` と同じです）。`SuzumeSeat` は席ごとに memo を持ち、新しい `start_kyoku` で忘れます。立直の後の打牌は、宣言のときに選んだ牌です。
+- **結果（`Choice`）**：Python の `choose` と同じ欄に加えて、次の 3 つを持ちます。`to_json()` は、Python の `choose` が返す dict と同じです。
+  - 合法手ごとのエンジンの手（`legal[i].action`。立直は宣言で切る牌）。
+  - 打つ手 `action`（`decide` と同じ）。
+  - 立直のときに宣言の後で切る牌 `riichi_tile`。宣言の後にその席が打つ牌と一致します。
+- **並列**：`Suzume` は `Copy` で、`Send` と `Sync` です。1 つの `Suzume` を、rayon などの多くのスレッドから同時に呼べます。
+- **spec**：`<組>[:KEY=VALUE...]` です。組は `suzume`、`suzume-rla225`、または A1 のモデルのディレクトリです。キーは `aggression`、`call_shift`、`riichi_shift`、`win`、`call` です。スタイルの目標値（`call_rate` など）は Python で調整値に換算するものなので、受け取りません。換算した調整値を渡してください。
+- **Python との一致**：[`tests/external/choose_cases.json`](../tests/external/choose_cases.json) に、Python のプレイヤーの判断を 54 局面記録しています。3 つの spec で、打牌・立直・鳴き・槓・和了・見送りを含みます。この記録と同じ答えになることを、Python 側は [`test_choose_cases.py`](../tests/external/test_choose_cases.py) で、Rust 側は [`tests/external.rs`](../tests/external.rs)（`cargo test`）で確かめています。打ち方を意図して変えたときは、`uv run python tests/external/choose_cases.py` で記録し直します。
+
 ## 7. 牌譜
 
 ### handstats

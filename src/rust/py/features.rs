@@ -16,7 +16,8 @@ use crate::suzume::universal::{UContext, Universal, kan_universal, kind_of, riic
 use crate::suzume::view::river_from_mjai;
 use crate::suzume::{MjView, SeatMemo, SuzumeConfig, pf, view_of};
 
-use super::{observation_with_wall, suzume_config_from};
+use super::suzume_config_from;
+use crate::external::observation_from_base64;
 
 /// The feature dumps of one model set and option dict (`config`, as a
 /// suzume player's; `models` may name a directory set, `dir:<path>`).
@@ -47,7 +48,7 @@ impl SuzumeFeatures {
             .iter()
             .map(|l| serde_json::from_str(l).map_err(|e| format!("bad event: {e}")))
             .collect::<Result<_, _>>()?;
-        let obs = observation_with_wall(obs_b64, &events)?;
+        let obs = observation_from_base64(obs_b64, &events)?;
         let seat = usize::from(obs.player_id);
         let start = kyoku_events.first().filter(|l| l.contains("\"start_kyoku\"")).cloned();
         let (memo, kyoku) = &mut self.memos[seat];
@@ -235,7 +236,7 @@ impl SuzumeFeatures {
             .iter()
             .map(|l| serde_json::from_str(l).map_err(|e| PyValueError::new_err(format!("bad event: {e}"))))
             .collect::<Result<_, _>>()?;
-        let obs = observation_with_wall(&obs_b64, &events).map_err(PyValueError::new_err)?;
+        let obs = observation_from_base64(&obs_b64, &events).map_err(PyValueError::new_err)?;
         let seat = usize::from(obs.player_id);
         if (0..4).any(|s| s != seat && obs.riichi_declared[s]) {
             return Err(PyValueError::new_err("another seat is in riichi: use fold_features"));
