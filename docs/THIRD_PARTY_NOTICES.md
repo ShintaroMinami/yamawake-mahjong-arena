@@ -13,7 +13,7 @@ following third-party work.
   an incremental shanten type (`shanten::HandShanten`) over its own
   tables, a win verdict without the score and the yaku list
   (`HandEvaluator::verdict`), fixes to the MJAI replay's win contexts
-  (`replay/mjai_replay.rs`), and Tenhou's and Mahjong Soul's game flow behind `GameRule` flags ([`src/engine/README.md`](../src/engine/README.md), `src/engine/riichienv-core.patch`). The Python
+  (`replay/mjai_replay.rs`, `replay/mod.rs`), and Tenhou's and Mahjong Soul's game flow behind `GameRule` flags ([`src/engine/README.md`](../src/engine/README.md), `src/engine/riichienv-core.patch`). The Python
   package `riichienv` (same license) is a runtime dependency.
 
 ## majiang-ai (電脳麻将 / Majiang)

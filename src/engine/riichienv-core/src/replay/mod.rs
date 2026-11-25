@@ -1733,7 +1733,12 @@ impl WinResultContextIterator {
             self.action_index += 1;
 
             if !matches!(action, Action::Hule { .. }) {
-                self.rinshan = vec![false; 4];
+                // yamawake patch: the kan / kita flag stays through the dora reveal and the
+                // replacement draw (the next discard or call clears it); stock cleared it at
+                // the replacement draw, so MJAI replays never had rinshan kaihou.
+                if !matches!(action, Action::DealTile { .. } | Action::Dora { .. }) {
+                    self.rinshan = vec![false; 4];
+                }
                 // Reset BaBei flag for non-Hule actions; ron-on-kita needs it in Hule handler
                 if !matches!(action, Action::BaBei { .. }) {
                     self.last_action_was_babei = false;
