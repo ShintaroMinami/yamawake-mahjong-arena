@@ -1955,3 +1955,43 @@
 +        c[i + 2] += 1;
 +    }
 +}
+--- a/src/replay/mjai_replay.rs
++++ b/src/replay/mjai_replay.rs
+@@ -398,11 +398,11 @@
+                     seat: actor,
+                     tile,
+                     doras: None,
+-                    left_tile_count: None, // Could decrement builder.left_tile_count?
++                    left_tile_count: None,
+                 });
+-                if builder.left_tile_count > 0 {
+-                    builder.left_tile_count -= 1;
+-                }
++                // yamawake patch: `left_tile_count` stays the start-of-round count, which
++                // the replay counts down per draw; stock also decremented it here, so wins
++                // were taken for haitei / houtei mid-round (smly/RiichiEnv#267).
+             }
+             MjaiEvent::Dahai {
+                 actor,
+@@ -505,7 +505,9 @@
+                     seat: actor,
+                     meld_type: MeldType::Ankan,
+                     tiles,
+-                    tile_raw_id: 0,
++                    // yamawake patch: the kan's tile type, which the replay takes out of
++                    // the hand; stock passed 0, so 1m (smly/RiichiEnv#267).
++                    tile_raw_id: consumed.first().map_or(0, |s| parse_mjai_tile(s) / 4),
+                     doras: None,
+                 });
+             }
+@@ -522,7 +524,9 @@
+             }
+             MjaiEvent::Dora { dora_marker } => {
+                 let marker = parse_mjai_tile(&dora_marker);
+-                builder.doras.push(marker);
++                // yamawake patch: not added to `doras` (the start-of-round markers);
++                // `Action::Dora` adds it, so stock counted each kan dora twice
++                // (smly/RiichiEnv#267).
+                 builder.actions.push(Action::Dora {
+                     dora_marker: marker,
+                 });

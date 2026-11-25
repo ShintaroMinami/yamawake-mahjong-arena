@@ -5,7 +5,7 @@
 Apache-2.0 (`riichienv-core/LICENSE`, taken from the riichienv 0.4.8 wheel;
 the crate ships no license file of its own). yamawake-mahjong-arena links it statically.
 
-The fork changes ten files (`riichienv-core.patch`, against the crates.io
+The fork changes eleven files (`riichienv-core.patch`, against the crates.io
 source, made with `diff -u` per file with `a/` and `b/` labels). It adds
 `shanten::HandShanten` (marked "yamawake patch"): a hand's Nyanten suit keys
 and chiitoitsu/kokushi tallies, giving the shanten with one tile added or
@@ -72,6 +72,15 @@ where stock does not (marked "yamawake patch"; tested in `src/tests.rs`,
 
 With these, 20,000 evenly spaced Tenhou Houou logs (2016-2020) play again move
 for move on walls built from the logs (`docs/arena.md`).
+
+And it fixes three bugs of the MJAI replay's win contexts
+(`replay/mjai_replay.rs`, marked "yamawake patch"; the change of
+smly/RiichiEnv#268 for #267): the live wall left starts at the start-of-round
+count (stock counted it down twice, so mid-round wins were taken for haitei /
+houtei), a kan dora marker is counted once, and an ankan takes its own tiles
+out of the hand (stock took 1m). yamawake builds the core without its `python`
+feature, so the replay is not compiled in; the fix keeps the fork in step with
+upstream.
 
 Everything else is unchanged. The Python side uses the stock `riichienv==0.4.8`
 wheel: observations cross from this core to the wheel serialized (base64), so
